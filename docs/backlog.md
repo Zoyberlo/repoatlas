@@ -307,6 +307,12 @@ nothing should start to.
 
 ### 3.6 Search should rank, not just match
 
+*Done 2026-09-04.* Directness first (exact name, then name contains, then
+qualified name only), the stored global rank second, name length last. Not
+`bm25()`: over trigrams of short identifiers it says little, and the
+directness tiers already carry what a lexical score would. An index
+without stored ranks falls through to length.
+
 `search_symbols` matches substrings and orders by exact-name, then
 name-contains, then length. It does not use the graph it sits on. The
 citation-grounded code comprehension study (2025) finds hybrid retrieval,

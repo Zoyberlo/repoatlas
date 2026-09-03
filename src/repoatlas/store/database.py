@@ -670,15 +670,20 @@ class IndexStore:
         """
         cleaned = query.strip()
         source, parameters = self._search_source(cleaned, kinds)
-        # Ranked by how directly the symbol answers the query. A match on
-        # the name itself beats one that only landed in the qualified name,
-        # which otherwise lets a short private member of a matching class
-        # outrank the class. Among equals, shorter wins, so `User` comes
-        # before `UserRepositoryFactory`.
+        # Ranked by how directly the symbol answers the query, then by what
+        # the graph knows. An exact name comes first; a match on the name
+        # beats one that only landed in the qualified name, which otherwise
+        # lets a short private member of a matching class outrank the
+        # class. Among equals the global rank decides, so the `Resolver`
+        # everything calls comes before the one nothing does; name length
+        # breaks what rank cannot. An index without stored ranks falls
+        # through to length alone.
+        source = source.replace(_JOIN_MARKER, "LEFT JOIN ranks r ON r.symbol_id = s.id")
         sql = (
             f"SELECT {_SYMBOL_COLUMNS} {source}"
             " ORDER BY (lower(s.name) = lower(?)) DESC,"
             " (instr(lower(s.name), lower(?)) > 0) DESC,"
+            " coalesce(r.score, 0) DESC,"
             " length(s.name) ASC, s.path ASC, s.name_start_line ASC LIMIT ?"
         )
         parameters = [*parameters, cleaned, cleaned, limit]
@@ -691,6 +696,7 @@ class IndexStore:
         over-fetching by one only ever knows "at least one more".
         """
         source, parameters = self._search_source(query.strip(), kinds)
+        source = source.replace(_JOIN_MARKER, "")
         row = self._connection.execute(f"SELECT count(*) {source}", parameters).fetchone()
         return int(row[0]) if row else 0
 
@@ -699,22 +705,21 @@ class IndexStore:
         if len(cleaned) < 3:
             # Trigram indexes cannot answer a shorter query, so fall back to
             # a scan, which is cheap because it is bounded by the limit.
-            source = (
-                "FROM symbols s WHERE s.is_synthetic = 0 AND s.is_local = 0 "
+            source = "FROM symbols s"
+            where = (
+                "s.is_synthetic = 0 AND s.is_local = 0 "
                 "AND instr(lower(s.name), lower(?)) > 0"
             )
             parameters: list[Any] = [cleaned]
         else:
-            source = (
-                "FROM symbol_search JOIN symbols s ON s.rowid = symbol_search.rowid "
-                "WHERE symbol_search MATCH ? AND s.is_synthetic = 0 AND s.is_local = 0"
-            )
+            source = "FROM symbol_search JOIN symbols s ON s.rowid = symbol_search.rowid"
+            where = "symbol_search MATCH ? AND s.is_synthetic = 0 AND s.is_local = 0"
             parameters = [_fts_query(cleaned)]
         if kinds:
             placeholders = ", ".join("?" for _ in kinds)
-            source += f" AND s.kind IN ({placeholders})"
+            where += f" AND s.kind IN ({placeholders})"
             parameters.extend(kinds)
-        return source, parameters
+        return f"{source} {_JOIN_MARKER} WHERE {where}", parameters
 
     def symbol(self, symbol_id: str) -> Symbol | None:
         row = self._connection.execute(
@@ -819,6 +824,9 @@ class IndexStore:
         ).fetchone()
         return int(row[0]) if row else 0
 
+
+# Where the ranked search splices its join in; the count leaves it out.
+_JOIN_MARKER = "/*join*/"
 
 _SYMBOL_COLUMNS = (
     "s.id, s.path, s.name, s.kind, s.qualified_name, s.container_id, "
