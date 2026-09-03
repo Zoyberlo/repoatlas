@@ -1,0 +1,30 @@
+{
+  "root": "C:\\Users\\zoybe\\AppData\\Local\\Temp\\claude\\A--Projects\\26abf5b4-b59f-4a79-81f8-aa61caf98a41\\scratchpad\\synth10k",
+  "files": 10000,
+  "symbols": 79993,
+  "edges": 96657,
+  "store_mib": 70.64,
+  "index_cold_seconds": 12.435,
+  "index_noop_seconds": 0.945,
+  "index_touch_seconds": 4.308,
+  "tool_seconds": {
+    "repo_map cold": 1.053,
+    "repo_map warm": 0.0193,
+    "repo_map focus first": 0.2738,
+    "repo_map focus next": 0.1619,
+    "search_symbols": 0.0705,
+    "get_symbol": 0.0253,
+    "find_references": 0.0372,
+    "neighbours": 0.2513,
+    "file_outline": 0.0003,
+    "index_status": 0.013
+  },
+  "environment": {
+    "repoatlas": "0.1.0",
+    "python": "3.13.14",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "numpy": "2.5.2",
+    "commit": "439a0c4"
+  }
+}

@@ -625,6 +625,53 @@ class IndexStore:
         ).fetchone()
         return _symbol_from(row) if row else None
 
+    def callers(self, symbol_id: str, *, limit: int = 5) -> tuple[int, list[Symbol]]:
+        """How many distinct symbols use this one, and the first few of them.
+
+        Two queries, however many edges point here. Loading every edge to
+        count the callers and show five was a quarter of a second for a
+        symbol used from three thousand places.
+        """
+        total = self._connection.execute(
+            "SELECT count(DISTINCT e.src_id) FROM edges e JOIN symbols s ON s.id = e.src_id "
+            "WHERE e.dst_id = ? AND s.is_synthetic = 0",
+            (symbol_id,),
+        ).fetchone()
+        rows = self._connection.execute(
+            f"SELECT DISTINCT {_SYMBOL_COLUMNS} FROM edges e JOIN symbols s ON s.id = e.src_id "
+            "WHERE e.dst_id = ? AND s.is_synthetic = 0 "
+            "ORDER BY s.path, s.name_start_line, s.id LIMIT ?",
+            (symbol_id, limit),
+        ).fetchall()
+        return (int(total[0]) if total else 0), [_symbol_from(row) for row in rows]
+
+    def out_degree(self, symbol_id: str) -> int:
+        row = self._connection.execute(
+            "SELECT count(*) FROM edges WHERE src_id = ?", (symbol_id,)
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def symbols_by_ids(self, symbol_ids: Iterable[str]) -> dict[str, Symbol]:
+        """Fetch many symbols in a few queries rather than one each.
+
+        A symbol used from three hundred places had its description built
+        with three hundred round trips. SQLite is quick, but not that quick:
+        it was a third of a second per answer on the benchmark.
+        """
+        wanted = list(dict.fromkeys(symbol_ids))
+        found: dict[str, Symbol] = {}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = self._connection.execute(
+                f"SELECT {_SYMBOL_COLUMNS} FROM symbols s WHERE s.id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                symbol = _symbol_from(row)
+                found[symbol.id] = symbol
+        return found
+
     def edges_from(self, symbol_id: str) -> list[Edge]:
         """Edges whose source is this symbol: what it uses."""
         return self._edges_where("src_id = ?", symbol_id)

@@ -164,6 +164,41 @@ number from it is believed.
 **Languages:** Python, TypeScript, TSX, JavaScript, PHP. Adding one is a query
 file and a registry line; the harness then says whether it worked.
 
+### Ten thousand files
+
+`repoatlas bench` indexes a repository cold, again untouched, again with one
+file changed, then times every tool, and writes the result as JSON beside
+the commit it measured. `--synthetic N` generates a repository first: real
+files in three languages whose imports resolve across each other, so the
+walk, the grammars, the store and the resolver all do their actual work.
+The latest run on 10,000 such files (79,993 symbols,
+96,657 edges, 71 MiB store) is in
+[docs/benchmarks/synthetic-10k.json](docs/benchmarks/synthetic-10k.json):
+
+| what | time |
+| --- | ---: |
+| cold index | 12.4 s |
+| re-index, nothing changed | 0.94 s |
+| re-index, one file changed | 4.3 s |
+| `repo_map`, first call | 1053 ms |
+| `repo_map`, after that | 19 ms |
+| `repo_map` with `focus` | 162 ms |
+| `search_symbols` | 70 ms |
+| `get_symbol` on the most used symbol | 25 ms |
+| `find_references` on it | 37 ms |
+| `neighbours` on it | 251 ms |
+
+The first run of this benchmark took 296 seconds to index cold. The
+resolver's bottom rung chose among every definition sharing a name, and
+chose again for every reference to that name: ten thousand calls to `run`
+times six thousand definitions of it was forty million candidate checks.
+Choosing once per name made it twelve seconds. A synthetic repository is
+what found it, because no real one on hand had six thousand `run`s, and
+every real one of any size does.
+
+The one-file re-index is still resolution of the whole repository, which
+is the next thing to narrow; see [docs/backlog.md](docs/backlog.md).
+
 ## Mapping a repository
 
 Ask what the repository is built around, in three hundred tokens:

@@ -32,6 +32,11 @@ Three commands, matching the three things you do with an oracle:
     constant in the index, so a budget of two thousand tokens means two
     thousand on the model that will read them.
 
+``bench``
+    Index a repository cold, again untouched, again with one file changed,
+    and time every tool, writing the result as JSON beside the commit. With
+    ``--synthetic N`` it first generates a repository of that many files.
+
 ``serve``
     Run the MCP server over stdio, so an agent can query the index
     directly.
@@ -180,6 +185,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="environment variable holding the API key",
     )
     calibrate.add_argument("--format", choices=("text", "json"), default="text")
+
+    bench = subcommands.add_parser(
+        "bench", help="index a repository cold, warm and touched, and time every tool"
+    )
+    bench.add_argument("root", type=Path, help="the repository to measure")
+    bench.add_argument(
+        "--synthetic",
+        type=int,
+        metavar="FILES",
+        help="generate this many synthetic source files into ROOT first",
+    )
+    bench.add_argument("--store", type=Path, help="where to write the index (removed first)")
+    bench.add_argument("--focus", help="a file to use for the focused map and outline")
+    bench.add_argument("--out", type=Path, help="write the JSON result here")
+    bench.add_argument("--format", choices=("text", "json"), default="text")
+    bench.add_argument(
+        "--no-git", action="store_true", help="walk the filesystem instead of asking git"
+    )
 
     serve = subcommands.add_parser("serve", help="run the MCP server over stdio")
     serve.add_argument("root", type=Path, help="the repository to serve")
@@ -557,6 +580,30 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
     return _EXIT_OK
 
 
+def _cmd_bench(args: argparse.Namespace) -> int:
+    """Measure the pipeline on one repository and report it."""
+    from .bench import generate_synthetic, main_json, run_benchmark
+
+    root: Path = args.root
+    if args.synthetic:
+        written = generate_synthetic(root, args.synthetic)
+        print(f"generated {written} files under {root}", file=sys.stderr)
+    if not root.is_dir():
+        raise SystemExit(f"repoatlas: not a directory: {root}")
+    store_path = args.store or root / ".repoatlas" / "bench.db"
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    result = run_benchmark(
+        root, store_path, use_git=not args.no_git and not args.synthetic, focus=args.focus
+    )
+    if args.format == "json" or args.out:
+        main_json(result, args.out)
+        if args.out:
+            print(f"wrote {args.out}", file=sys.stderr)
+    if args.format == "text":
+        print(result.as_text(), end="")
+    return _EXIT_OK
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Run the MCP server over stdio."""
     from .server.app import serve as run_server
@@ -659,6 +706,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "search": _cmd_search,
         "map": _cmd_map,
         "calibrate": _cmd_calibrate,
+        "bench": _cmd_bench,
         "serve": _cmd_serve,
         "verify-oracle": _cmd_verify_oracle,
         "compare": _cmd_compare,

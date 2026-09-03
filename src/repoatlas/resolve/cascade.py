@@ -132,10 +132,18 @@ class ResolutionStats:
 class SymbolIndex:
     """Lookup tables over every definition, built once per repository."""
 
-    __slots__ = ("_by_name", "_by_path_name", "_by_qualified", "_members", "_symbols")
+    __slots__ = (
+        "_by_name",
+        "_by_path_name",
+        "_by_qualified",
+        "_members",
+        "_public_by_name",
+        "_symbols",
+    )
 
     def __init__(self, symbols: dict[str, Symbol]) -> None:
         self._symbols = symbols
+        self._public_by_name: dict[str, list[Symbol]] = {}
         self._by_name: dict[str, list[Symbol]] = defaultdict(list)
         self._by_path_name: dict[tuple[str, str], list[Symbol]] = defaultdict(list)
         self._by_qualified: dict[str, list[Symbol]] = defaultdict(list)
@@ -152,6 +160,19 @@ class SymbolIndex:
 
     def by_name(self, name: str) -> list[Symbol]:
         return self._by_name.get(name, [])
+
+    def public_by_name(self, name: str) -> list[Symbol]:
+        """Every non-local definition of ``name``, filtered once per name.
+
+        A repository has thousands of methods called `run`, and every call
+        to one used to filter the whole list again. Ten thousand references
+        times six thousand candidates was forty million checks.
+        """
+        cached = self._public_by_name.get(name)
+        if cached is None:
+            cached = [symbol for symbol in self.by_name(name) if not symbol.local]
+            self._public_by_name[name] = cached
+        return cached
 
     def in_file(self, path: str, name: str) -> list[Symbol]:
         return self._by_path_name.get((path, name), [])
@@ -253,6 +274,18 @@ class Resolver:
     known_files: frozenset[str] = frozenset()
 
     stats: ResolutionStats = field(default_factory=ResolutionStats)
+
+    _choices: dict[tuple[str, str], Symbol | None] = field(
+        default_factory=dict, repr=False
+    )
+    """The bottom rung's pick, per name and reference kind.
+
+    Choosing among every `run` in the repository depends on nothing but
+    the name and what kind of reference asked, so it is made once. This
+    was the whole cost of resolution on a large index: the choice scanned
+    thousands of candidates, and was made again for every one of thousands
+    of references to the same name.
+    """
 
     def resolve_file(self, path: str, references: list[Reference]) -> list[Edge]:
         """Resolve every reference in one file."""
@@ -377,8 +410,7 @@ class Resolver:
 
         # Rung four: exactly one definition of the name in the repository.
         # Wrong only when the true target was never indexed.
-        candidates = self.index.by_name(name)
-        public = [s for s in candidates if not s.local]
+        public = self.index.public_by_name(name)
         if len(public) == 1:
             return public[0], ResolutionTier.UNIQUE_NAME
 
@@ -386,7 +418,10 @@ class Resolver:
         # coin flip weighted by kind, and the confidence says so.
         if public:
             self.stats.ambiguous += 1
-            chosen = _prefer(public, reference)
+            key = (name, reference.kind)
+            if key not in self._choices:
+                self._choices[key] = _prefer(public, reference)
+            chosen = self._choices[key]
             if chosen is not None:
                 return chosen, ResolutionTier.SUFFIX
 

@@ -126,6 +126,15 @@ down for it.
 
 ### 1.5 No large-repository benchmark exists
 
+*Done 2026-09-04.* `repoatlas bench`, with `--synthetic N`; the 10,000-file
+result lives in `docs/benchmarks/`. Its first run found something this
+audit had missed: the resolver's bottom rung was quadratic in how many
+definitions share a name, and a cold index of 10,000 files took 296 s. The
+choice is now made once per name and kind; cold is 12.4 s and a
+one-file re-index 4.3 s, of which resolution is still all but the
+parse. `get_symbol`, `find_references` and `neighbours` fetched one symbol
+per edge; they now fetch in batches or count in SQL.
+
 The performance figures in the README come from a 41-file Python project
 and an 83-file TypeScript one. The project's stated requirement is large
 repositories, and nothing measures one. The synthetic numbers above are

@@ -214,31 +214,21 @@ def get_symbol(
         span = symbol.full_range
         lines.append(f"  lines: {span.start.line + 1}-{span.end.line + 1}")
 
-    outgoing = store.edges_from(symbol.id)
-    incoming = store.edges_to(symbol.id)
+    outgoing = store.out_degree(symbol.id)
     if outgoing:
-        lines.append(f"  uses: {len(outgoing)}")
-    if incoming:
-        # One symbol may reach another by several edges at once, an import
-        # and a call among them. The sample lists callers, not edges, so
-        # five lines are five different places rather than one place
-        # repeated.
-        callers: list[Symbol] = []
-        listed: set[str] = set()
-        for edge in incoming:
-            if edge.src_id in listed:
-                continue
-            source = store.symbol(edge.src_id)
-            if source is None or source.synthetic:
-                continue
-            listed.add(edge.src_id)
-            callers.append(source)
-        lines.append(f"  used by: {len(callers)}")
-        for source in callers[:5]:
+        lines.append(f"  uses: {outgoing}")
+    # One symbol may reach another by several edges at once, an import and
+    # a call among them. The count is of callers, not edges, so five lines
+    # are five different places rather than one place repeated, and the
+    # store answers it without loading every edge.
+    total_callers, sample = store.callers(symbol.id, limit=5)
+    if total_callers:
+        lines.append(f"  used by: {total_callers}")
+        for source in sample:
             lines.append(f"    {_location(source)}  {source.qualified_name or source.name}")
-        if len(callers) > 5:
+        if total_callers > len(sample):
             lines.append(
-                f"    ... {len(callers) - 5} more; find_references gives all of them"
+                f"    ... {total_callers - len(sample)} more; find_references gives all of them"
             )
 
     if include_body:
@@ -310,6 +300,7 @@ def find_references(
 
     shown = 0
     current_file = ""
+    sources = store.symbols_by_ids(edge.src_id for edge in window)
     for edge in window:
         path = edge.site_path or "?"
         if path != current_file:
@@ -317,7 +308,7 @@ def find_references(
                 break
             current_file = path
         line = (edge.site_range.start.line + 1) if edge.site_range else 0
-        source = store.symbol(edge.src_id)
+        source = sources.get(edge.src_id)
         origin = source.qualified_name or source.name if source else "?"
         marker = "" if edge.score >= 0.9 else f"  [{edge.tier.label} {edge.score:.2f}]"
         if not budgeted.add(f"  {line}  {edge.kind.value} from {origin}{marker}"):
@@ -369,12 +360,18 @@ def neighbours(
         current, level = queue.popleft()
         if level >= depth:
             continue
-        for edge, other_id in _step(store, current, direction):
-            if wanted is not None and edge.kind not in wanted:
+        steps = [
+            (edge, other_id)
+            for edge, other_id in _step(store, current, direction)
+            if (wanted is None or edge.kind in wanted)
+            and edge.score >= min_confidence
+            and other_id not in seen
+        ]
+        others = store.symbols_by_ids(other_id for _, other_id in steps)
+        for edge, other_id in steps:
+            if other_id in seen:
                 continue
-            if edge.score < min_confidence or other_id in seen:
-                continue
-            other = store.symbol(other_id)
+            other = others.get(other_id)
             if other is None:
                 continue
             seen.add(other_id)
