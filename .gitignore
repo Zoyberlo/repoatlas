@@ -19,3 +19,9 @@ htmlcov/
 *.scip
 !tests/fixtures/**/*.scip
 eval-runs/
+
+# Index stores
+.repoatlas/
+*.db
+*.db-wal
+*.db-shm

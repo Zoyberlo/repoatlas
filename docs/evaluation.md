@@ -206,7 +206,20 @@ Reference points to compare against:
 
 Track: cold indexing rate per language, incremental latency for one saved
 file at p50 and p95, query latency at p50 and p99, database bytes per
-thousand lines, resident memory at rest. Run on Linux, macOS arm64, Windows,
+thousand lines, resident memory at rest.
+
+Measured so far, on this machine:
+
+| | 41-file Python project | 83-file TypeScript project |
+| --- | ---: | ---: |
+| Cold index | 0.23 s | 2.40 s |
+| No-op re-index | 0.00 s | 0.00 s |
+| Store size | 3.4 MiB | 2.4 MiB |
+| Symbol search | under 1 ms | under 1 ms |
+
+The no-op figures are the store's own time; the command takes about 0.4 s
+end to end, nearly all of it starting Python. Store size is dominated by
+the trigram search index, which is the trade for substring lookup. Run on Linux, macOS arm64, Windows,
 and WSL2 on both ext4 and `/mnt/c`, since the last of those cannot receive
 file-watch events at all.
 

@@ -78,7 +78,28 @@ them. The `index.scip` in that fixture is genuine `scip-typescript` output,
 committed so CI re-checks these numbers on every platform without a Node
 toolchain.
 
-Parse anything and see what came out:
+Index into a SQLite store, and the second run parses only what changed:
+
+```bash
+repoatlas index . --store .repoatlas/index.db
+repoatlas search .repoatlas/index.db Resolver
+```
+
+```
+changed:    0 added, 1 modified, 0 removed, 82 unchanged
+parsed:     1 files
+stored:     83 files, 1844 symbols, 1459 edges (2456 KiB)
+elapsed:    0.04s parse + 0.08s resolve
+```
+
+A no-op re-index of an 83-file project takes 0.43 seconds end to end,
+most of which is starting Python. Parsing is skipped for files whose size
+and modification time are unchanged; resolution is skipped entirely when
+nothing moved. Editing a tag query or upgrading tree-sitter changes what
+extraction would produce, so both are hashed into the store and a mismatch
+rebuilds rather than trusting stale symbols.
+
+Parse without storing, to see what came out:
 
 ```bash
 repoatlas index . --max-error-rate 0.02
@@ -174,7 +195,8 @@ runs wherever Python does, on Linux, macOS, Windows and WSL.
    calibration rather than guessed~~ done: five rungs from a resolved import
    down to a bare name match, at 0.90 reference precision and 0.031
    calibration error on the TypeScript fixture
-4. SQLite storage with content-hash incremental updates
+4. ~~SQLite storage with content-hash incremental updates~~ done: one file,
+   trigram symbol search, and a re-index that parses only what changed
 5. Ranking: personalised PageRank over the symbol graph, budgeted output
 6. MCP server, a small number of tools, every output under a token budget
 7. Framework plugins for the string-keyed edges no generic parser can see:
@@ -187,7 +209,7 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
-pytest                 # 405 tests
+pytest                 # 451 tests
 ruff check .
 mypy
 ```

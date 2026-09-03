@@ -15,7 +15,11 @@ Three commands, matching the three things you do with an oracle:
 ``index``
     Parse a repository and report what came out, including the per-language
     syntax-error rate, which is the first thing to check before believing
-    any accuracy number from that language.
+    any accuracy number from that language. With ``--store`` it writes a
+    SQLite index and re-parses only what changed since last time.
+
+``search``
+    Look a symbol up in a stored index, by substring.
 
 ``compare``
     Score one index against another and write the report. Either side may
@@ -88,6 +92,28 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         help="exit non-zero when more than this share of files fail to parse",
     )
+    index.add_argument(
+        "--store",
+        type=Path,
+        help="write to this SQLite index, re-parsing only what changed",
+    )
+    index.add_argument(
+        "--rehash",
+        action="store_true",
+        help="hash every file instead of trusting size and mtime",
+    )
+
+    search = subcommands.add_parser("search", help="find a symbol in a stored index")
+    search.add_argument("store", type=Path, help="the SQLite index to read")
+    search.add_argument("query", help="a substring of the symbol name")
+    search.add_argument("--limit", type=int, default=20)
+    search.add_argument(
+        "--kind",
+        action="append",
+        default=[],
+        help="restrict to a symbol kind; repeatable",
+    )
+    search.add_argument("--format", choices=("text", "json"), default="text")
 
     compare = subcommands.add_parser("compare", help="score a candidate index against an oracle")
     compare.add_argument(
@@ -160,6 +186,8 @@ def _load(path: Path) -> IndexSnapshot:
 
 
 def _cmd_index(args: argparse.Namespace) -> int:
+    if args.store is not None:
+        return _cmd_index_store(args)
     result = _build(args.root, use_git=not args.no_git)
     if args.format == "json":
         print(json.dumps(result.as_dict(), indent=2))
@@ -217,6 +245,121 @@ def _cmd_index(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return _EXIT_FAILED_CHECK
+    return _EXIT_OK
+
+
+def _cmd_index_store(args: argparse.Namespace) -> int:
+    """Index into a SQLite store, parsing only what changed."""
+    try:
+        from .store import IndexStore, update_store
+    except ImportError as exc:  # pragma: no cover - depends on the extra
+        raise SystemExit(f"repoatlas: {exc}") from None
+    from .store import StoreError
+
+    try:
+        store = IndexStore(args.store)
+    except StoreError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+    with store:
+        try:
+            result = update_store(
+                args.root,
+                store,
+                use_git=not args.no_git,
+                trust_mtime=not args.rehash,
+            )
+        except NotADirectoryError as exc:
+            raise SystemExit(f"repoatlas: {exc}") from None
+        counts = store.counts()
+        if args.format == "json":
+            payload = result.as_dict()
+            payload["store"] = {**counts, "bytes": store.size_bytes()}
+            print(json.dumps(payload, indent=2))
+        else:
+            changes = result.changes
+            if changes.full_rebuild and not changes.was_empty:
+                print("parser or queries changed; rebuilt from scratch")
+            print(
+                f"changed:    {len(changes.added)} added, "
+                f"{len(changes.modified)} modified, "
+                f"{len(changes.removed)} removed, "
+                f"{len(changes.unchanged)} unchanged"
+            )
+            print(f"parsed:     {result.parsed} files")
+            print(
+                f"stored:     {counts['files']} files, {counts['symbols']} symbols, "
+                f"{counts['edges']} edges ({store.size_bytes() / 1024:.0f} KiB)"
+            )
+            print(
+                f"elapsed:    {result.parse_seconds:.2f}s parse "
+                f"+ {result.resolve_seconds:.2f}s resolve"
+            )
+            if result.failures:
+                print(
+                    f"{len(result.failures)} file(s) failed to parse:",
+                    file=sys.stderr,
+                )
+                for path, reason in result.failures[:10]:
+                    print(f"  - {path}: {reason}", file=sys.stderr)
+        if (
+            args.max_error_rate is not None
+            and _error_rate(result) > args.max_error_rate
+        ):
+            print(
+                f"parse error rate {_error_rate(result):.1%} exceeds the allowed "
+                f"{args.max_error_rate:.1%}",
+                file=sys.stderr,
+            )
+            return _EXIT_FAILED_CHECK
+    return _EXIT_OK
+
+
+def _error_rate(result: object) -> float:
+    """Share of freshly parsed files that had a syntax error."""
+    stats = getattr(result, "by_language", {}).values()
+    files = sum(item.files for item in stats)
+    failed = sum(item.files_with_errors for item in stats)
+    return failed / files if files else 0.0
+
+
+def _cmd_search(args: argparse.Namespace) -> int:
+    """Look a symbol up in a stored index."""
+    from .store import IndexStore, StoreError
+
+    if not args.store.exists():
+        raise SystemExit(f"repoatlas: no such index: {args.store}")
+    try:
+        store = IndexStore(args.store)
+    except StoreError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+    with store:
+        hits = store.search(args.query, limit=args.limit, kinds=tuple(args.kind))
+        if args.format == "json":
+            print(
+                json.dumps(
+                    [
+                        {
+                            "id": symbol.id,
+                            "name": symbol.name,
+                            "kind": symbol.kind.value,
+                            "path": symbol.path,
+                            "line": symbol.name_range.start.line + 1,
+                            "qualified_name": symbol.qualified_name,
+                        }
+                        for symbol in hits
+                    ],
+                    indent=2,
+                )
+            )
+        elif not hits:
+            print(f"nothing matches {args.query!r}")
+        else:
+            for symbol in hits:
+                print(
+                    f"{symbol.kind.value:<12}"
+                    f"{symbol.qualified_name or symbol.name:<40}"
+                    f"{symbol.path}:{symbol.name_range.start.line + 1}"
+                )
     return _EXIT_OK
 
 
@@ -297,6 +440,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     handlers = {
         "inspect": _cmd_inspect,
         "index": _cmd_index,
+        "search": _cmd_search,
         "verify-oracle": _cmd_verify_oracle,
         "compare": _cmd_compare,
     }
