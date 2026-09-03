@@ -1,0 +1,353 @@
+"""Projection of an index into location-keyed facts, for oracle comparison.
+
+Comparing two indexes by symbol identifier does not work: a tree-sitter
+extractor invents its own ids while ``scip-typescript`` emits SCIP symbol
+strings carrying package and version. The only thing both agree on is
+*where in the file* something is.
+
+So both sides are projected into facts anchored at source locations:
+
+:class:`DefFact`
+    "there is a definition whose identifier sits here"
+
+:class:`RefFact`
+    "the reference at this site resolves to the definition over there"
+
+Matching is by range overlap rather than exact equality, which absorbs the
+one systematic difference between producers: SCIP indexers disagree about
+whether a character offset counts UTF-8 bytes or UTF-16 code units, and that
+only shifts columns on lines containing non-ASCII text. Every match that
+needed tolerance is counted so the report can show how often it happened.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass, field
+from typing import Literal, Union
+
+from ..model import Edge, EdgeKind, IndexSnapshot, SourceRange, Symbol
+
+__all__ = [
+    "DefFact",
+    "Fact",
+    "FactSet",
+    "MatchPolicy",
+    "MatchResult",
+    "RefFact",
+    "definition_facts",
+    "match_facts",
+    "normalise_path",
+    "reference_facts",
+]
+
+MatchPolicy = Literal["exact", "overlap", "line"]
+
+Fact = Union["DefFact", "RefFact"]
+"""Either kind of fact. Matching is generic over the two."""
+
+
+def normalise_path(path: str, *, case_fold: bool = False) -> str:
+    """Normalise a repository-relative path for comparison.
+
+    Producers differ on separators and on leading ``./``. Case folding is
+    opt-in because git is case-sensitive even where the filesystem is not,
+    so folding by default would silently merge distinct files.
+    """
+    cleaned = path.replace("\\", "/").strip()
+    while cleaned.startswith("./"):
+        cleaned = cleaned[2:]
+    cleaned = cleaned.lstrip("/")
+    return cleaned.casefold() if case_fold else cleaned
+
+
+@dataclass(frozen=True, slots=True)
+class DefFact:
+    """A definition, located by the span of its identifier."""
+
+    path: str
+    span: SourceRange
+    kind: str = ""
+
+    @property
+    def line(self) -> int:
+        return self.span.start.line
+
+    def __str__(self) -> str:
+        return f"{self.path}:{self.span.start.line + 1}:{self.span.start.character}"
+
+
+@dataclass(frozen=True, slots=True)
+class RefFact:
+    """A resolved reference: a use site paired with the definition it reaches."""
+
+    site_path: str
+    site_span: SourceRange
+    target_path: str
+    target_span: SourceRange
+    kind: str = ""
+
+    @property
+    def line(self) -> int:
+        return self.site_span.start.line
+
+    def __str__(self) -> str:
+        return (
+            f"{self.site_path}:{self.site_span.start.line + 1}"
+            f" -> {self.target_path}:{self.target_span.start.line + 1}"
+            f" [{self.kind}]"
+        )
+
+
+def definition_facts(
+    snapshot: IndexSnapshot,
+    *,
+    case_fold: bool = False,
+    include_kind: bool = False,
+    paths: set[str] | None = None,
+) -> list[DefFact]:
+    """Project every symbol into a definition fact.
+
+    ``include_kind`` makes the comparison stricter by requiring the two
+    producers to agree on what kind of thing was defined. It is off by
+    default because kind vocabularies differ more than locations do.
+    """
+    facts: list[DefFact] = []
+    for symbol in snapshot.symbols.values():
+        if symbol.synthetic:
+            continue
+        path = normalise_path(symbol.path, case_fold=case_fold)
+        if paths is not None and path not in paths:
+            continue
+        facts.append(
+            DefFact(
+                path=path,
+                span=symbol.name_range,
+                kind=symbol.kind.value if include_kind else "",
+            )
+        )
+    return facts
+
+
+def _edge_group(kind: EdgeKind, collapse: bool) -> str:
+    """Map an edge kind to the label used for comparison.
+
+    Producers disagree on how finely to slice reference-like edges: SCIP
+    reports a bare occurrence where a tree-sitter extractor may have decided
+    the same token is a call. Collapsing them keeps the headline number
+    honest; the per-kind breakdown still shows the detail.
+    """
+    if not collapse:
+        return str(kind.value)
+    if kind in (EdgeKind.CALLS, EdgeKind.REFERENCES, EdgeKind.USES_TYPE):
+        return "reference-like"
+    if kind in (EdgeKind.INHERITS, EdgeKind.IMPLEMENTS):
+        return "inheritance-like"
+    return str(kind.value)
+
+
+def reference_facts(
+    snapshot: IndexSnapshot,
+    *,
+    case_fold: bool = False,
+    collapse_kinds: bool = True,
+    kinds: set[EdgeKind] | None = None,
+    paths: set[str] | None = None,
+    require_site: bool = True,
+) -> tuple[list[RefFact], list[Edge]]:
+    """Project edges into reference facts.
+
+    Returns the facts alongside the edges that could not be projected. An
+    edge is unprojectable when its target is not a symbol in the same
+    snapshot (a dangling edge) or when it carries no evidence site. Both are
+    reported rather than silently dropped, because a producer that emits
+    many dangling edges is making claims it cannot support.
+    """
+    facts: list[RefFact] = []
+    unprojectable: list[Edge] = []
+    for edge in snapshot.edges:
+        if kinds is not None and edge.kind not in kinds:
+            continue
+        target: Symbol | None = snapshot.symbols.get(edge.dst_id)
+        if target is None:
+            unprojectable.append(edge)
+            continue
+        if edge.site_path is not None and edge.site_range is not None:
+            site_path = normalise_path(edge.site_path, case_fold=case_fold)
+            site_span = edge.site_range
+        else:
+            source = snapshot.symbols.get(edge.src_id)
+            if source is None or require_site:
+                unprojectable.append(edge)
+                continue
+            # Relationship edges carry no occurrence; anchor them on the
+            # declaring symbol so inheritance can still be scored.
+            site_path = normalise_path(source.path, case_fold=case_fold)
+            site_span = source.name_range
+        if paths is not None and site_path not in paths:
+            continue
+        facts.append(
+            RefFact(
+                site_path=site_path,
+                site_span=site_span,
+                target_path=normalise_path(target.path, case_fold=case_fold),
+                target_span=target.name_range,
+                kind=_edge_group(edge.kind, collapse_kinds),
+            )
+        )
+    return facts, unprojectable
+
+
+@dataclass(slots=True)
+class FactSet:
+    """Facts indexed by ``(path, line)`` so overlap matching stays linear."""
+
+    definitions: dict[tuple[str, int], list[DefFact]] = field(default_factory=dict)
+    references: dict[tuple[str, int], list[RefFact]] = field(default_factory=dict)
+
+    @classmethod
+    def build(
+        cls, defs: Iterable[DefFact] = (), refs: Iterable[RefFact] = ()
+    ) -> FactSet:
+        out = cls()
+        for definition in defs:
+            out.definitions.setdefault(
+                (definition.path, definition.line), []
+            ).append(definition)
+        for reference in refs:
+            out.references.setdefault(
+                (reference.site_path, reference.line), []
+            ).append(reference)
+        return out
+
+    def all_definitions(self) -> Iterator[DefFact]:
+        for bucket in self.definitions.values():
+            yield from bucket
+
+    def all_references(self) -> Iterator[RefFact]:
+        for bucket in self.references.values():
+            yield from bucket
+
+    @property
+    def paths(self) -> set[str]:
+        return {path for path, _ in self.definitions} | {
+            path for path, _ in self.references
+        }
+
+
+@dataclass(slots=True)
+class MatchResult:
+    """The outcome of comparing one predicted fact list against an oracle."""
+
+    matched: list[tuple[Fact, Fact]] = field(default_factory=list)
+    false_positives: list[Fact] = field(default_factory=list)
+    false_negatives: list[Fact] = field(default_factory=list)
+    tolerant_matches: int = 0
+
+    @property
+    def true_positive_count(self) -> int:
+        return len(self.matched)
+
+    def by_path(self) -> dict[str, tuple[int, int, int]]:
+        """Per-file ``(tp, fp, fn)`` counts, the unit used for bootstrapping."""
+        counts: dict[str, list[int]] = {}
+
+        def bump(path: str, slot: int) -> None:
+            counts.setdefault(path, [0, 0, 0])[slot] += 1
+
+        for predicted, _oracle in self.matched:
+            bump(_fact_path(predicted), 0)
+        for predicted in self.false_positives:
+            bump(_fact_path(predicted), 1)
+        for oracle in self.false_negatives:
+            bump(_fact_path(oracle), 2)
+        return {path: (c[0], c[1], c[2]) for path, c in counts.items()}
+
+
+def _fact_path(fact: Fact) -> str:
+    if isinstance(fact, DefFact):
+        return fact.path
+    return fact.site_path
+
+
+def _def_compatible(left: DefFact, right: DefFact, policy: MatchPolicy) -> bool:
+    if left.kind and right.kind and left.kind != right.kind:
+        return False
+    if policy == "line":
+        return True
+    if policy == "exact":
+        return left.span == right.span
+    return left.span.overlaps(right.span)
+
+
+def _ref_compatible(left: RefFact, right: RefFact, policy: MatchPolicy) -> bool:
+    if left.kind and right.kind and left.kind != right.kind:
+        return False
+    if left.target_path != right.target_path:
+        return False
+    if policy == "line":
+        return left.target_span.start.line == right.target_span.start.line
+    if policy == "exact":
+        return left.site_span == right.site_span and left.target_span == right.target_span
+    return left.site_span.overlaps(right.site_span) and left.target_span.overlaps(
+        right.target_span
+    )
+
+
+def _compatible(left: Fact, right: Fact, policy: MatchPolicy) -> bool:
+    """Dispatch to the comparison for whichever fact type this is."""
+    if isinstance(left, DefFact) and isinstance(right, DefFact):
+        return _def_compatible(left, right, policy)
+    if isinstance(left, RefFact) and isinstance(right, RefFact):
+        return _ref_compatible(left, right, policy)
+    return False
+
+
+def match_facts(
+    predicted: Iterable[Fact],
+    oracle: Iterable[Fact],
+    *,
+    policy: MatchPolicy = "overlap",
+) -> MatchResult:
+    """Greedily pair predicted facts with oracle facts, one to one.
+
+    Pairing is greedy rather than optimal. Two facts only compete when they
+    sit on the same line of the same file and overlap, which is rare enough
+    that an assignment solver would not change the counts, and greedy keeps
+    the result explainable: every match can be pointed at.
+    """
+    predicted_list = list(predicted)
+    oracle_list = list(oracle)
+    if not predicted_list and not oracle_list:
+        return MatchResult()
+
+    buckets: dict[tuple[str, int], list[tuple[int, Fact]]] = {}
+    for index, fact in enumerate(oracle_list):
+        buckets.setdefault((_fact_path(fact), fact.line), []).append((index, fact))
+
+    consumed: set[int] = set()
+    result = MatchResult()
+    for candidate in predicted_list:
+        key = (_fact_path(candidate), candidate.line)
+        bucket = buckets.get(key, ())
+        chosen: tuple[int, Fact] | None = None
+        for index, oracle_fact in bucket:
+            if index in consumed:
+                continue
+            if _compatible(candidate, oracle_fact, policy):
+                chosen = (index, oracle_fact)
+                break
+        if chosen is None:
+            result.false_positives.append(candidate)
+            continue
+        consumed.add(chosen[0])
+        result.matched.append((candidate, chosen[1]))
+        if policy != "exact" and not _compatible(candidate, chosen[1], "exact"):
+            # The pair only matched because the policy allowed slack, which
+            # usually means the two producers count characters differently.
+            result.tolerant_matches += 1
+
+    for index, oracle_fact in enumerate(oracle_list):
+        if index not in consumed:
+            result.false_negatives.append(oracle_fact)
+    return result
