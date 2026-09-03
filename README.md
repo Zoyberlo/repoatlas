@@ -305,6 +305,30 @@ spends 4,000 tokens when nothing steers it and 2,000 when something does:
 a map is worth most on the first call of a session, when the agent has
 nothing else to go on.
 
+### Does the map find the right files?
+
+`repoatlas localize` answers with the repository's own history. Every
+commit that touched a few files was, for its author, a localisation task,
+and its message is what the author knew before finding them. For each
+recent commit the tool draws a map around the words of the message and
+checks whether the files the commit touched are on it. This is the
+number every ranking judgement in `pagerank.py` was waiting for, and it
+is specific to whatever repository it is run on.
+
+On this repository's own last 22 qualifying commits at
+2000 tokens ([docs/benchmarks/localize-repoatlas.json](docs/benchmarks/localize-repoatlas.json)):
+
+| map | recall of touched files | first file listed was touched |
+| --- | ---: | ---: |
+| plain | 0.61 | 0.00 |
+| steered by the message's words | 0.67 | 0.46 |
+
+Two caveats, stated: the index is of the current tree, so a file since
+renamed counts as a miss, and a commit message written after the fact
+says more than a task written before it, so these are ceilings. The
+measurement that matters is on a real Laravel or Vue repository with a
+long history, and the tool is ready for one.
+
 ## Serving it to an agent
 
 ```bash

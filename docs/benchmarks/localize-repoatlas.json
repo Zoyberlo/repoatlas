@@ -1,0 +1,501 @@
+{
+  "budget": 2000,
+  "commits": 22,
+  "recall_plain": 0.614,
+  "recall_mentioned": 0.673,
+  "first_hit_plain": 0.0,
+  "first_hit_mentioned": 0.455,
+  "cases": [
+    {
+      "sha": "e35d07c",
+      "subject": "Add a skeleton between the signature and the body",
+      "touched": [
+        "src/repoatlas/server/app.py",
+        "src/repoatlas/server/tools.py",
+        "tests/test_server.py"
+      ],
+      "mentions": [
+        "skeleton",
+        "signature",
+        "body"
+      ],
+      "matched_mentions": 1,
+      "recall_plain": 0.667,
+      "recall_mentioned": 0.667,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "7221a52",
+      "subject": "Fix a search test that expected an exact match where there was none",
+      "touched": [
+        "tests/test_search_rank.py"
+      ],
+      "mentions": [
+        "search",
+        "test",
+        "expected",
+        "exact",
+        "match",
+        "there",
+        "was",
+        "none"
+      ],
+      "matched_mentions": 2,
+      "recall_plain": 0.0,
+      "recall_mentioned": 0.0,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "3757115",
+      "subject": "Let search consult the graph it sits on",
+      "touched": [
+        "src/repoatlas/store/database.py",
+        "tests/test_search_rank.py"
+      ],
+      "mentions": [
+        "search",
+        "consult",
+        "graph",
+        "sits"
+      ],
+      "matched_mentions": 2,
+      "recall_plain": 0.5,
+      "recall_mentioned": 0.5,
+      "first_hit_plain": false,
+      "first_hit_mentioned": true
+    },
+    {
+      "sha": "bffac13",
+      "subject": "Re-resolve only what a change can reach",
+      "touched": [
+        "src/repoatlas/resolve/cascade.py",
+        "src/repoatlas/store/__init__.py",
+        "src/repoatlas/store/database.py",
+        "src/repoatlas/store/incremental.py",
+        "src/repoatlas/store/schema.py",
+        "tests/test_incremental_scope.py"
+      ],
+      "mentions": [
+        "resolve",
+        "reach"
+      ],
+      "matched_mentions": 1,
+      "recall_plain": 0.5,
+      "recall_mentioned": 0.5,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "3fb53f5",
+      "subject": "Spend the map's budget on coverage per token",
+      "touched": [
+        "src/repoatlas/rank/render.py",
+        "tests/test_rank.py",
+        "tests/test_server.py"
+      ],
+      "mentions": [
+        "map",
+        "budget",
+        "coverage",
+        "per",
+        "token"
+      ],
+      "matched_mentions": 2,
+      "recall_plain": 1.0,
+      "recall_mentioned": 1.0,
+      "first_hit_plain": false,
+      "first_hit_mentioned": true
+    },
+    {
+      "sha": "97778d1",
+      "subject": "Let the agent steer the map by name",
+      "touched": [
+        "src/repoatlas/cli.py",
+        "src/repoatlas/rank/cache.py",
+        "src/repoatlas/server/app.py",
+        "src/repoatlas/server/tools.py",
+        "tests/test_rank.py",
+        "tests/test_rank_cache.py"
+      ],
+      "mentions": [
+        "agent",
+        "steer",
+        "map",
+        "name"
+      ],
+      "matched_mentions": 1,
+      "recall_plain": 0.833,
+      "recall_mentioned": 0.833,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "36f22a4",
+      "subject": "Measure ten thousand files, and fix what the measurement found",
+      "touched": [
+        "src/repoatlas/bench.py",
+        "src/repoatlas/cli.py",
+        "src/repoatlas/resolve/cascade.py",
+        "src/repoatlas/server/tools.py",
+        "src/repoatlas/store/database.py",
+        "tests/test_bench.py"
+      ],
+      "mentions": [
+        "Measure",
+        "ten",
+        "thousand",
+        "files",
+        "measurement",
+        "found"
+      ],
+      "matched_mentions": 1,
+      "recall_plain": 0.833,
+      "recall_mentioned": 0.833,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "439a0c4",
+      "subject": "Make a map call cost milliseconds on a large index",
+      "touched": [
+        "src/repoatlas/rank/cache.py",
+        "src/repoatlas/rank/pagerank.py",
+        "src/repoatlas/rank/render.py",
+        "src/repoatlas/store/database.py",
+        "tests/test_rank.py",
+        "tests/test_rank_cache.py"
+      ],
+      "mentions": [
+        "map",
+        "call",
+        "cost",
+        "milliseconds",
+        "large",
+        "index"
+      ],
+      "matched_mentions": 2,
+      "recall_plain": 1.0,
+      "recall_mentioned": 1.0,
+      "first_hit_plain": false,
+      "first_hit_mentioned": true
+    },
+    {
+      "sha": "fa2e35f",
+      "subject": "Keep the graph and ranking between map calls",
+      "touched": [
+        "src/repoatlas/rank/__init__.py",
+        "src/repoatlas/rank/cache.py",
+        "src/repoatlas/server/app.py",
+        "src/repoatlas/server/tools.py",
+        "src/repoatlas/store/database.py",
+        "src/repoatlas/store/incremental.py",
+        "src/repoatlas/store/schema.py",
+        "tests/test_rank_cache.py"
+      ],
+      "mentions": [
+        "graph",
+        "ranking",
+        "map",
+        "calls"
+      ],
+      "matched_mentions": 3,
+      "recall_plain": 0.625,
+      "recall_mentioned": 0.625,
+      "first_hit_plain": false,
+      "first_hit_mentioned": true
+    },
+    {
+      "sha": "7371d94",
+      "subject": "Promise that every tool answer is byte-stable",
+      "touched": [
+        "tests/test_determinism.py"
+      ],
+      "mentions": [
+        "Promise",
+        "tool",
+        "answer",
+        "byte",
+        "stable"
+      ],
+      "matched_mentions": 0,
+      "recall_plain": 0.0,
+      "recall_mentioned": 0.0,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "06d7b83",
+      "subject": "Fix four small defects the audit turned up in the tool surface",
+      "touched": [
+        "src/repoatlas/rank/pagerank.py",
+        "src/repoatlas/rank/render.py",
+        "src/repoatlas/server/tools.py",
+        "src/repoatlas/store/database.py",
+        "tests/test_rank.py",
+        "tests/test_server.py"
+      ],
+      "mentions": [
+        "four",
+        "small",
+        "defects",
+        "audit",
+        "turned",
+        "tool",
+        "surface"
+      ],
+      "matched_mentions": 1,
+      "recall_plain": 1.0,
+      "recall_mentioned": 1.0,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "07a8726",
+      "subject": "Calibrate the token estimate against the model that will read it",
+      "touched": [
+        "src/repoatlas/cli.py",
+        "src/repoatlas/rank/__init__.py",
+        "src/repoatlas/rank/calibrate.py",
+        "src/repoatlas/rank/tokens.py",
+        "src/repoatlas/server/tools.py",
+        "src/repoatlas/store/database.py",
+        "tests/test_calibrate.py"
+      ],
+      "mentions": [
+        "Calibrate",
+        "token",
+        "estimate",
+        "against",
+        "model",
+        "read"
+      ],
+      "matched_mentions": 3,
+      "recall_plain": 0.714,
+      "recall_mentioned": 0.714,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "d81be13",
+      "subject": "Give each framework a directory of its own",
+      "touched": [
+        "src/repoatlas/plugins/__init__.py",
+        "src/repoatlas/plugins/frameworks/__init__.py",
+        "src/repoatlas/plugins/frameworks/laravel/__init__.py",
+        "src/repoatlas/plugins/frameworks/support.py",
+        "src/repoatlas/plugins/frameworks/vue/__init__.py",
+        "src/repoatlas/plugins/registry.py",
+        "src/repoatlas/store/incremental.py",
+        "tests/test_plugins.py"
+      ],
+      "mentions": [
+        "framework",
+        "directory",
+        "own"
+      ],
+      "matched_mentions": 1,
+      "recall_plain": 0.375,
+      "recall_mentioned": 0.375,
+      "first_hit_plain": false,
+      "first_hit_mentioned": true
+    },
+    {
+      "sha": "fffd82e",
+      "subject": "One convention file per framework",
+      "touched": [
+        "src/repoatlas/plugins/__init__.py",
+        "src/repoatlas/plugins/registry.py",
+        "tests/test_plugins.py"
+      ],
+      "mentions": [
+        "convention",
+        "file",
+        "per",
+        "framework"
+      ],
+      "matched_mentions": 2,
+      "recall_plain": 0.667,
+      "recall_mentioned": 0.667,
+      "first_hit_plain": false,
+      "first_hit_mentioned": true
+    },
+    {
+      "sha": "654015e",
+      "subject": "Move framework conventions into a file anyone can read",
+      "touched": [
+        "src/repoatlas/parse/extract.py",
+        "src/repoatlas/plugins/__init__.py",
+        "src/repoatlas/plugins/base.py",
+        "src/repoatlas/plugins/registry.py",
+        "src/repoatlas/resolve/cascade.py",
+        "src/repoatlas/store/incremental.py",
+        "tests/test_plugins.py"
+      ],
+      "mentions": [
+        "framework",
+        "conventions",
+        "file",
+        "anyone",
+        "read"
+      ],
+      "matched_mentions": 2,
+      "recall_plain": 0.857,
+      "recall_mentioned": 0.857,
+      "first_hit_plain": false,
+      "first_hit_mentioned": true
+    },
+    {
+      "sha": "e11334c",
+      "subject": "Replace the map's elision marks with line numbers",
+      "touched": [
+        "src/repoatlas/rank/render.py",
+        "tests/test_rank.py"
+      ],
+      "mentions": [
+        "Replace",
+        "map",
+        "elision",
+        "marks",
+        "line",
+        "numbers"
+      ],
+      "matched_mentions": 1,
+      "recall_plain": 1.0,
+      "recall_mentioned": 1.0,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "3f7a39d",
+      "subject": "Render the README's report tables instead of quoting their source",
+      "touched": [
+        "tests/test_docs.py"
+      ],
+      "mentions": [
+        "Render",
+        "README",
+        "report",
+        "tables",
+        "instead",
+        "quoting",
+        "their",
+        "source"
+      ],
+      "matched_mentions": 3,
+      "recall_plain": 0.0,
+      "recall_mentioned": 1.0,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "dd4bdac",
+      "subject": "Add the MCP server",
+      "touched": [
+        "src/repoatlas/cli.py",
+        "src/repoatlas/server/__init__.py",
+        "src/repoatlas/server/app.py",
+        "src/repoatlas/server/tools.py",
+        "src/repoatlas/store/database.py",
+        "src/repoatlas/store/incremental.py",
+        "tests/test_server.py"
+      ],
+      "mentions": [
+        "MCP",
+        "server"
+      ],
+      "matched_mentions": 1,
+      "recall_plain": 0.714,
+      "recall_mentioned": 0.857,
+      "first_hit_plain": false,
+      "first_hit_mentioned": true
+    },
+    {
+      "sha": "ac5e007",
+      "subject": "Add ranking and the budgeted repository map",
+      "touched": [
+        "src/repoatlas/cli.py",
+        "src/repoatlas/parse/extract.py",
+        "src/repoatlas/rank/__init__.py",
+        "src/repoatlas/rank/pagerank.py",
+        "src/repoatlas/rank/render.py",
+        "src/repoatlas/rank/tokens.py",
+        "tests/test_rank.py"
+      ],
+      "mentions": [
+        "ranking",
+        "budgeted",
+        "repository",
+        "map"
+      ],
+      "matched_mentions": 2,
+      "recall_plain": 0.714,
+      "recall_mentioned": 0.714,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "3550c28",
+      "subject": "Add the SQLite store and incremental updates",
+      "touched": [
+        "src/repoatlas/cli.py",
+        "src/repoatlas/store/__init__.py",
+        "src/repoatlas/store/database.py",
+        "src/repoatlas/store/incremental.py",
+        "src/repoatlas/store/schema.py",
+        "tests/test_store.py"
+      ],
+      "mentions": [
+        "SQLite",
+        "store",
+        "incremental"
+      ],
+      "matched_mentions": 2,
+      "recall_plain": 0.5,
+      "recall_mentioned": 0.667,
+      "first_hit_plain": false,
+      "first_hit_mentioned": true
+    },
+    {
+      "sha": "ce2364f",
+      "subject": "Make the SCIP scaling test a growth ratio, not a wall-clock bound",
+      "touched": [
+        "tests/test_regressions.py"
+      ],
+      "mentions": [
+        "SCIP",
+        "scaling",
+        "test",
+        "growth",
+        "ratio",
+        "wall",
+        "clock",
+        "bound"
+      ],
+      "matched_mentions": 2,
+      "recall_plain": 0.0,
+      "recall_mentioned": 0.0,
+      "first_hit_plain": false,
+      "first_hit_mentioned": false
+    },
+    {
+      "sha": "3fb7c63",
+      "subject": "Fix lint and type errors in the CLI",
+      "touched": [
+        "src/repoatlas/cli.py"
+      ],
+      "mentions": [
+        "lint",
+        "type",
+        "errors",
+        "CLI"
+      ],
+      "matched_mentions": 1,
+      "recall_plain": 1.0,
+      "recall_mentioned": 1.0,
+      "first_hit_plain": false,
+      "first_hit_mentioned": true
+    }
+  ]
+}

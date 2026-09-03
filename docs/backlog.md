@@ -339,6 +339,15 @@ structural lines to keep.
 
 ### 3.8 A benchmark for this stack, from git history
 
+*Done 2026-09-04, tool and first number.* `repoatlas localize` scores
+recall of touched files and first-file hit for a plain map and a map
+steered by the commit subject's words, over recent commits touching one
+to eight indexed files. On this repository's last 22 qualifying
+commits: recall 0.61 plain, 0.67 steered; first-file hit
+0.00 plain, 0.46 steered. A small self-referential sample; the
+number that would settle the weights needs a real Laravel or Vue repository
+with a long history, which requires cloning one.
+
 Every localisation benchmark in the literature is Python. There is none
 for Laravel and none for Vue, and the ranking weights in this project are
 recorded as unmeasured because of it. Git history is a ground truth that

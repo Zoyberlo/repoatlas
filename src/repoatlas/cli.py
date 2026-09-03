@@ -37,6 +37,11 @@ Three commands, matching the three things you do with an oracle:
     and time every tool, writing the result as JSON beside the commit. With
     ``--synthetic N`` it first generates a repository of that many files.
 
+``localize``
+    Score the map against the repository's own history: for each recent
+    commit, does a map drawn around the words of its message list the
+    files it touched. The number the ranking weights are tuned against.
+
 ``serve``
     Run the MCP server over stdio, so an agent can query the index
     directly.
@@ -209,6 +214,17 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument(
         "--no-git", action="store_true", help="walk the filesystem instead of asking git"
     )
+
+    localize = subcommands.add_parser(
+        "localize",
+        help="score the map against the repository's own commit history",
+    )
+    localize.add_argument("root", type=Path, help="a git repository")
+    localize.add_argument("--store", type=Path, help="an existing index; built if absent")
+    localize.add_argument("--commits", type=int, default=50, help="how many recent commits")
+    localize.add_argument("--budget", type=int, default=2000, help="map budget in tokens")
+    localize.add_argument("--out", type=Path, help="write the JSON result here")
+    localize.add_argument("--format", choices=("text", "json"), default="text")
 
     serve = subcommands.add_parser("serve", help="run the MCP server over stdio")
     serve.add_argument("root", type=Path, help="the repository to serve")
@@ -621,6 +637,37 @@ def _cmd_bench(args: argparse.Namespace) -> int:
     return _EXIT_OK
 
 
+def _cmd_localize(args: argparse.Namespace) -> int:
+    """Measure whether the map finds the files recent commits touched."""
+    from .localize import run_localize
+    from .store import IndexStore, StoreError, update_store
+
+    root: Path = args.root
+    if not (root / ".git").exists():
+        raise SystemExit(f"repoatlas: not a git repository: {root}")
+    store_path = args.store or root / ".repoatlas" / "index.db"
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with IndexStore(store_path) as store:
+            update_store(root, store)
+            result = run_localize(store, root, commits=args.commits, budget=args.budget)
+    except StoreError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+    except RuntimeError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+    if args.format == "json" or args.out:
+        payload = json.dumps(result.as_dict(), indent=2)
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(payload + "\n", encoding="utf-8")
+            print(f"wrote {args.out}", file=sys.stderr)
+        else:
+            print(payload)
+    if args.format == "text":
+        print(result.as_text(), end="")
+    return _EXIT_OK
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Run the MCP server over stdio."""
     from .server.app import serve as run_server
@@ -724,6 +771,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "map": _cmd_map,
         "calibrate": _cmd_calibrate,
         "bench": _cmd_bench,
+        "localize": _cmd_localize,
         "serve": _cmd_serve,
         "verify-oracle": _cmd_verify_oracle,
         "compare": _cmd_compare,
