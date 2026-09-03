@@ -71,7 +71,8 @@ def test_the_count_agrees_with_the_search(store: IndexStore) -> None:
 
 def test_a_short_query_takes_the_scan_path_with_the_same_order(store: IndexStore) -> None:
     # Two characters cannot use the trigram index; the scan must rank the
-    # same way.
+    # same way. Nothing is an exact match for "th", so all three tie on
+    # directness and rank decides: the used one first, then the two unused
+    # by length.
     names = [symbol.name for symbol in store.search("th")]
-    assert names[0] == "thing"
-    assert names.index("alpha_thing") < names.index("beta_thing")
+    assert names[:3] == ["alpha_thing", "thing", "beta_thing"]
