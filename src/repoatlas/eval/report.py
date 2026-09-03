@@ -47,6 +47,11 @@ def to_markdown(comparison: Comparison, *, samples: int = 5) -> str:
         lines.append(
             f"Skipped {comparison.skipped_paths} files the oracle does not cover."
         )
+    if comparison.encoding_assumed:
+        lines.append(
+            "At least one index does not declare how it counts columns; UTF-8 "
+            "was assumed and column offsets were matched with tolerance."
+        )
     if comparison.encoding_mismatch:
         lines.append(
             "Position encodings differ between the two indexes, so column offsets "

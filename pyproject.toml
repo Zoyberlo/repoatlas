@@ -52,11 +52,6 @@ Issues = "https://github.com/Zoyberlo/repoatlas/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/repoatlas"]
 
-[tool.hatch.build.targets.wheel.force-include]
-# Tag queries are data, not code, and would be left out of the wheel
-# otherwise, which fails only at runtime and only for parsing.
-"src/repoatlas/parse/queries" = "repoatlas/parse/queries"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

@@ -181,7 +181,17 @@ def _edge_group(kind: EdgeKind, collapse: bool) -> str:
     """
     if not collapse:
         return str(kind.value)
-    if kind in (EdgeKind.CALLS, EdgeKind.REFERENCES, EdgeKind.USES_TYPE):
+    # Imports join the reference group deliberately. SCIP defines an Import
+    # role, but scip-typescript 0.4.0 never sets it: an import specifier is
+    # an occurrence with role 0, indistinguishable from any other use. Kept
+    # apart, every import edge a resolver produced would score as one false
+    # positive plus one false negative against such an oracle.
+    if kind in (
+        EdgeKind.CALLS,
+        EdgeKind.REFERENCES,
+        EdgeKind.USES_TYPE,
+        EdgeKind.IMPORTS,
+    ):
         return "reference-like"
     if kind in (EdgeKind.INHERITS, EdgeKind.IMPLEMENTS):
         return "inheritance-like"

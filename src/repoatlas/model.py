@@ -328,6 +328,16 @@ class IndexSnapshot:
     symbols: dict[str, Symbol] = field(default_factory=dict)
     edges: list[Edge] = field(default_factory=list)
     encoding: PositionEncoding = PositionEncoding.UTF8
+    encoding_declared: bool = True
+    """False when the producer never said how it counts columns.
+
+    scip-typescript 0.4.0 leaves ``Document.position_encoding`` unset while
+    the TypeScript compiler reports UTF-16 offsets, so on a line with
+    non-ASCII text ahead of an identifier its columns differ from
+    tree-sitter's UTF-8 byte offsets. The comparison absorbs that with
+    overlap matching; this flag lets a report say the encoding was
+    assumed rather than known.
+    """
     project_root: str | None = None
     producer: str | None = None
 

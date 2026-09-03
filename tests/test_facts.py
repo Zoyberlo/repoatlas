@@ -176,7 +176,9 @@ class TestReferenceFacts:
         facts, _ = reference_facts(snapshot, collapse_kinds=False)
         assert facts[0].kind == "calls"
 
-    def test_imports_stay_their_own_group(self) -> None:
+    def test_imports_collapse_into_the_reference_group(self) -> None:
+        # scip-typescript never sets the Import role, so an import must
+        # score against a plain reference occurrence.
         snapshot = snapshot_with(make_symbol("f"), make_symbol("g", line=5))
         snapshot.add_edge(
             Edge(
@@ -188,7 +190,7 @@ class TestReferenceFacts:
             )
         )
         facts, _ = reference_facts(snapshot)
-        assert facts[0].kind == "imports"
+        assert facts[0].kind == "reference-like"
 
 
 class TestFactSet:

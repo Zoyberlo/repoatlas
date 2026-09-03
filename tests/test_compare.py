@@ -181,11 +181,17 @@ class TestWrongTargets:
             replace(edge, kind=EdgeKind.CALLS) if edge.kind is EdgeKind.IMPORTS else edge
             for edge in candidate.edges
         ]
-        result = compare_snapshots(candidate, oracle, ComparisonOptions())
+        result = compare_snapshots(
+            candidate, oracle, ComparisonOptions(collapse_edge_kinds=False)
+        )
         assert result.references_by_kind["imports"].recall == 0.0
-        # Collapsed scoring still counts the edge, because the site and target
-        # are right; only the label is wrong.
-        assert result.references_by_kind["reference-like"].false_positives == 1
+        # The oracle emits no `calls` edges at all, so the mislabelled edge is
+        # out of scope rather than a false positive.
+        assert "calls" in result.unscored_edge_kinds
+        # Collapsed, the mislabel disappears: site and target are right, and
+        # an import is a reference to the oracle anyway.
+        relaxed = compare_snapshots(candidate, oracle)
+        assert relaxed.references.f1 == pytest.approx(1.0)
 
 
 class TestColumnTolerance:
@@ -489,3 +495,14 @@ class TestComparisonScope:
         assert "symbol_kind_scope" in payload
         assert "class" in payload["symbol_kind_scope"]
         assert payload["unscored_edges"] == 0
+
+
+def test_an_empty_oracle_scores_nothing_and_says_so(candidate: IndexSnapshot) -> None:
+    # An empty set is falsy; a naive `if scope` treated an empty oracle as
+    # "no restriction" and reported files compared while scoring none.
+    from repoatlas.model import IndexSnapshot as Snapshot
+
+    result = compare_snapshots(candidate, Snapshot(producer="empty"))
+    assert result.compared_paths == 0
+    assert result.skipped_paths == len(candidate.paths)
+    assert result.definitions.is_empty

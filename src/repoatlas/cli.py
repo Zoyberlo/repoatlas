@@ -203,7 +203,8 @@ def _cmd_index(args: argparse.Namespace) -> int:
 def _cmd_inspect(args: argparse.Namespace) -> int:
     snapshot = _load(args.index)
     print(f"producer: {snapshot.producer or 'unknown'}")
-    print(f"encoding: {snapshot.encoding.value}")
+    declared = "" if snapshot.encoding_declared else " (assumed; not declared by the index)"
+    print(f"encoding: {snapshot.encoding.value}{declared}")
     if snapshot.project_root:
         print(f"root:     {snapshot.project_root}")
     for key, value in snapshot.summary().items():

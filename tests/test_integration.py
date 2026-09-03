@@ -37,8 +37,8 @@ def oracle():
 
 @pytest.fixture(scope="module")
 def build():
-    # `use_git=False` because the fixture lives inside this repository, and
-    # asking git about it would return the whole project's file list.
+    # `use_git=False` so the test does not depend on git being installed or
+    # on the fixture being checked in; git would list the same two files.
     return build_snapshot(FIXTURE, use_git=False)
 
 

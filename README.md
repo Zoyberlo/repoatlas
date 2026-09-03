@@ -72,13 +72,13 @@ repoatlas index . --max-error-rate 0.02
 ```
 
 ```
-files:      26
-symbols:    810
-references: 2087 (unresolved)
-elapsed:    0.30s (88 files/s)
+files:      30
+symbols:    907
+references: 2298 (unresolved)
+elapsed:    0.13s (232 files/s)
 
 language      files  symbols    refs   errors
-python           26      810    2087    0.0%
+python           30      907    2298    0.0%
 ```
 
 The error column is the first thing to check for a new language: published
@@ -173,7 +173,7 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
-pytest                 # 340 tests
+pytest                 # 341 tests
 ruff check .
 mypy
 ```

@@ -84,6 +84,7 @@ class Comparison:
     candidate_producer: str | None = None
     oracle_producer: str | None = None
     encoding_mismatch: bool = False
+    encoding_assumed: bool = False
     definition_result: MatchResult | None = None
     reference_result: MatchResult | None = None
 
@@ -120,6 +121,7 @@ class Comparison:
             "compared_paths": self.compared_paths,
             "skipped_paths": self.skipped_paths,
             "encoding_mismatch": self.encoding_mismatch,
+            "encoding_assumed": self.encoding_assumed,
             "definitions": self.definitions.as_dict(),
             "references": self.references.as_dict(),
             "references_by_kind": {
@@ -182,6 +184,7 @@ def compare_snapshots(
         candidate_producer=candidate.producer,
         oracle_producer=oracle.producer,
         encoding_mismatch=candidate.encoding is not oracle.encoding,
+        encoding_assumed=not (candidate.encoding_declared and oracle.encoding_declared),
     )
 
     oracle_paths = {
@@ -191,10 +194,10 @@ def compare_snapshots(
         normalise_path(path, case_fold=options.case_fold_paths) for path in candidate.paths
     }
     scope = oracle_paths if options.restrict_to_oracle_paths else None
-    report.compared_paths = len(oracle_paths & candidate_paths) if scope else len(
+    report.compared_paths = len(oracle_paths & candidate_paths) if scope is not None else len(
         oracle_paths | candidate_paths
     )
-    report.skipped_paths = len(candidate_paths - oracle_paths) if scope else 0
+    report.skipped_paths = len(candidate_paths - oracle_paths) if scope is not None else 0
 
     candidate_defs = definition_facts(
         candidate,

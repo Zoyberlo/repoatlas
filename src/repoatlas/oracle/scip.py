@@ -396,9 +396,11 @@ def _read_binary_documents(
 ) -> tuple[list[_Document], PositionEncoding, str, str]:
     metadata = next(pb.submessages(fields, Field.INDEX_METADATA), {})
     project_root = pb.as_str(metadata, Field.META_PROJECT_ROOT)
-    encoding = _coerce_encoding(
-        pb.as_int(metadata, Field.META_TEXT_ENCODING, -1), PositionEncoding.UTF8
-    )
+    # Metadata carries the *text* encoding of the files, which says nothing
+    # about how column offsets are counted. Only a document's own
+    # position_encoding does, so this default is an assumption and the
+    # snapshot records it as one.
+    encoding = PositionEncoding.UTF8
     tool = next(pb.submessages(metadata, Field.META_TOOL_INFO), {})
     producer = " ".join(
         part
@@ -525,10 +527,8 @@ def read_scip_json(data: str | bytes | Path | dict[str, Any]) -> IndexSnapshot:
 
     metadata = _get(payload, "metadata", default={}) or {}
     project_root = _get(metadata, "projectRoot", "project_root", default="") or ""
-    encoding = _coerce_encoding(
-        _get(metadata, "textDocumentEncoding", "text_document_encoding"),
-        PositionEncoding.UTF8,
-    )
+    # See the binary reader: text encoding is not column encoding.
+    encoding = PositionEncoding.UTF8
     tool = _get(metadata, "toolInfo", "tool_info", default={}) or {}
     producer = " ".join(
         str(part)
@@ -653,10 +653,14 @@ def _build_snapshot(
     project_root: str,
     producer: str,
 ) -> IndexSnapshot:
-    snapshot = IndexSnapshot(
-        encoding=encoding, project_root=project_root or None, producer=producer
-    )
     documents = list(documents)
+    declared = [doc.encoding for doc in documents if doc.encoding is not None]
+    snapshot = IndexSnapshot(
+        encoding=declared[0] if declared else encoding,
+        encoding_declared=bool(declared),
+        project_root=project_root or None,
+        producer=producer,
+    )
 
     # Pass one: every definition becomes a symbol. Symbol ids are the SCIP
     # symbol strings, so relationships resolve without a second lookup table.
