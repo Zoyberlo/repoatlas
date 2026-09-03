@@ -125,25 +125,44 @@ class TestScipRegressions:
     def test_enclosing_lookup_scales_to_a_large_document(
         self, demo_index: IndexSpec
     ) -> None:
-        # 4 000 definitions with 20 000 references took 14 s per document.
-        package = "scip-typescript npm big 1.0.0 src/`big.ts`/"
-        occurrences = []
-        for i in range(4_000):
-            symbol = f"{package}f{i}()."
-            base = i * 5
-            occurrences.append(
-                OccurrenceSpec(symbol, [base, 9, 12], SymbolRole.DEFINITION, [base, 0, base + 4, 1])
-            )
-            for k in range(5):
-                occurrences.append(OccurrenceSpec(f"{package}f{(i + 1) % 4_000}().", [base + 1 + k % 3, 4, 7]))
+        # 4 000 definitions with 20 000 references took 14 s per document
+        # with a linear scan. The check is a growth ratio rather than a wall
+        # clock bound: shared CI runners vary several-fold in speed, but a
+        # quadratic lookup shows a ratio near 16 when the input quadruples,
+        # a linear one near 4.
         from .conftest import DocumentSpec
 
-        demo_index.documents.append(DocumentSpec(path="src/big.ts", occurrences=occurrences))
-        started = time.perf_counter()
-        snapshot = read_scip_binary(demo_index.to_binary())
-        elapsed = time.perf_counter() - started
-        assert sum(1 for e in snapshot.edges if e.site_path == "src/big.ts") == 20_000
-        assert elapsed < 5.0, f"took {elapsed:.2f}s"
+        def build(definitions: int) -> bytes:
+            package = "scip-typescript npm big 1.0.0 src/`big.ts`/"
+            occurrences = []
+            for i in range(definitions):
+                base = i * 5
+                occurrences.append(
+                    OccurrenceSpec(
+                        f"{package}f{i}().", [base, 9, 12], SymbolRole.DEFINITION, [base, 0, base + 4, 1]
+                    )
+                )
+                target = f"{package}f{(i + 1) % definitions}()."
+                for k in range(5):
+                    occurrences.append(OccurrenceSpec(target, [base + 1 + k % 3, 4, 7]))
+            spec = IndexSpec(documents=[DocumentSpec(path="src/big.ts", occurrences=occurrences)])
+            return spec.to_binary()
+
+        small, large = build(1_000), build(4_000)
+
+        def timed(payload: bytes) -> tuple[float, int]:
+            started = time.perf_counter()
+            snapshot = read_scip_binary(payload)
+            return time.perf_counter() - started, len(snapshot.edges)
+
+        # Warm up once so import and cache effects do not land on `small`.
+        timed(small)
+        small_time, small_edges = timed(small)
+        large_time, large_edges = timed(large)
+        assert small_edges == 5_000
+        assert large_edges == 20_000
+        ratio = large_time / max(small_time, 1e-6)
+        assert ratio < 9.0, f"4x input took {ratio:.1f}x the time ({large_time:.2f}s)"
 
     def test_reads_a_json_dump_written_by_windows_powershell(
         self, tmp_path, demo_index: IndexSpec
