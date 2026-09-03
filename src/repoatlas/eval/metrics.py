@@ -197,11 +197,15 @@ def bootstrap_interval(
     size = len(units)
     replicates: list[float] = []
     for _ in range(resamples):
-        total = Score(0, 0, 0)
-        for _ in range(size):
-            tp, fp, fn = units[rng.randrange(size)]
-            total = total + Score(tp, fp, fn)
-        replicates.append(statistic(total))
+        # Sum three integers rather than building a Score per file: at
+        # 50 000 files and 2 000 resamples the object churn alone cost
+        # over a minute per interval.
+        tp = fp = fn = 0
+        for unit_tp, unit_fp, unit_fn in rng.choices(units, k=size):
+            tp += unit_tp
+            fp += unit_fp
+            fn += unit_fn
+        replicates.append(statistic(Score(tp, fp, fn)))
     replicates.sort()
 
     alpha = (1 - level) / 2

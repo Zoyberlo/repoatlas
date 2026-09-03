@@ -12,12 +12,12 @@ crosses between them.
 
 from __future__ import annotations
 
-import bisect
 import functools
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..model import SourceRange, Symbol, SymbolKind
+from ..spans import ScopeIndex
 from .languages import LanguageSpec, get_language, get_parser, query_source
 
 if TYPE_CHECKING:  # pragma: no cover - imported only for type checking
@@ -179,7 +179,11 @@ def _to_range(node: Node) -> SourceRange:
 
 
 def _count_errors(tree: Tree) -> int:
-    """Count error and missing nodes without walking every node in the file."""
+    """Count error and missing nodes, visiting only subtrees that hold one.
+
+    ``has_error`` is a cheap flag tree-sitter keeps on every node, so a
+    clean subtree is skipped whole rather than walked.
+    """
     if not tree.root_node.has_error:
         return 0
     total = 0
@@ -196,6 +200,9 @@ def _count_errors(tree: Tree) -> int:
                     visited_children = True
                     continue
                 continue
+            if node is not None and not node.has_error:
+                visited_children = True
+                continue
             if not cursor.goto_first_child():
                 visited_children = True
         elif cursor.goto_next_sibling():
@@ -210,27 +217,6 @@ def _qualified_name(name: str, container: Symbol | None) -> str:
         return name
     parent = container.qualified_name or container.name
     return f"{parent}.{name}"
-
-
-def _innermost_container(
-    candidates: list[tuple[SourceRange, int]], span: SourceRange
-) -> int | None:
-    """Index of the tightest definition whose body encloses ``span``.
-
-    Candidates are pre-sorted by start position, so this is a scan rather
-    than a search, and the tightest match is the last one that still
-    contains the span.
-    """
-    best: int | None = None
-    best_span: SourceRange | None = None
-    for candidate_span, index in candidates:
-        if candidate_span.start > span.start:
-            break
-        if not candidate_span.contains(span):
-            continue
-        if best_span is None or best_span.contains(candidate_span):
-            best, best_span = index, candidate_span
-    return best
 
 
 @dataclass(slots=True)
@@ -265,6 +251,7 @@ def _collect(
 
     definitions: dict[tuple[int, int, int, int], _RawDefinition] = {}
     references: list[tuple[str, str, SourceRange]] = []
+    seen_references: set[tuple[str, str, SourceRange]] = set()
 
     for _pattern_index, captures in cursor.matches(tree.root_node):
         name_nodes = captures.get("name")
@@ -304,9 +291,13 @@ def _collect(
                 ]:
                     definitions[key] = _RawDefinition(name, kind, name_span, full_span)
             elif capture_name.startswith(_REFERENCE_PREFIX):
-                references.append(
-                    (name, capture_name[len(_REFERENCE_PREFIX) :], name_span)
-                )
+                # Two patterns may legitimately capture one token, as a
+                # decorator call does for both the call and decorator
+                # patterns; one use site is still one reference.
+                entry = (name, capture_name[len(_REFERENCE_PREFIX) :], name_span)
+                if entry not in seen_references:
+                    seen_references.add(entry)
+                    references.append(entry)
 
     ordered = sorted(
         definitions.values(), key=lambda d: (d.name_span.start, d.name_span.end)
@@ -323,11 +314,22 @@ def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
     under edits elsewhere in the file, which a line number would not.
     """
     symbols: list[Symbol] = []
-    containers: list[tuple[SourceRange, int]] = []
     used: dict[str, int] = {}
+    # Definitions arrive in identifier order, which for every supported
+    # grammar is a pre-order walk of the containment tree: a parent's name
+    # precedes its members. A stack of open bodies therefore finds each
+    # definition's container in amortised constant time.
+    open_bodies: list[tuple[SourceRange, int]] = []
 
     for definition in raw:
-        container_index = _innermost_container(containers, definition.name_span)
+        while open_bodies and (
+            not open_bodies[-1][0].contains(definition.name_span)
+            # Siblings that share one node, as in `public $a, $b;`, have
+            # identical bodies and must not nest inside each other.
+            or open_bodies[-1][0] == definition.full_span
+        ):
+            open_bodies.pop()
+        container_index = open_bodies[-1][1] if open_bodies else None
         container = symbols[container_index] if container_index is not None else None
         qualified = _qualified_name(definition.name, container)
         base_id = f"{path}#{qualified}"
@@ -352,14 +354,7 @@ def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
             local=is_local,
         )
         symbols.append(symbol)
-        # Insert in order instead of re-sorting: definitions arrive sorted
-        # by identifier, so this is nearly append-only, and a full sort per
-        # symbol made a file with thousands of definitions quadratic.
-        bisect.insort(
-            containers,
-            (definition.full_span, len(symbols) - 1),
-            key=lambda pair: pair[0].start,
-        )
+        open_bodies.append((definition.full_span, len(symbols) - 1))
     return symbols
 
 
@@ -372,12 +367,9 @@ def extract_source(
     raw_definitions, raw_references = _collect(tree, spec)
     symbols = _assign_ids(path, raw_definitions)
 
-    containers = sorted(
-        (
-            (symbol.full_range or symbol.name_range, index)
-            for index, symbol in enumerate(symbols)
-        ),
-        key=lambda pair: pair[0].start,
+    scopes: ScopeIndex[int] = ScopeIndex(
+        (symbol.full_range or symbol.name_range, index)
+        for index, symbol in enumerate(symbols)
     )
     definition_spans = {symbol.name_range for symbol in symbols}
 
@@ -388,7 +380,7 @@ def extract_source(
             # reference to B; a name that is its own definition site is not
             # a reference to anything.
             continue
-        container_index = _innermost_container(containers, span)
+        container_index = scopes.innermost(span)
         references.append(
             Reference(
                 name=name,

@@ -17,6 +17,7 @@ from .facts import (
     MatchPolicy,
     MatchResult,
     RefFact,
+    _edge_group,
     definition_facts,
     match_facts,
     normalise_path,
@@ -281,11 +282,12 @@ def _calibrate_edges(
 ) -> CalibrationReport | None:
     """Pair each candidate edge's stated confidence with whether it was right.
 
-    Edges are looked up by their projected fact, so an edge only counts once
-    even when several edges share a site.
+    Edges are looked up by their projected fact. Two edges making the same
+    claim at the same confidence would count twice, which is the correct
+    weight for a producer that asserts the same thing twice.
     """
     outcomes: list[tuple[float, bool]] = []
-    fact_index: dict[tuple[str, int, int, str], bool] = {}
+    fact_index: dict[_RefKey, bool] = {}
     for fact, _oracle in result.matched:
         if isinstance(fact, RefFact):
             fact_index[_ref_key(fact)] = True
@@ -304,11 +306,14 @@ def _calibrate_edges(
             if source is None:
                 continue
             site_path, site_range = source.path, source.name_range
-        key = (
+        key: _RefKey = (
             normalise_path(site_path, case_fold=options.case_fold_paths),
             site_range.start.line,
             site_range.start.character,
             normalise_path(target.path, case_fold=options.case_fold_paths),
+            target.name_range.start.line,
+            target.name_range.start.character,
+            _edge_group(edge.kind, options.collapse_edge_kinds),
         )
         if key not in fact_index:
             continue
@@ -319,10 +324,24 @@ def _calibrate_edges(
     return calibrate(outcomes)
 
 
-def _ref_key(fact: RefFact) -> tuple[str, int, int, str]:
+_RefKey = tuple[str, int, int, str, int, int, str]
+
+
+def _ref_key(fact: RefFact) -> _RefKey:
+    """Identify a reference claim fully: site, target position and kind.
+
+    Site and target file alone were not enough. A candidate that resolved
+    one call both to the right method and, at lower confidence, to its
+    class shared a key between a true and a false positive, and the wrong
+    edge was credited as correct: exactly the overconfidence calibration
+    exists to expose.
+    """
     return (
         fact.site_path,
         fact.site_span.start.line,
         fact.site_span.start.character,
         fact.target_path,
+        fact.target_span.start.line,
+        fact.target_span.start.character,
+        fact.kind,
     )

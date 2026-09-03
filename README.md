@@ -173,7 +173,7 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
-pytest                 # 341 tests
+pytest                 # 360 tests
 ruff check .
 mypy
 ```

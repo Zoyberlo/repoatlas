@@ -23,7 +23,7 @@ Reference: https://github.com/scip-code/scip
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,7 @@ from ..model import (
     Symbol,
     SymbolKind,
 )
+from ..spans import ScopeIndex
 from . import protobuf as pb
 
 __all__ = [
@@ -231,6 +232,12 @@ def _split_escaped(text: str) -> list[str]:
             in_backticks = not in_backticks
             current.append(char)
         elif char == " " and not in_backticks:
+            # Two spaces are one literal space: the grammar escapes spaces
+            # in the package fields that way rather than with backticks.
+            if index + 1 < len(text) and text[index + 1] == " ":
+                current.append(" ")
+                index += 2
+                continue
             parts.append("".join(current))
             current = []
         else:
@@ -517,9 +524,14 @@ def _roles_from_json(value: Any) -> int:
 def read_scip_json(data: str | bytes | Path | dict[str, Any]) -> IndexSnapshot:
     """Read ``scip print --json`` output into a snapshot."""
     if isinstance(data, Path):
-        payload = json.loads(Path(data).read_text(encoding="utf-8"))
-    elif isinstance(data, (str, bytes)):
-        payload = json.loads(data)
+        data = Path(data).read_bytes()
+    if isinstance(data, bytes):
+        data = _decode_text(data)
+    if isinstance(data, str):
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise ScipError(f"not valid JSON: {exc}") from exc
     else:
         payload = data
     if not isinstance(payload, dict):
@@ -599,32 +611,39 @@ def read_scip_json(data: str | bytes | Path | dict[str, Any]) -> IndexSnapshot:
     return _build_snapshot(documents, encoding, project_root, producer or "scip (json)")
 
 
+def _decode_text(raw: bytes) -> str:
+    """Decode a JSON dump whatever shell wrote it.
+
+    Windows PowerShell 5.1 redirection writes UTF-16 with a byte-order
+    mark, and that is the shell the documented ``scip print --json``
+    command will often run in.
+    """
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        try:
+            return raw.decode("utf-16")
+        except UnicodeDecodeError as exc:
+            raise ScipError(f"not decodable as UTF-16: {exc}") from exc
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ScipError(f"not decodable as UTF-8: {exc}") from exc
+
+
 def read_scip(source: Path | str) -> IndexSnapshot:
     """Read either form, choosing by file extension then by content sniffing."""
     path = Path(source)
     if path.suffix.lower() == ".json":
         return read_scip_json(path)
     raw = path.read_bytes()
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff", b"\xef\xbb\xbf")):
+        return read_scip_json(raw)
     stripped = raw.lstrip()
     if stripped[:1] in (b"{", b"["):
-        return read_scip_json(raw.decode("utf-8"))
+        return read_scip_json(raw)
     return read_scip_binary(raw)
 
 
 # --- snapshot construction ------------------------------------------------
-
-
-def _enclosing_symbol_id(
-    definitions: Sequence[tuple[SourceRange, str]], site: SourceRange
-) -> str | None:
-    """Find the innermost definition whose body contains ``site``."""
-    best: tuple[SourceRange, str] | None = None
-    for span, symbol_id in definitions:
-        if not span.contains(site):
-            continue
-        if best is None or best[0].contains(span):
-            best = (span, symbol_id)
-    return best[1] if best else None
 
 
 def _add_module_symbol(snapshot: IndexSnapshot, doc: _Document) -> str:
@@ -670,6 +689,16 @@ def _build_snapshot(
         for occ in doc.occurrences:
             if not occ.is_definition or not occ.symbol:
                 continue
+            body = occ.enclosing if occ.enclosing is not None else occ.span
+            if not body.contains(occ.span):
+                body = occ.span
+            if occ.symbol in snapshot.symbols:
+                # A second definition of one symbol: scip-python emits one
+                # per assignment of a module-level name, scip-typescript one
+                # per overload signature. The first stays the anchor; the
+                # extra body still encloses references.
+                scopes.append((body, occ.symbol))
+                continue
             parsed = parse_symbol(occ.symbol)
             info = doc.symbol_info.get(occ.symbol, {})
             display = info.get("displayName") or parsed.name
@@ -677,9 +706,6 @@ def _build_snapshot(
             kind = parsed.kind
             if kind is SymbolKind.UNKNOWN:
                 kind = _KIND_BY_NAME.get(str(info.get("kind", "")).lower(), SymbolKind.UNKNOWN)
-            body = occ.enclosing if occ.enclosing is not None else occ.span
-            if not body.contains(occ.span):
-                body = occ.span
             snapshot.add_symbol(
                 Symbol(
                     id=occ.symbol,
@@ -705,14 +731,14 @@ def _build_snapshot(
     # in this index point outside the project and are dropped, matching the
     # "filter non-repo targets" rule from RepoGraph.
     for doc in documents:
-        scopes = definition_scopes.get(doc.path, [])
+        scope_index: ScopeIndex[str] = ScopeIndex(definition_scopes.get(doc.path, []))
         module_id: str | None = None
         for occ in doc.occurrences:
             if occ.is_definition or not occ.symbol:
                 continue
             if occ.symbol not in snapshot.symbols:
                 continue
-            source_id = _enclosing_symbol_id(scopes, occ.span)
+            source_id = scope_index.innermost(occ.span)
             if source_id is None:
                 # A top-level reference, typically an import statement. Hang
                 # it off a synthetic module symbol so the edge survives with

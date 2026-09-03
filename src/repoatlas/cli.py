@@ -265,6 +265,13 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # Reports carry repository paths, which are not always ASCII, and a
+    # redirected stdout on a Windows host may default to a legacy code
+    # page that cannot encode them.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
     parser = build_parser()
     args = parser.parse_args(argv)
     handlers = {

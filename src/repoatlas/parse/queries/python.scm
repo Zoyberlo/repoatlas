@@ -40,12 +40,11 @@
   function: (attribute
     attribute: (identifier) @name)) @reference.call
 
+; A bare decorator is a use of the decorating function. A decorator that
+; is itself a call, `@dec()`, is already covered by the call pattern
+; above and is not repeated here.
 (decorator
   (identifier) @name) @reference.call
-
-(decorator
-  (call
-    function: (identifier) @name)) @reference.call
 
 ; Base classes. `class A(B)` parses the base as a plain identifier in an
 ; argument list, the same shape as a call argument, so the superclasses

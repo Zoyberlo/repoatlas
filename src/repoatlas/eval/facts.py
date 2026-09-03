@@ -361,45 +361,73 @@ def match_facts(
     *,
     policy: MatchPolicy = "overlap",
 ) -> MatchResult:
-    """Greedily pair predicted facts with oracle facts, one to one.
+    """Pair predicted facts with oracle facts, one to one, maximally.
 
-    Pairing is greedy rather than optimal. Two facts only compete when they
-    sit on the same line of the same file and overlap, which is rare enough
-    that an assignment solver would not change the counts, and greedy keeps
-    the result explainable: every match can be pointed at.
+    Facts only compete when they share a file and a line, so matching runs
+    per line bucket, and buckets hold a handful of facts. Within a bucket
+    the pairing is a maximum bipartite matching found by augmenting paths:
+    exact pairs are placed first and the policy's looser pairs are only used
+    to add matches, never to displace an exact one for a worse one.
+
+    A greedy first-overlap pairing was wrong on the very lines tolerance is
+    for. With a UTF-16 column shift two adjacent identifiers both overlap
+    each other's oracle facts, and greedy paired the first candidate with
+    its neighbour's fact, leaving one match on the table and counting a
+    tolerant match where an exact one existed.
     """
     predicted_list = list(predicted)
     oracle_list = list(oracle)
-    if not predicted_list and not oracle_list:
-        return MatchResult()
-
-    buckets: dict[tuple[str, int], list[tuple[int, Fact]]] = {}
-    for index, fact in enumerate(oracle_list):
-        buckets.setdefault((_fact_path(fact), fact.line), []).append((index, fact))
-
-    consumed: set[int] = set()
     result = MatchResult()
-    for candidate in predicted_list:
-        key = (_fact_path(candidate), candidate.line)
-        bucket = buckets.get(key, ())
-        chosen: tuple[int, Fact] | None = None
-        for index, oracle_fact in bucket:
-            if index in consumed:
+    if not predicted_list and not oracle_list:
+        return result
+
+    oracle_buckets: dict[tuple[str, int], list[int]] = {}
+    for index, fact in enumerate(oracle_list):
+        oracle_buckets.setdefault((_fact_path(fact), fact.line), []).append(index)
+    predicted_buckets: dict[tuple[str, int], list[int]] = {}
+    for index, fact in enumerate(predicted_list):
+        predicted_buckets.setdefault((_fact_path(fact), fact.line), []).append(index)
+
+    # oracle index -> predicted index, over every bucket.
+    owner: dict[int, int] = {}
+    partner: dict[int, int] = {}
+
+    def augment(candidate: int, allowed: list[int], attempt: MatchPolicy, seen: set[int]) -> bool:
+        for oracle_index in allowed:
+            if oracle_index in seen:
                 continue
-            if _compatible(candidate, oracle_fact, policy):
-                chosen = (index, oracle_fact)
-                break
-        if chosen is None:
-            result.false_positives.append(candidate)
+            if not _compatible(predicted_list[candidate], oracle_list[oracle_index], attempt):
+                continue
+            seen.add(oracle_index)
+            current = owner.get(oracle_index)
+            if current is None or augment(current, allowed, attempt, seen):
+                owner[oracle_index] = candidate
+                partner[candidate] = oracle_index
+                return True
+        return False
+
+    passes: tuple[MatchPolicy, ...] = ("exact",) if policy == "exact" else ("exact", policy)
+    for key, candidates in predicted_buckets.items():
+        allowed = oracle_buckets.get(key, [])
+        if not allowed:
             continue
-        consumed.add(chosen[0])
-        result.matched.append((candidate, chosen[1]))
-        if policy != "exact" and not _compatible(candidate, chosen[1], "exact"):
+        for attempt in passes:
+            for candidate in candidates:
+                if candidate not in partner:
+                    augment(candidate, allowed, attempt, set())
+
+    for index, candidate_fact in enumerate(predicted_list):
+        oracle_index = partner.get(index)
+        if oracle_index is None:
+            result.false_positives.append(candidate_fact)
+            continue
+        oracle_fact = oracle_list[oracle_index]
+        result.matched.append((candidate_fact, oracle_fact))
+        if policy != "exact" and not _compatible(candidate_fact, oracle_fact, "exact"):
             # The pair only matched because the policy allowed slack, which
             # usually means the two producers count characters differently.
             result.tolerant_matches += 1
-
     for index, oracle_fact in enumerate(oracle_list):
-        if index not in consumed:
+        if index not in owner:
             result.false_negatives.append(oracle_fact)
     return result

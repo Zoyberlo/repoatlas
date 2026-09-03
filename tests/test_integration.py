@@ -48,11 +48,15 @@ class TestRealOracle:
         assert len(oracle.symbols) > 10
         assert oracle.edges
 
-    def test_the_index_uses_host_path_separators(self, oracle) -> None:
-        # Written on Windows, so the paths contain backslashes. Normalisation
-        # is what makes the comparison work, and this asserts the fixture
-        # still exercises it.
-        assert any("\\" in path for path in oracle.paths)
+    def test_paths_normalise_to_posix_whatever_host_wrote_the_index(
+        self, oracle
+    ) -> None:
+        # The committed index was written on Windows and carries
+        # backslashes; one regenerated on Linux would not. Either way the
+        # comparison sees the same two POSIX paths.
+        from repoatlas.eval.facts import normalise_path
+
+        assert {normalise_path(p) for p in oracle.paths} == {"src/app.ts", "src/user.ts"}
 
     def test_finds_the_expected_declarations(self, oracle) -> None:
         names = {s.name for s in oracle.symbols.values() if not s.synthetic}

@@ -27,9 +27,10 @@ Scope: does the extractor see what is in one file?
   PHP and Vue have no published figure, so measure them here.
 
 Status: partly built. `repoatlas index --max-error-rate` reports the error
-rate per language and can fail a build on it, and `tests/test_extract.py`
-carries the golden and property tests. The caret-assertion fixture format is
-not yet wired up; the per-language expectations live in Python for now.
+rate per language and can fail a build on it. `tests/test_extract.py`
+holds per-language expectations written in Python, plus property tests for
+id stability and for one symbol per definition capture. There are no golden
+JSON snapshots yet and the caret-assertion fixture format is not wired up.
 
 ## Tier 2: index correctness against an oracle
 
