@@ -9,11 +9,10 @@ falls through to the identifier cascade would happily match any function
 called `index`, and that wrong edge would carry the same confidence as a
 right one.
 
-The rules themselves live in `conventions/`, one file per framework, so most
+The rules themselves live in `frameworks/<name>/conventions.json`, so most
 of what is tested here is the engine that reads them: that a malformed rule
-is refused loudly and says which file it came from, that two frameworks
-claiming one reference kind stay out of each other's way, and that an
-explicit import always beats a convention.
+is refused loudly, that two frameworks claiming one reference kind stay out
+of each other's way, and that an explicit import always beats a convention.
 """
 
 from __future__ import annotations
@@ -24,14 +23,15 @@ from pathlib import Path
 import pytest
 
 from repoatlas.plugins import (
-    ConventionPlugin,
     active_plugins,
+    framework_names,
+    framework_plugins,
+    frameworks_source,
     load_framework,
-    load_registry,
-    registry_files,
 )
-from repoatlas.plugins.base import register, registered_plugins
-from repoatlas.plugins.registry import RegistryError, registry_source
+from repoatlas.plugins.base import FrameworkPlugin, register, registered_plugins
+from repoatlas.plugins.frameworks import support
+from repoatlas.plugins.registry import RegistryError
 
 pytest.importorskip("tree_sitter_language_pack", reason="needs the parse extra")
 
@@ -44,11 +44,11 @@ def write(root: Path, path: str, text: str = "") -> None:
     target.write_text(text, encoding="utf-8")
 
 
-def plugin(name: str) -> ConventionPlugin:
-    for framework in load_registry():
-        if framework.name == name:
-            return ConventionPlugin(framework)
-    raise AssertionError(f"no {name} entry in the registry")
+def plugin(name: str) -> FrameworkPlugin:
+    for found in framework_plugins():
+        if found.name == name:
+            return found
+    raise AssertionError(f"no {name} among the framework plugins")
 
 
 def laravel_project(root: Path) -> None:
@@ -118,26 +118,36 @@ def edge_targets(root: Path) -> dict[tuple[str, int], str]:
     return targets
 
 
-class TestRegistryFormat:
-    def test_one_file_per_framework(self) -> None:
-        assert [path.name for path in registry_files()] == [
-            "laravel.json",
-            "vue.json",
-        ]
-
-    def test_the_shipped_registry_loads(self) -> None:
-        assert [framework.name for framework in load_registry()] == ["laravel", "vue"]
-
-    def test_a_file_is_named_after_the_framework_inside_it(self) -> None:
+class TestFrameworkPackages:
+    def test_one_directory_per_framework(self) -> None:
         # A directory listing should say what is supported without opening
         # anything, the way the tag queries already do.
-        for path in registry_files():
-            assert load_framework(path.read_text(encoding="utf-8")).name == path.stem
+        assert framework_names() == ("laravel", "vue")
+
+    def test_every_directory_contributes_its_plugins(self) -> None:
+        assert [found.name for found in framework_plugins()] == ["laravel", "vue"]
+
+    def test_a_package_is_named_after_the_framework_inside_it(self) -> None:
+        import importlib
+
+        for name in framework_names():
+            module = importlib.import_module(f"repoatlas.plugins.frameworks.{name}")
+            assert [found.name for found in module.plugins()] == [name]
 
     def test_every_framework_declares_what_it_claims(self) -> None:
-        for framework in load_registry():
-            assert framework.kinds, framework.name
-            assert framework.detect, framework.name
+        for found in framework_plugins():
+            assert found.kinds, found.name
+
+    def test_a_framework_with_no_conventions_file_contributes_none(
+        self, tmp_path: Path
+    ) -> None:
+        # The right answer for a framework whose rules are all code.
+        assert support.convention_plugins(str(tmp_path / "__init__.py")) == ()
+
+    def test_a_broken_conventions_file_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "conventions.json").write_text("{not json", encoding="utf-8")
+        with pytest.raises(RegistryError, match="JSON"):
+            support.convention_plugins(str(tmp_path / "__init__.py"))
 
     def test_a_framework_without_a_name_is_refused(self) -> None:
         with pytest.raises(RegistryError, match="needs a name"):
@@ -168,26 +178,19 @@ class TestRegistryFormat:
         with pytest.raises(RegistryError, match="one framework"):
             load_framework("[]")
 
-    def test_a_broken_file_names_itself_in_the_error(self, tmp_path: Path) -> None:
-        # A framework quietly absent is a class of edges quietly missing, so
-        # loading fails loudly and says which file to look at.
-        (tmp_path / "broken.json").write_text("{not json", encoding="utf-8")
-        with pytest.raises(RegistryError, match=r"broken.json"):
-            load_registry(tmp_path)
-
-    def test_the_registry_is_part_of_the_toolchain_stamp(self) -> None:
+    def test_the_frameworks_are_part_of_the_toolchain_stamp(self) -> None:
         # A no-op re-index skips resolution, so a changed rule that did not
         # change the stamp would leave the old edges in place for ever.
         from repoatlas.store.incremental import current_toolchain
 
         assert current_toolchain() == current_toolchain()
-        assert "laravel" in registry_source()
 
-    def test_the_stamp_notices_a_file_being_renamed(self, tmp_path: Path) -> None:
-        (tmp_path / "a.json").write_text('{"name": "a", "rules": []}', encoding="utf-8")
-        before = registry_source(tmp_path)
-        (tmp_path / "a.json").rename(tmp_path / "b.json")
-        assert registry_source(tmp_path) != before
+    def test_the_stamp_covers_every_file_in_every_framework(self) -> None:
+        source = frameworks_source()
+        assert source == frameworks_source()
+        for name in framework_names():
+            assert f"{name}/conventions.json" in source
+            assert f"{name}/__init__.py" in source
 
 
 class TestDetection:
@@ -243,7 +246,7 @@ class TestDetection:
 
     def test_registering_the_same_name_twice_replaces_it(self) -> None:
         before = len(registered_plugins())
-        register(ConventionPlugin(load_registry()[0]))
+        register(plugin("laravel"))
         assert len(registered_plugins()) == before
 
 

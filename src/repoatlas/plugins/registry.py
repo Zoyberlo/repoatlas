@@ -1,26 +1,23 @@
 """Reading the convention registry, and resolving names with it.
 
-This is the only code that knows any framework exists, and it knows it the
-way a lookup table knows things: `conventions/laravel.json` says a `view`
-name goes under `resources/views` with dots as directories, and this builds
-the paths that rule allows and keeps the one that is a real file.
+This is where a naming convention stops being prose and starts being a
+lookup: `frameworks/laravel/conventions.json` says a `view` name goes under
+`resources/views` with dots as directories, and this builds the paths that
+rule allows and keeps the one that is a real file.
 
 Keeping the rules as data rather than as a class per framework is a bet
 about where the work goes. There are four rules here and there will be
 forty; each is a few lines of description and none of them needs a branch.
 Nothing else in the index changes when one is added.
 
-One framework per file, beside the tag queries that are already one per
-language. The unit is a framework rather than a language because a
-framework can span several: Laravel's conventions are written in PHP and in
-Blade, and each rule says which of them it applies to.
+A framework that needs more than data writes code in its own directory
+instead, and this module never learns about it. See `frameworks/`.
 
 The format
 ==========
 
-Each file in ``conventions/`` describes one framework, with a ``name``, a
-list of ``detect`` clauses and a list of ``rules``. Files are read in
-filename order, which is the order their rules are tried in.
+A framework's `conventions.json` has a ``name``, a list of ``detect``
+clauses and a list of ``rules``.
 
 Detection
 ---------
@@ -89,38 +86,10 @@ __all__ = [
     "RegistryError",
     "Rule",
     "load_framework",
-    "load_registry",
-    "registry_files",
-    "registry_source",
 ]
-
-_REGISTRY_DIR = Path(__file__).with_name("conventions")
-
 
 class RegistryError(ValueError):
     """The registry file says something this code cannot act on."""
-
-
-def registry_files(directory: Path | None = None) -> tuple[Path, ...]:
-    """Every convention file, in the order their rules are tried."""
-    return tuple(sorted((directory or _REGISTRY_DIR).glob("*.json")))
-
-
-def registry_source(directory: Path | None = None) -> str:
-    """The whole registry as one text, for the toolchain stamp.
-
-    A store's edges depend on these rules, and a no-op re-index skips
-    resolution entirely. Without the registry in the stamp, editing a
-    convention would leave every edge it used to produce in place and every
-    edge it newly allows missing, with nothing to show anything changed.
-
-    Names are included, so adding, removing or renaming a file changes the
-    stamp even when no rule inside one did.
-    """
-    return "\n".join(
-        f"{path.name}\n{path.read_text(encoding='utf-8')}"
-        for path in registry_files(directory)
-    )
 
 
 def _dig(data: Any, dotted: str) -> Any:
@@ -298,7 +267,10 @@ def load_framework(source: str) -> Framework:
     as an index quietly missing a whole class of edges, which is the sort
     of wrong that no test notices.
     """
-    entry = json.loads(source)
+    try:
+        entry = json.loads(source)
+    except json.JSONDecodeError as exc:
+        raise RegistryError(f"not readable as JSON: {exc}") from exc
     if not isinstance(entry, Mapping):
         raise RegistryError(f"a convention file holds one framework, not {entry!r}")
     name = entry.get("name")
@@ -310,22 +282,6 @@ def load_framework(source: str) -> Framework:
         detect=tuple(_detection_from(item) for item in entry.get("detect", ())),
         rules=tuple(_rule_from(item) for item in entry.get("rules", ())),
     )
-
-
-def load_registry(directory: Path | None = None) -> tuple[Framework, ...]:
-    """Read every framework in the registry directory.
-
-    A file that will not load stops the whole index rather than being
-    skipped. A framework silently absent is a class of edges silently
-    missing, and that is exactly the failure this project exists to avoid.
-    """
-    frameworks: list[Framework] = []
-    for path in registry_files(directory):
-        try:
-            frameworks.append(load_framework(path.read_text(encoding="utf-8")))
-        except (RegistryError, json.JSONDecodeError) as exc:
-            raise RegistryError(f"{path.name}: {exc}") from exc
-    return tuple(frameworks)
 
 
 def _studly(path: str) -> str:

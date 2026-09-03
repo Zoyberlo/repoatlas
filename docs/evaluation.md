@@ -164,13 +164,23 @@ a rule, it is writing thirty and never noticing that one of them stopped
 matching. A JSON file can be read whole in a minute. Thirty subclasses
 cannot.
 
-They sit one per file in `conventions/`, next to the tag queries that are
-already one per language, so a directory listing says what is supported
-without opening anything. The unit is a framework rather than a language
-because a framework can span several: Laravel's conventions are written in
-PHP and in Blade. A file that will not load stops the index rather than
-being skipped, since a framework silently absent is a class of edges
-silently missing.
+Each framework gets a directory under `plugins/frameworks/`, so a listing
+says what is supported without opening anything. The unit is a framework
+rather than a language because a framework spans languages and a language
+does not span frameworks: Laravel's conventions are written in PHP and in
+Blade, and splitting them by language would put one framework's rules in
+two places and let a change touch only one.
+
+The directory also settles where code goes when data runs out, which it
+will: Laravel's `route('users.show')` names a controller action through a
+table built from `routes/*.php`, and no path template describes that. It
+becomes a module in `frameworks/laravel/` whose plugin joins the tuple its
+`plugins()` returns, and the data engine never learns it exists.
+
+Every file under `frameworks/` is in the toolchain stamp, code included,
+because a change to either kind changes edges. A package that will not
+import stops the index rather than being skipped, since a framework
+silently absent is a class of edges silently missing.
 
 Two of them can claim the same reference kind. A Laravel back end with a
 Quasar front end writes `component` in Blade and in Vue and means different

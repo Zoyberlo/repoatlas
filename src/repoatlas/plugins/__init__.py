@@ -13,42 +13,31 @@ own. So the parser records what it saw, a reference of kind ``view`` whose
 name is ``users.index``, and a rule that recognises the project turns that
 into a path.
 
-The rules live in `conventions/`, one file per framework, beside the tag
-queries that are already one per language. There are two today and there
-will be more; each is a few lines of description and none needs a branch.
-Adding a framework is adding a file.
+Each framework gets a directory under `frameworks/`, holding the naming
+conventions it uses and, when data is not enough, the code that reads
+something else. Adding support for a framework is adding a directory;
+nothing central lists them.
 """
 
 from __future__ import annotations
 
 from .base import FrameworkPlugin, active_plugins, register, registered_plugins
-from .registry import (
-    ConventionPlugin,
-    Framework,
-    load_framework,
-    load_registry,
-    registry_files,
-    registry_source,
-)
+from .frameworks import framework_names, framework_plugins, frameworks_source
+from .registry import ConventionPlugin, Framework, load_framework
 
 __all__ = [
     "ConventionPlugin",
     "Framework",
     "FrameworkPlugin",
     "active_plugins",
+    "framework_names",
+    "framework_plugins",
+    "frameworks_source",
     "load_framework",
-    "load_registry",
     "register",
     "registered_plugins",
-    "registry_files",
-    "registry_source",
 ]
 
-
-def _register_registry() -> None:
-    """Put every framework in the registry into the plugin registry."""
-    for framework in load_registry():
-        register(ConventionPlugin(framework))
-
-
-_register_registry()
+for _plugin in framework_plugins():
+    register(_plugin)
+del _plugin

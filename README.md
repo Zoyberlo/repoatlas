@@ -303,10 +303,28 @@ that has ever read it. `view('users.index')` is a string; to Laravel it is
 `resources/views/users/index.blade.php`, and it is how a controller reaches
 the thing a user actually looks at.
 
-The rules are data, one file per framework in
-[`conventions/`](src/repoatlas/plugins/conventions), beside the tag queries
-that are already one per language. One module reads them, and nothing else
-in the index knows any framework exists.
+Each framework gets a directory under
+[`plugins/frameworks/`](src/repoatlas/plugins/frameworks), holding the
+naming conventions it uses as data. Adding support for one is adding a
+directory; nothing central lists them, and nothing else in the index knows
+any framework exists.
+
+```
+plugins/frameworks/
+  laravel/
+    __init__.py          what Laravel contributes
+    conventions.json     its naming rules
+  vue/
+    __init__.py
+    conventions.json
+```
+
+The unit is a framework rather than a language, because a framework spans
+languages and a language does not span frameworks: Laravel's conventions
+are written in PHP and in Blade, and each rule names the languages it
+applies to. When data is not enough, and Laravel's named routes will not
+be, the code goes in that framework's own directory and its `plugins()`
+returns it alongside.
 
 | Written | In | Resolves to |
 | --- | --- | --- |
@@ -356,7 +374,7 @@ the name cascade would match any function called `nope` and label the result
 - [x] **MCP server**: seven read-only tools over stdio, each answer budgeted
 - [x] **Framework conventions as data**: Laravel views, layouts, includes,
       Blade and Livewire components, and Vue components a bundler
-      auto-imports. Adding a framework is adding a JSON file
+      auto-imports. Adding a framework is adding a directory
 - [ ] **Documentation layer**: per-file summaries anchored to symbol ranges,
       cached by content hash and measured against the same harness
 
@@ -373,7 +391,7 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
-pytest                 # 634 tests
+pytest                 # 635 tests
 ruff check .
 mypy
 ```

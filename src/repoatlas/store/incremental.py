@@ -33,7 +33,7 @@ from ..parse.build import LanguageStats, _resolve_references
 from ..parse.extract import extract_source
 from ..parse.languages import SUPPORTED, LanguageUnavailable, query_source
 from ..parse.walk import SourceFile, WalkStats, iter_source_files
-from ..plugins import registry_source
+from ..plugins import frameworks_source
 from ..resolve.cascade import ResolutionStats
 from .database import FileRecord, IndexStore, content_digest, toolchain_version
 
@@ -114,10 +114,11 @@ class UpdateResult:
 def current_toolchain() -> str:
     """The stamp for this parser, its tag queries and the convention rules.
 
-    The registry belongs in the stamp even though it is not a query. A
-    no-op re-index skips resolution entirely, so editing a convention would
-    otherwise leave every edge it used to produce in place and every edge it
-    newly allows missing, with nothing to show that anything had changed.
+    The framework rules belong in the stamp even though they are not
+    queries. A no-op re-index skips resolution entirely, so editing a
+    convention would otherwise leave every edge it used to produce in place
+    and every edge it newly allows missing, with nothing to show that
+    anything had changed.
     """
     queries: list[tuple[str, str]] = []
     for spec in SUPPORTED:
@@ -125,7 +126,7 @@ def current_toolchain() -> str:
             queries.append((spec.name, query_source(spec.name)))
         except LanguageUnavailable:  # pragma: no cover - missing query file
             continue
-    queries.append(("conventions", registry_source()))
+    queries.append(("frameworks", frameworks_source()))
     return toolchain_version(queries)
 
 
