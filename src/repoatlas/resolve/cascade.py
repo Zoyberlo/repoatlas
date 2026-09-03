@@ -303,17 +303,21 @@ class Resolver:
         name = reference.name
 
         # Rung zero: a framework convention. Either the file the
-        # convention names is in the repository or it is not, so a hit
-        # is evidence rather than inference and ranks with a resolved
-        # import.
+        # convention names is in the repository or it is not, so a hit is
+        # evidence rather than inference and ranks with a resolved import.
         if reference.kind in _CONVENTION_KINDS:
-            resolved = self._by_convention(path, reference)
-            if resolved is not None:
-                return resolved, ResolutionTier.IMPORT_MAP
             identifier = _as_identifier(reference)
+            # An imported name follows its import. A convention is how a
+            # framework finds what nothing imported, so consulting it over
+            # an explicit import would answer a question nobody asked, and
+            # answer it wrongly wherever two files share a name.
+            if identifier is None or not self._is_imported(path, identifier):
+                resolved = self._by_convention(path, reference)
+                if resolved is not None:
+                    return resolved, ResolutionTier.IMPORT_MAP
             if identifier is None:
-                # Nothing below this rung can read the name, because it
-                # is not one an identifier cascade would recognise.
+                # Nothing below this rung can read the name, because it is
+                # not one an identifier cascade would recognise.
                 self.stats.unresolved += 1
                 return None, ResolutionTier.FUZZY
             name = identifier
@@ -389,6 +393,10 @@ class Resolver:
         self.stats.unresolved += 1
         return None, ResolutionTier.FUZZY
 
+    def _is_imported(self, path: str, name: str) -> bool:
+        file_imports = self.imports.get(path)
+        return file_imports is not None and file_imports.binding_for(name) is not None
+
     def _by_convention(self, path: str, reference: Reference) -> Symbol | None:
         """Ask each plugin what file this conventional name refers to."""
         for plugin in self.plugins:
@@ -398,6 +406,7 @@ class Resolver:
                 reference.kind,
                 reference.name,
                 from_path=path,
+                language=self.languages.get(path),
                 files=self.known_files,
             )
             if target_path is None or target_path == path:

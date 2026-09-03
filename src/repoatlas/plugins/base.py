@@ -24,19 +24,35 @@ __all__ = ["FrameworkPlugin", "active_plugins", "register", "registered_plugins"
 class FrameworkPlugin(Protocol):
     """Resolves the string-keyed references one framework uses."""
 
-    name: str
+    @property
+    def name(self) -> str:
+        """The framework this plugin speaks for."""
+        ...
 
-    kinds: tuple[str, ...]
-    """Reference kinds this plugin can resolve, such as ``view``."""
+    @property
+    def kinds(self) -> tuple[str, ...]:
+        """Reference kinds this plugin can resolve, such as ``view``."""
+        ...
 
     def detect(self, root: Path, files: frozenset[str]) -> bool:
         """Whether this repository uses the framework."""
         ...
 
     def resolve(
-        self, kind: str, name: str, *, from_path: str, files: frozenset[str]
+        self,
+        kind: str,
+        name: str,
+        *,
+        from_path: str,
+        language: str | None = None,
+        files: frozenset[str],
     ) -> str | None:
         """The file a conventional name refers to, or ``None``.
+
+        ``language`` is the language of the file the reference was written
+        in, and it is what stops two frameworks fighting over one kind: a
+        Laravel project with a Quasar front end has Blade and Vue templates
+        that both write ``component`` references, meaning different things.
 
         Returning ``None`` is the normal answer for a name whose target is
         not in this repository, and it must stay cheap: every unresolved

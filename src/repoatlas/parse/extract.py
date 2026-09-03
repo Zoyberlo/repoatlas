@@ -41,6 +41,13 @@ _REFERENCE_PREFIX = "reference."
 # How much a reference kind tells the resolver, most first. A call names a
 # callable; a bare member read could be anything.
 _REFERENCE_PRECEDENCE = {
+    # A string a framework reads as a filename is that, whatever else
+    # a generic pattern would make of the same span.
+    "view": 7,
+    "extends": 7,
+    "include": 7,
+    "component": 7,
+    "route": 7,
     "class": 6,
     "import": 5,
     "construct": 4,

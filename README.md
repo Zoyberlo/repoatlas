@@ -303,22 +303,32 @@ that has ever read it. `view('users.index')` is a string; to Laravel it is
 `resources/views/users/index.blade.php`, and it is how a controller reaches
 the thing a user actually looks at.
 
-A plugin recognises a repository and answers one question: what file does
-this conventional name refer to. Nothing else in the index knows the
-framework exists.
+The rules are data, in
+[`conventions.json`](src/repoatlas/plugins/conventions.json). One file reads
+it, and nothing else in the index knows any framework exists.
 
-| Written | Resolves to |
-| --- | --- |
-| `view('users.index')` | `resources/views/users/index.blade.php` |
-| `@extends('layouts.app')` | `resources/views/layouts/app.blade.php` |
-| `@include('partials.header')` | `resources/views/partials/header.blade.php` |
-| `<x-forms.input />` | `resources/views/components/forms/input.blade.php` |
-| `<x-data-table />` | `app/View/Components/DataTable.php` |
-| `<MyButton />`, `<my-button />` | the file the script block imported |
+| Written | In | Resolves to |
+| --- | --- | --- |
+| `view('users.index')` | PHP | `resources/views/users/index.blade.php` |
+| `@extends('layouts.app')` | Blade | `resources/views/layouts/app.blade.php` |
+| `@include('partials.header')` | Blade | `resources/views/partials/header.blade.php` |
+| `<x-forms.input />` | Blade | `resources/views/components/forms/input.blade.php` |
+| `<x-data-table />` | Blade | `app/View/Components/DataTable.php` |
+| `<livewire:user-list />` | Blade | `app/Livewire/UserList.php` |
+| `<UserCard />`, `<user-card />` | Vue | `src/components/**/UserCard.vue` |
 
-Detection reads the project's own manifest, not its directory names: a
-`resources/views` folder proves nothing, a `composer.json` requiring
-`laravel/framework` does.
+The Vue row is the one a bundler makes true. Quasar and its neighbours
+auto-import components, so a tag with no import beside it still names a
+file, at whatever depth it sits. A tag that *was* imported follows its
+import instead, because a convention is for finding what nothing imported.
+
+Two frameworks can claim the same reference kind, and in a Laravel back end
+with a Quasar front end they do: both write `component`. Each rule names the
+languages it applies to, so a Blade tag is never offered to Vue's rule.
+
+Detection reads the project's own manifest, not its directory names. A
+`resources/views` folder proves nothing; a `composer.json` requiring
+`laravel/framework` does, and a `package.json` requiring `quasar` does.
 
 A convention that resolves is evidence rather than inference, so it carries
 the same confidence as a resolved import. A convention that does not resolve
@@ -343,16 +353,17 @@ the name cascade would match any function called `nope` and label the result
 - [x] **Ranking**: personalised PageRank over the symbol graph, with a binary
       search that fits a map to a token budget
 - [x] **MCP server**: seven read-only tools over stdio, each answer budgeted
-- [x] **Framework plugins** for the string-keyed edges no generic parser can
-      see: Laravel views, layouts, includes and Blade components; Vue
-      single-file components in both spellings
+- [x] **Framework conventions as data**: Laravel views, layouts, includes,
+      Blade and Livewire components, and Vue components a bundler
+      auto-imports. Adding a framework is editing a JSON file
 - [ ] **Documentation layer**: per-file summaries anchored to symbol ranges,
       cached by content hash and measured against the same harness
 
 Known gaps, stated rather than buried: the ranking weights are judgement
-calls that no benchmark has yet settled, Kotlin is not supported, Laravel
-route names need a route table nothing yet reads, and the only committed
-oracle fixture is TypeScript.
+calls that no benchmark has yet settled, Laravel route and config names need
+tables nothing yet reads, no measurement says how many `view()` calls in a
+real project use a literal string rather than a built one, and the only
+committed oracle fixture is TypeScript.
 
 The full plan, including how tiers 3 and 4 of evaluation work and which
 benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md).
@@ -361,7 +372,7 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
-pytest                 # 609 tests
+pytest                 # 630 tests
 ruff check .
 mypy
 ```

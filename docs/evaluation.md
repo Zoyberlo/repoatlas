@@ -158,12 +158,33 @@ Detection reads a manifest rather than a directory layout, for the same
 reason. `resources/views` is a folder name anyone may use; a `composer.json`
 requiring `laravel/framework` is the project stating what it is.
 
+The rules are data rather than a class per framework, and the reason is the
+same one that put the harness before the extractor: the risk is not writing
+a rule, it is writing thirty and never noticing that one of them stopped
+matching. A JSON file can be read whole in a minute. Thirty subclasses
+cannot.
+
+Two of them can claim the same reference kind. A Laravel back end with a
+Quasar front end writes `component` in Blade and in Vue and means different
+things, so every rule names the languages it applies to. Without that the
+answer would depend on which framework happened to be listed first, which is
+the sort of correctness nobody notices losing.
+
+One ordering rule is worth stating. A convention is consulted only for a
+name nothing imported. Vue's auto-import makes `<UserCard />` mean
+`src/components/UserCard.vue`, but a file that explicitly imports a
+`UserCard` from somewhere else means the one it imported, and preferring the
+convention there would point confidently at the wrong file whenever two
+components share a name.
+
 What is not measured here is coverage: how many of a real Laravel project's
 view calls use a name that is a literal string at all. Calls like
 `view($template)` and `view('admin.' . $section)` are invisible to any
 static reader, and the fraction they represent is unknown until a real
-repository is measured. Precision is not in doubt, because a convention only
-claims an edge when the file it names exists. Recall is.
+repository is measured. The same question applies to Vue: how often a
+component tag is auto-imported rather than declared. Precision is not in
+doubt, because a convention only claims an edge when the file it names
+exists. Recall is.
 
 ### A dependency that segfaults
 
