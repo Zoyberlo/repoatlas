@@ -303,13 +303,21 @@ class TestMapRendering:
         assert "src/user.ts:" in rendered.text
 
     def test_entries_show_the_declaration_line(self, rendered) -> None:
-        assert "│export class User implements Greets {" in rendered.text
+        assert "export class User implements Greets {" in rendered.text
 
-    def test_omitted_lines_are_marked(self, rendered) -> None:
-        assert "⋮..." in rendered.text
+    def test_entries_carry_their_line_number(self, rendered) -> None:
+        # The number is what makes an entry an address an agent can open,
+        # and the gap between two numbers says how much was left out.
+        assert "    7  export class User implements Greets {" in rendered.text
+
+    def test_no_decoration_survives(self, rendered) -> None:
+        # Elision marks and bars carried no information once only
+        # declaration lines are shown, and they rendered badly.
+        assert "⋮" not in rendered.text
+        assert "│" not in rendered.text
 
     def test_members_are_indented_under_their_type(self, rendered) -> None:
-        assert "  │greet(name: string): string {" in rendered.text
+        assert "   14    greet(name: string): string {" in rendered.text
 
     def test_entries_are_in_source_order_within_a_file(self, rendered) -> None:
         block = rendered.text.split("src/user.ts:")[1]
@@ -342,7 +350,7 @@ class TestMapRendering:
         result = render_map(
             rank_symbols(snapshot), MapOptions(budget=100_000, show_kinds=True)
         )
-        assert "│class export class User" in result.text
+        assert "class export class User" in result.text
 
     def test_the_file_count_can_be_capped(self) -> None:
         snapshot = build_snapshot(FIXTURE, use_git=False).snapshot

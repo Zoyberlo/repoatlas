@@ -5,10 +5,14 @@ fit in a context window, so the question is never "what is in this
 repository" but "which two thousand tokens of it are worth spending". Every
 symbol included pushes another out.
 
-The output format follows aider's repo map, which most agent tooling has
-converged on: a file header, the declaration lines that matter, and ``⋮``
-where lines were left out. It needs no schema explanation because it looks
-like the source it summarises.
+The output is a file header followed by the declaration lines that
+matter, each prefixed with its line number and indented by nesting. That
+departs from aider's repo map, which marks omitted lines with ``⋮`` and
+shown ones with a bar, for two reasons. This map only ever shows
+declaration lines, so a marker on every entry carried no information and
+the elisions outnumbered the content. And a line number is both cheaper
+in tokens than an elision mark and more useful: every entry is already
+the ``path:line`` an agent hands to a file reader.
 
 Fitting the budget is a binary search over how many ranked symbols to keep.
 Rendering is cheap and estimating tokens is cheaper, so a dozen renders to
@@ -26,9 +30,6 @@ from .pagerank import RankedSymbol
 from .tokens import TokenEstimator, estimate_tokens
 
 __all__ = ["MapOptions", "RepoMap", "render_map"]
-
-_ELISION = "⋮..."
-
 
 @dataclass(frozen=True, slots=True)
 class MapOptions:
@@ -88,12 +89,16 @@ class RepoMap:
         return self.text
 
 
-def _entry_line(item: RankedSymbol, options: MapOptions, indent: str) -> str:
+def _entry_line(item: RankedSymbol, options: MapOptions, depth: int) -> str:
     symbol = item.symbol
     body = symbol.signature or _synthetic_signature(symbol)
     prefix = f"{symbol.kind.value} " if options.show_kinds else ""
-    suffix = f"   [{item.score:.5f}]" if options.show_scores else ""
-    return f"{indent}│{prefix}{body}{suffix}"
+    suffix = f"  [{item.score:.5f}]" if options.show_scores else ""
+    line = symbol.name_range.start.line + 1
+    # Width 5 keeps columns aligned up to 99,999 lines, which covers any
+    # file a person wrote by hand.
+    indent = "  " * depth
+    return f"{line:>5}  {indent}{prefix}{body}{suffix}"
 
 
 def _synthetic_signature(symbol: Symbol) -> str:
@@ -153,17 +158,9 @@ def _render(selected: Sequence[RankedSymbol], options: MapOptions) -> tuple[str,
     for path in ordered_files:
         entries = sorted(by_file[path], key=lambda item: item.symbol.name_range)
         lines.append(f"{path}:")
-        previous_line = -1
         for item in entries:
-            start = item.symbol.name_range.start.line
-            # An elision mark stands for the lines not shown. Consecutive
-            # declarations get one mark between them, not one each.
-            if start > previous_line + 1:
-                lines.append(_ELISION)
             depth = _depth(item.symbol, by_file[path])
-            lines.append(_entry_line(item, options, "  " * depth))
-            previous_line = item.symbol.full_range.end.line if item.symbol.full_range else start
-        lines.append(_ELISION)
+            lines.append(_entry_line(item, options, depth))
         lines.append("")
     text = "\n".join(lines).rstrip() + "\n" if lines else ""
     return text, len(ordered_files)

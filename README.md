@@ -171,27 +171,33 @@ repoatlas map . --budget 300
 ```
 
 ```
-src/repoatlas/model.py:
-⋮...
-│class SymbolKind(enum.Enum):
-⋮...
-│class Position:
-⋮...
-│class SourceRange:
-  │def of(cls, start_line: int, start_char: int, end_line: int, end_char: int) -> SourceRange:
-⋮...
-│class Symbol:
-⋮...
-
 src/repoatlas/store/database.py:
-⋮...
-│class IndexStore:
-⋮...
+  118  class IndexStore:
+
+src/repoatlas/model.py:
+   52  class SymbolKind(enum.Enum):
+  166  class Position:
+  181  class SourceRange:
+  196    def of(cls, start_line: int, start_char: int, end_line: int, end_char: int) -> SourceRange:
+  237  class Symbol:
+  325  class IndexSnapshot:
+
+src/repoatlas/eval/facts.py:
+   66  class DefFact:
+
+src/repoatlas/eval/metrics.py:
+   47  class Score:
+
+src/repoatlas/cli.py:
+   69  def build_parser() -> argparse.ArgumentParser:
+  583  def main(argv: Sequence[str] | None = None) -> int:
 ```
 
-Importance is personalised PageRank over the symbol graph, so a symbol
-matters when the things that refer to it matter. Pointing it at what you are
-working on changes the answer:
+Every entry is a `path:line` an agent can open directly, and the gap
+between two numbers says how much was left out. Importance is personalised
+PageRank over the symbol graph, so a symbol matters when the things that
+refer to it matter. Pointing it at what you are working on changes the
+answer:
 
 ```bash
 repoatlas map . --budget 300 --focus src/repoatlas/store/database.py
