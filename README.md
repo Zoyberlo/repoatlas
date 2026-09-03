@@ -3,8 +3,10 @@
 A universal code index for LLM coding agents, built so its accuracy can be
 measured rather than asserted.
 
-**Status: early. The evaluation harness works; the extractor does not exist
-yet.** That order is deliberate, and the next section explains why.
+**Status: early. The extractor finds definitions and scores 1.00 against a
+real `scip-typescript` index; cross-file reference resolution is the next
+stage and currently scores zero, on purpose.** The evaluation harness was
+built first, and the next section explains why.
 
 ## Why this exists, and why it starts with tests
 
@@ -33,34 +35,65 @@ day one. Hence: oracle harness first, extractor second.
 
 ## What works today
 
-Compare any index against a compiler-backed oracle and get a report that does
-not flatter itself:
+Parse a repository and score it against a compiler-backed oracle, in one
+command:
 
 ```bash
-pip install -e .
-scip-typescript index --output oracle.scip
-repoatlas compare candidate.scip oracle.scip
+pip install -e ".[parse]"
+repoatlas compare tests/fixtures/tsdemo tests/fixtures/tsdemo/index.scip
 ```
 
 ```
-# Index accuracy: repoatlas tree-sitter vs scip-typescript 0.4.0
+# Index accuracy: repoatlas 0.1.0 (tree-sitter) vs scip-typescript 0.4.0
 
-Compared 412 files.
+Compared 2 files.
+
+Symbol kinds in scope: class, constant, constructor, enum, field, function,
+interface, macro, method, property, trait, type_alias, variable.
+Not scored, because the oracle emits no such edge: 8 edges of kind contains.
 
 ## Headline
 | kind | precision | recall | F1 | tp | fp | fn |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| definitions | 0.981 | 0.964 | 0.972 | 3204 | 62 | 120 |
-| references | 0.912 | 0.671 | 0.773 | 8891 | 858 | 4359 |
-
-Reference F1 0.773 [0.741, 0.802] (bca, 2000 resamples over files).
+| definitions | 1.000 | 1.000 | 1.000 | 13 | 0 | 0 |
+| references | 0.000 | 0.000 | 0.000 | 0 | 0 | 29 |
 ```
+
+That reference row is the honest zero: the extractor collects references but
+resolves none yet, so it claims no reference edges and the report says so
+rather than omitting the row. The `index.scip` in that fixture is genuine
+`scip-typescript` output, committed so CI re-checks these numbers on every
+platform without a Node toolchain.
+
+Parse anything and see what came out:
+
+```bash
+repoatlas index . --max-error-rate 0.02
+```
+
+```
+files:      26
+symbols:    810
+references: 2087 (unresolved)
+elapsed:    0.30s (88 files/s)
+
+language      files  symbols    refs   errors
+python           26      810    2087    0.0%
+```
+
+The error column is the first thing to check for a new language: published
+tree-sitter error rates run from 0.2% of files in Go to 53% in C, and a
+language that comes out high needs its grammar questioned before any accuracy
+number from it is believed.
 
 The report also carries a per-edge-kind table, a dangling-edge count, and a
 confidence calibration table that checks whether an edge claiming 0.95
 confidence is actually right 95% of the time. No other tool in this space
 publishes that last one, and it is what turns a resolution cascade from a
 guess into a tuned ladder.
+
+Languages: Python, TypeScript, TSX, JavaScript, PHP. Adding one is a query
+file and a registry line; the harness then says whether it worked.
 
 Before trusting the binary SCIP reader with a new indexer version:
 
@@ -71,6 +104,25 @@ repoatlas verify-oracle oracle.scip oracle.json
 
 That cross-checks this project's understanding of the SCIP schema against the
 SCIP CLI's own output, on the same index.
+
+## What the first real measurement changed
+
+Running against genuine `scip-typescript` output immediately falsified two
+assumptions, which is the argument for building the harness first:
+
+**Producers disagree about scope, not just accuracy.** A compiler-backed
+indexer records every binding it resolves, including each function parameter
+and a symbol for the file itself. A map for an agent has no use for either.
+Unfiltered, that difference read as 68% recall; it was not a miss. The
+comparison now states its scope and the report prints it.
+
+**An oracle does not cover every edge kind.** SCIP records occurrences, not
+structure, so it never emits a containment edge. Scoring ours against it
+marked every one a false positive for a claim the oracle does not contradict.
+Edge kinds the oracle never emits are now reported as unscored.
+
+Both fixes make the numbers smaller in some places and larger in others. The
+point is that they now measure something.
 
 ## Design commitments
 
@@ -102,10 +154,12 @@ runs wherever Python does, on Linux, macOS, Windows and WSL.
 ## Roadmap
 
 1. ~~Data model, SCIP oracle reader, comparison harness, metrics~~ done
-2. Tree-sitter extractor with per-language tag queries, scored against the
-   harness from the first commit
+2. ~~Tree-sitter extractor with per-language tag queries, scored against the
+   harness from the first commit~~ done: Python, TypeScript, TSX, JavaScript,
+   PHP, at 1.00 definition precision and recall on the TypeScript fixture
 3. Cross-file resolution cascade, its confidence tiers tuned against oracle
-   calibration rather than guessed
+   calibration rather than guessed. This is what turns the reference row from
+   zero into a number
 4. SQLite storage with content-hash incremental updates
 5. Ranking: personalised PageRank over the symbol graph, budgeted output
 6. MCP server, a small number of tools, every output under a token budget
@@ -118,8 +172,8 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 ## Development
 
 ```bash
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-pytest                 # 237 tests
+python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
+pytest                 # 340 tests
 ruff check .
 mypy
 ```

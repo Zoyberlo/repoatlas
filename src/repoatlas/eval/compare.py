@@ -11,8 +11,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from ..model import Edge, IndexSnapshot
+from ..model import Edge, IndexSnapshot, SymbolKind
 from .facts import (
+    NAVIGABLE_KINDS,
     MatchPolicy,
     MatchResult,
     RefFact,
@@ -41,6 +42,24 @@ class ComparisonOptions:
     collapse_edge_kinds: bool = True
     compare_symbol_kinds: bool = False
     restrict_to_oracle_paths: bool = True
+
+    symbol_kinds: frozenset[SymbolKind] | None = NAVIGABLE_KINDS
+    """Which symbol kinds are in scope; ``None`` compares everything.
+
+    Defaults to the symbols an agent would navigate to. Compiler-backed
+    oracles also record parameters, locals and a symbol for the file itself,
+    which a map has no use for; counting those as misses would measure a
+    difference in purpose rather than in accuracy.
+    """
+
+    restrict_to_oracle_edge_kinds: bool = True
+    """Score only the edge kinds the oracle actually emits.
+
+    SCIP records occurrences, not structure, so it has nothing to say about
+    containment. Scoring a containment edge against it would mark every one
+    a false positive for being a claim the oracle never contradicts.
+    """
+
     bootstrap_resamples: int = 2000
     bootstrap_seed: int = 20260903
     confidence_level: float = 0.95
@@ -67,6 +86,14 @@ class Comparison:
     encoding_mismatch: bool = False
     definition_result: MatchResult | None = None
     reference_result: MatchResult | None = None
+
+    symbol_kind_scope: frozenset[SymbolKind] | None = None
+    """Which symbol kinds were in scope, so the report can say so."""
+
+    unscored_edge_kinds: list[str] = field(default_factory=list)
+    """Edge kinds the candidate emits that the oracle never does."""
+
+    unscored_edges: int = 0
 
     @property
     def dangling_rate(self) -> float:
@@ -101,6 +128,13 @@ class Comparison:
             "dangling_edges": len(self.dangling_edges),
             "dangling_rate": round(self.dangling_rate, 4),
             "unsited_edges": len(self.unsited_edges),
+            "unscored_edge_kinds": self.unscored_edge_kinds,
+            "unscored_edges": self.unscored_edges,
+            "symbol_kind_scope": (
+                sorted(kind.value for kind in self.symbol_kind_scope)
+                if self.symbol_kind_scope is not None
+                else None
+            ),
             "tolerant_matches": {
                 "definitions": self.tolerant_definition_matches,
                 "references": self.tolerant_reference_matches,
@@ -167,13 +201,16 @@ def compare_snapshots(
         case_fold=options.case_fold_paths,
         include_kind=options.compare_symbol_kinds,
         paths=scope,
+        kinds=options.symbol_kinds,
     )
     oracle_defs = definition_facts(
         oracle,
         case_fold=options.case_fold_paths,
         include_kind=options.compare_symbol_kinds,
         paths=scope,
+        kinds=options.symbol_kinds,
     )
+    report.symbol_kind_scope = options.symbol_kinds
     definition_result = match_facts(candidate_defs, oracle_defs, policy=options.policy)
     report.definition_result = definition_result
     report.definitions = _score(definition_result)
@@ -199,6 +236,18 @@ def compare_snapshots(
             report.dangling_edges.append(edge)
         else:
             report.unsited_edges.append(edge)
+
+    if options.restrict_to_oracle_edge_kinds:
+        oracle_kinds = {fact.kind for fact in oracle_refs}
+        out_of_scope = {fact.kind for fact in candidate_refs} - oracle_kinds
+        if out_of_scope:
+            report.unscored_edge_kinds = sorted(out_of_scope)
+            report.unscored_edges = sum(
+                1 for fact in candidate_refs if fact.kind in out_of_scope
+            )
+            candidate_refs = [
+                fact for fact in candidate_refs if fact.kind in oracle_kinds
+            ]
 
     reference_result = match_facts(candidate_refs, oracle_refs, policy=options.policy)
     report.reference_result = reference_result

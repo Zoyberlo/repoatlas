@@ -254,6 +254,15 @@ class Symbol:
     signature: str | None = None
     language: str | None = None
     documentation: str | None = None
+    local: bool = False
+    """True when nothing outside this symbol's own scope can name it.
+
+    A variable declared inside a function body is a definition, but not one
+    anybody navigates to, and an index that lists them buries the symbols
+    that matter. The distinction is scope rather than kind: an exported
+    module-level constant and a loop counter are both bindings.
+    """
+
     synthetic: bool = False
     """True for symbols invented to stand in for a file or module.
 

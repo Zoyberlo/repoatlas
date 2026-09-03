@@ -366,3 +366,126 @@ class TestReporting:
         text = to_markdown(compare_snapshots(candidate, oracle))
         assert "Dangling edges" in text
         assert "1 (" in text
+
+
+class TestComparisonScope:
+    """The comparison states what it is comparing, rather than assuming."""
+
+    def test_locals_are_out_of_scope_by_default(
+        self, candidate: IndexSnapshot, oracle: IndexSnapshot
+    ) -> None:
+        # A compiler-backed oracle records every binding it resolves. A map
+        # for an agent has no use for a loop counter, so neither side is
+        # penalised for the other's choice.
+        oracle.add_symbol(
+            Symbol(
+                id="local 1",
+                name="temp",
+                kind=SymbolKind.VARIABLE,
+                path="src/app.ts",
+                name_range=SourceRange.of(2, 8, 2, 12),
+                local=True,
+            )
+        )
+        result = compare_snapshots(candidate, oracle)
+        assert result.definitions.false_negatives == 0
+
+    def test_locals_can_be_brought_into_scope(
+        self, candidate: IndexSnapshot, oracle: IndexSnapshot
+    ) -> None:
+        from repoatlas.eval.facts import definition_facts
+
+        oracle.add_symbol(
+            Symbol(
+                id="local 1",
+                name="temp",
+                kind=SymbolKind.VARIABLE,
+                path="src/app.ts",
+                name_range=SourceRange.of(2, 8, 2, 12),
+                local=True,
+            )
+        )
+        assert len(definition_facts(oracle, include_local=True)) > len(
+            definition_facts(oracle)
+        )
+
+    def test_a_kind_outside_the_scope_is_neither_right_nor_wrong(
+        self, candidate: IndexSnapshot, oracle: IndexSnapshot
+    ) -> None:
+        for snapshot in (candidate, oracle):
+            snapshot.add_symbol(
+                Symbol(
+                    id=f"param:{id(snapshot)}",
+                    name="label",
+                    kind=SymbolKind.PARAMETER,
+                    path="src/app.ts",
+                    name_range=SourceRange.of(1, 20, 1, 25),
+                )
+            )
+        result = compare_snapshots(candidate, oracle)
+        assert result.definitions.f1 == pytest.approx(1.0)
+        assert result.symbol_kind_scope is not None
+        assert SymbolKind.PARAMETER not in result.symbol_kind_scope
+
+    def test_comparing_every_kind_can_be_asked_for(
+        self, candidate: IndexSnapshot, oracle: IndexSnapshot
+    ) -> None:
+        oracle.add_symbol(
+            Symbol(
+                id="param:oracle-only",
+                name="label",
+                kind=SymbolKind.PARAMETER,
+                path="src/app.ts",
+                name_range=SourceRange.of(1, 20, 1, 25),
+            )
+        )
+        result = compare_snapshots(
+            candidate, oracle, ComparisonOptions(symbol_kinds=None)
+        )
+        assert result.definitions.false_negatives == 1
+
+    def test_an_edge_kind_the_oracle_never_emits_is_not_scored(
+        self, candidate: IndexSnapshot, oracle: IndexSnapshot
+    ) -> None:
+        # SCIP records occurrences, not structure, so it has nothing to say
+        # about containment; marking ours wrong would punish a claim the
+        # oracle does not contradict.
+        candidate.add_edge(
+            Edge(
+                src_id=SYM_USER,
+                dst_id=SYM_GREET,
+                kind=EdgeKind.CONTAINS,
+                site_path="src/user.ts",
+                site_range=SourceRange.of(1, 2, 1, 7),
+            )
+        )
+        result = compare_snapshots(candidate, oracle)
+        assert result.unscored_edge_kinds == ["contains"]
+        assert result.unscored_edges == 1
+        assert result.references.false_positives == 0
+
+    def test_those_edges_can_be_scored_on_request(
+        self, candidate: IndexSnapshot, oracle: IndexSnapshot
+    ) -> None:
+        candidate.add_edge(
+            Edge(
+                src_id=SYM_USER,
+                dst_id=SYM_GREET,
+                kind=EdgeKind.CONTAINS,
+                site_path="src/user.ts",
+                site_range=SourceRange.of(1, 2, 1, 7),
+            )
+        )
+        result = compare_snapshots(
+            candidate, oracle, ComparisonOptions(restrict_to_oracle_edge_kinds=False)
+        )
+        assert result.references.false_positives == 1
+        assert result.unscored_edges == 0
+
+    def test_the_json_report_records_the_scope(
+        self, candidate: IndexSnapshot, oracle: IndexSnapshot
+    ) -> None:
+        payload = json.loads(to_json(compare_snapshots(candidate, oracle)))
+        assert "symbol_kind_scope" in payload
+        assert "class" in payload["symbol_kind_scope"]
+        assert payload["unscored_edges"] == 0

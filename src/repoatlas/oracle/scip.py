@@ -140,19 +140,28 @@ _ENCODING_BY_NAME = {
     "utf32codeunitoffsetfromlinestart": PositionEncoding.UTF32,
 }
 
-# SCIP ``SymbolInformation.Kind`` is a large enum whose numbers are unstable
-# across schema versions, so kinds are taken from the symbol descriptor
-# suffix instead. This table only maps the descriptor forms.
+# SCIP descriptors encode where a symbol sits in the syntax, not what it is.
+# A `#` suffix covers every named type alike, so a class, an interface and a
+# type alias are indistinguishable from the symbol string; `#` is reported as
+# CLASS as the commonest case, and comparisons that care should treat the
+# type-like kinds as one family rather than expect an exact match.
+#
+# Two things the descriptor chain *can* settle are handled in `parse_symbol`:
+# whether a `().` is a method or a free function, and whether a `.` term is a
+# field or a variable, both of which follow from the preceding descriptor.
 _DESCRIPTOR_KIND = {
     "/": SymbolKind.NAMESPACE,
     "#": SymbolKind.CLASS,
     ".": SymbolKind.VARIABLE,
-    "().": SymbolKind.METHOD,
+    "().": SymbolKind.FUNCTION,
     ":": SymbolKind.UNKNOWN,
     "!": SymbolKind.MACRO,
     "[]": SymbolKind.PARAMETER,
     "()": SymbolKind.PARAMETER,
 }
+
+# scip-typescript spells a constructor this way inside a type descriptor.
+_CONSTRUCTOR_DESCRIPTOR_NAMES = frozenset({"<constructor>", "constructor", "__init__"})
 
 _KIND_BY_NAME = {
     "class": SymbolKind.CLASS,
@@ -319,13 +328,17 @@ def parse_symbol(symbol: str) -> ParsedSymbol:
     kind = SymbolKind.UNKNOWN
     if descriptors:
         kind = _DESCRIPTOR_KIND.get(_descriptor_suffix(descriptors[-1]), SymbolKind.UNKNOWN)
-        # A term directly inside a type is a field, not a loose variable.
-        if (
-            kind is SymbolKind.VARIABLE
-            and len(descriptors) >= 2
-            and _descriptor_suffix(descriptors[-2]) == "#"
-        ):
+        inside_type = any(_descriptor_suffix(d) == "#" for d in descriptors[:-1])
+        # A term directly inside a type is a field, not a loose variable, and
+        # a callable inside one is a method rather than a free function.
+        if kind is SymbolKind.VARIABLE and inside_type:
             kind = SymbolKind.FIELD
+        elif kind is SymbolKind.FUNCTION and inside_type:
+            kind = (
+                SymbolKind.CONSTRUCTOR
+                if _descriptor_name(descriptors[-1]) in _CONSTRUCTOR_DESCRIPTOR_NAMES
+                else SymbolKind.METHOD
+            )
     return ParsedSymbol(
         raw=symbol,
         is_local=False,
@@ -674,6 +687,10 @@ def _build_snapshot(
                     qualified_name=parsed.qualified_name or None,
                     language=doc.language or None,
                     documentation="\n".join(docs) or None,
+                    # SCIP spells a scope-local binding `local 4`, with no
+                    # package or descriptors, precisely because nothing
+                    # outside the file can refer to it.
+                    local=parsed.is_local,
                 )
             )
             scopes.append((body, occ.symbol))

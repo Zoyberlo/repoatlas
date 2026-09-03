@@ -207,3 +207,70 @@ class TestParser:
             main(["--version"])
         assert exit_info.value.code == 0
         assert "repoatlas" in capsys.readouterr().out
+
+
+tree_sitter = pytest.importorskip("tree_sitter", reason="needs the parse extra")
+pytest.importorskip("tree_sitter_language_pack", reason="needs the parse extra")
+
+FIXTURE_REPO = Path(__file__).parent / "fixtures" / "tsdemo"
+
+
+class TestIndex:
+    @pytest.fixture
+    def project(self, tmp_path: Path) -> Path:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "a.py").write_text(
+            "class A:\n    def m(self): pass\n", encoding="utf-8"
+        )
+        (tmp_path / "src" / "b.ts").write_text(
+            "export function f(): void {}\n", encoding="utf-8"
+        )
+        return tmp_path
+
+    def test_reports_what_it_parsed(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert main(["index", str(project), "--no-git"]) == 0
+        out = capsys.readouterr().out
+        assert "files:      2" in out
+        assert "python" in out
+        assert "typescript" in out
+
+    def test_json_output_carries_the_per_language_breakdown(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(["index", str(project), "--no-git", "--format", "json"])
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["files"] == 2
+        assert payload["by_language"]["python"]["files"] == 1
+        assert payload["by_language"]["python"]["error_rate"] == 0.0
+
+    def test_the_error_gate_passes_clean_sources(self, project: Path) -> None:
+        assert main(["index", str(project), "--no-git", "--max-error-rate", "0.0"]) == 0
+
+    def test_the_error_gate_fails_broken_sources(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        (project / "src" / "broken.py").write_text("class Broken(:\n", encoding="utf-8")
+        assert main(["index", str(project), "--no-git", "--max-error-rate", "0.0"]) == 1
+        assert "exceeds the allowed" in capsys.readouterr().err
+
+    def test_rejects_a_file_where_a_directory_is_wanted(self, project: Path) -> None:
+        with pytest.raises(SystemExit, match="not a directory"):
+            main(["index", str(project / "src" / "a.py")])
+
+
+class TestCompareAgainstADirectory:
+    def test_parses_a_repository_and_scores_it(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The whole loop in one command: parse the fixture project, score it
+        # against the real scip-typescript index committed beside it.
+        exit_code = main(
+            ["compare", str(FIXTURE_REPO), str(FIXTURE_REPO / "index.scip")]
+        )
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "repoatlas" in out
+        assert "scip-typescript" in out
+        assert "| definitions | 1.000 | 1.000 | 1.000 |" in out

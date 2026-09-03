@@ -26,15 +26,24 @@ Scope: does the extractor see what is in one file?
   files overall, with C at 53% and Java at 0.5% ([arXiv:2509.04936]). Kotlin,
   PHP and Vue have no published figure, so measure them here.
 
-Status: the harness for this tier lands with the extractor. The data model
-it will emit is already fixed in `repoatlas.model`.
+Status: partly built. `repoatlas index --max-error-rate` reports the error
+rate per language and can fail a build on it, and `tests/test_extract.py`
+carries the golden and property tests. The caret-assertion fixture format is
+not yet wired up; the per-language expectations live in Python for now.
 
 ## Tier 2: index correctness against an oracle
 
 Scope: does the index describe cross-file reality correctly?
 
-This tier is implemented today. An oracle is any producer that resolves
-names with a real compiler front end. SCIP indexers are first because one
+This tier is implemented, and it is what the extractor is scored by. The
+one-command form parses a repository and compares it in place:
+
+```bash
+repoatlas compare path/to/repo oracle.scip
+```
+
+An oracle is any producer that resolves names with a real compiler front
+end. SCIP indexers are first because one
 format covers TypeScript, Python, Java, Kotlin and PHP, and because their
 output is a file rather than a live server, which makes runs reproducible.
 
@@ -64,7 +73,8 @@ What is reported, and why each matters:
 | Confidence calibration | An edge claiming 0.95 should be right 95% of the time. This is what turns the resolution cascade from a guess into a tuned ladder. |
 | Bootstrap intervals over files | Whether a change is real. Files are the resampling unit because errors cluster: one badly parsed file emits a burst of wrong edges. |
 
-Two comparison choices are deliberate and worth knowing about:
+Three comparison choices are deliberate, and the last two were forced by
+the first real run against `scip-typescript` rather than anticipated:
 
 **Matching is by location, not by name.** A tree-sitter extractor invents its
 own symbol ids while `scip-typescript` emits SCIP symbol strings carrying
@@ -81,6 +91,19 @@ error. Use `--policy exact` to turn it off.
 `scip-typescript` indexes what `tsconfig.json` includes. Scoring against
 files the oracle never looked at would count correct edges as false
 positives. `--all-paths` overrides this.
+
+**Navigable symbols only, by default.** A compiler-backed indexer records
+every binding it resolves, including each function parameter, every local,
+and a symbol standing for the file itself. A map for an agent has no use for
+any of those. Left unfiltered this reads as a recall failure when it is a
+difference in purpose, so the scope is stated explicitly and printed in the
+report. `ComparisonOptions(symbol_kinds=None)` compares everything.
+
+**Only the edge kinds the oracle emits.** SCIP records occurrences, not
+structure, so it never emits a containment edge. Scored against it, every
+containment edge is a false positive for a claim the oracle does not
+contradict. Such kinds are counted and reported as unscored rather than
+wrong; `restrict_to_oracle_edge_kinds=False` scores them anyway.
 
 ### Targets
 

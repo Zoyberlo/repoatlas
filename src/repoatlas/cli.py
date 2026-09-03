@@ -12,25 +12,38 @@ Three commands, matching the three things you do with an oracle:
     the same index. Run once per indexer version before trusting any number
     the binary path produces.
 
-``compare``
-    Score one index against another and write the report.
+``index``
+    Parse a repository and report what came out, including the per-language
+    syntax-error rate, which is the first thing to check before believing
+    any accuracy number from that language.
 
-No dependencies beyond the standard library, so the harness runs in CI
-without installing a parser toolchain.
+``compare``
+    Score one index against another and write the report. Either side may
+    be a repository directory, which is parsed on the spot, so scoring the
+    extractor against a compiler-backed oracle is a single command.
+
+The harness itself needs nothing beyond the standard library, so oracle
+comparison runs in CI without a parser toolchain. Only ``index``, and
+``compare`` when handed a directory, require the ``parse`` extra.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import __version__
 from .eval.compare import ComparisonOptions, compare_snapshots
 from .eval.report import to_json, to_markdown
 from .model import IndexSnapshot
 from .oracle.scip import ScipError, cross_check, read_scip
+
+if TYPE_CHECKING:  # pragma: no cover - imported only for type checking
+    from .parse.build import BuildResult
 
 __all__ = ["build_parser", "main"]
 
@@ -60,8 +73,26 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("binary", type=Path, help="the .scip file")
     verify.add_argument("json_dump", type=Path, help="output of scip print --json")
 
+    index = subcommands.add_parser("index", help="parse a repository and report on it")
+    index.add_argument("root", type=Path, help="the repository to parse")
+    index.add_argument(
+        "--format", choices=("text", "json"), default="text"
+    )
+    index.add_argument(
+        "--no-git",
+        action="store_true",
+        help="walk the filesystem instead of asking git which files are tracked",
+    )
+    index.add_argument(
+        "--max-error-rate",
+        type=float,
+        help="exit non-zero when more than this share of files fail to parse",
+    )
+
     compare = subcommands.add_parser("compare", help="score a candidate index against an oracle")
-    compare.add_argument("candidate", type=Path)
+    compare.add_argument(
+        "candidate", type=Path, help="a SCIP index, or a repository to parse"
+    )
     compare.add_argument("oracle", type=Path)
     compare.add_argument(
         "--format", choices=("markdown", "json"), default="markdown"
@@ -98,13 +129,75 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build(root: Path, *, use_git: bool = True) -> BuildResult:
+    """Parse a repository, reporting a missing parser extra clearly.
+
+    The import is deferred so the oracle commands keep working when the
+    parse extra is not installed.
+    """
+    try:
+        from .parse.build import build_snapshot
+    except ImportError as exc:  # pragma: no cover - depends on the extra
+        raise SystemExit(
+            f"repoatlas: parsing needs the extra: pip install 'repoatlas[parse]' ({exc})"
+        ) from None
+    try:
+        return build_snapshot(root, use_git=use_git)
+    except NotADirectoryError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+
+
 def _load(path: Path) -> IndexSnapshot:
+    """Read a SCIP index, or parse a directory into one."""
+    if path.is_dir():
+        return _build(path).snapshot
     try:
         return read_scip(path)
     except FileNotFoundError:
         raise SystemExit(f"repoatlas: no such file: {path}") from None
     except ScipError as exc:
         raise SystemExit(f"repoatlas: cannot read {path}: {exc}") from None
+
+
+def _cmd_index(args: argparse.Namespace) -> int:
+    result = _build(args.root, use_git=not args.no_git)
+    if args.format == "json":
+        print(json.dumps(result.as_dict(), indent=2))
+    else:
+        real = sum(1 for s in result.snapshot.symbols.values() if not s.synthetic)
+        print(f"files:      {result.files}")
+        print(f"symbols:    {real}")
+        print(f"references: {len(result.references)} (unresolved)")
+        print(f"elapsed:    {result.duration_seconds:.2f}s "
+              f"({result.throughput():.0f} files/s)")
+        if result.by_language:
+            print()
+            print(f"{'language':<12}{'files':>7}{'symbols':>9}{'refs':>8}{'errors':>9}")
+            for name, stats in sorted(result.by_language.items()):
+                print(
+                    f"{name:<12}{stats.files:>7}{stats.symbols:>9}"
+                    f"{stats.references:>8}{stats.error_rate:>8.1%}"
+                )
+        skipped = result.walk
+        if skipped.too_large or skipped.unreadable:
+            print()
+            print(
+                f"skipped: {skipped.too_large} too large, "
+                f"{skipped.unreadable} unreadable"
+            )
+        if result.failures:
+            print()
+            print(f"{len(result.failures)} file(s) failed to parse:", file=sys.stderr)
+            for path, reason in result.failures[:10]:
+                print(f"  - {path}: {reason}", file=sys.stderr)
+    if args.max_error_rate is not None and result.error_rate > args.max_error_rate:
+        print(
+            f"parse error rate {result.error_rate:.1%} exceeds the allowed "
+            f"{args.max_error_rate:.1%}",
+            file=sys.stderr,
+        )
+        return _EXIT_FAILED_CHECK
+    return _EXIT_OK
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
@@ -175,6 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     handlers = {
         "inspect": _cmd_inspect,
+        "index": _cmd_index,
         "verify-oracle": _cmd_verify_oracle,
         "compare": _cmd_compare,
     }

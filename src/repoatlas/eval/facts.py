@@ -26,9 +26,10 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Literal, Union
 
-from ..model import Edge, EdgeKind, IndexSnapshot, SourceRange, Symbol
+from ..model import Edge, EdgeKind, IndexSnapshot, SourceRange, Symbol, SymbolKind
 
 __all__ = [
+    "NAVIGABLE_KINDS",
     "DefFact",
     "Fact",
     "FactSet",
@@ -99,22 +100,63 @@ class RefFact:
         )
 
 
+NAVIGABLE_KINDS = frozenset(
+    {
+        SymbolKind.CLASS,
+        SymbolKind.INTERFACE,
+        SymbolKind.TRAIT,
+        SymbolKind.ENUM,
+        SymbolKind.TYPE_ALIAS,
+        SymbolKind.FUNCTION,
+        SymbolKind.METHOD,
+        SymbolKind.CONSTRUCTOR,
+        SymbolKind.PROPERTY,
+        SymbolKind.FIELD,
+        SymbolKind.CONSTANT,
+        SymbolKind.VARIABLE,
+        SymbolKind.MACRO,
+    }
+)
+"""Symbol kinds an agent would navigate to, and the default comparison scope.
+
+Producers legitimately disagree about scope. A compiler-backed indexer
+records every binding it resolves, so ``scip-typescript`` emits a definition
+for each function parameter and for the file itself; a map for an agent has
+no use for either, and indexing them would swell the map without helping
+anyone find code. Scoring the two against each other unfiltered measures
+that disagreement rather than accuracy, so the comparison states its scope
+instead of pretending there is only one.
+"""
+
+
 def definition_facts(
     snapshot: IndexSnapshot,
     *,
     case_fold: bool = False,
     include_kind: bool = False,
     paths: set[str] | None = None,
+    kinds: frozenset[SymbolKind] | None = None,
+    include_local: bool = False,
 ) -> list[DefFact]:
     """Project every symbol into a definition fact.
 
     ``include_kind`` makes the comparison stricter by requiring the two
     producers to agree on what kind of thing was defined. It is off by
     default because kind vocabularies differ more than locations do.
+
+    ``kinds`` limits which symbols are projected at all; see
+    :data:`NAVIGABLE_KINDS`. ``include_local`` brings in bindings that
+    nothing outside their own scope can name, which are excluded by default
+    for the same reason: a map of a repository is not a list of its loop
+    counters.
     """
     facts: list[DefFact] = []
     for symbol in snapshot.symbols.values():
         if symbol.synthetic:
+            continue
+        if symbol.local and not include_local:
+            continue
+        if kinds is not None and symbol.kind not in kinds:
             continue
         path = normalise_path(symbol.path, case_fold=case_fold)
         if paths is not None and path not in paths:

@@ -52,6 +52,16 @@ def to_markdown(comparison: Comparison, *, samples: int = 5) -> str:
             "Position encodings differ between the two indexes, so column offsets "
             "were matched with tolerance."
         )
+    if comparison.symbol_kind_scope is not None:
+        kinds = ", ".join(sorted(kind.value for kind in comparison.symbol_kind_scope))
+        lines.append("")
+        lines.append(f"Symbol kinds in scope: {kinds}.")
+    if comparison.unscored_edge_kinds:
+        lines.append(
+            f"Not scored, because the oracle emits no such edge: "
+            f"{comparison.unscored_edges} edges of kind "
+            f"{', '.join(comparison.unscored_edge_kinds)}."
+        )
     lines.append("")
 
     lines.append("## Headline")
