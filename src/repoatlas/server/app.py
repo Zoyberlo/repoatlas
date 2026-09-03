@@ -98,19 +98,30 @@ def build_server(store: IndexStore, *, name: str = "repoatlas") -> Any:
             raise SdkToolError(str(exc)) from None
 
     @server.tool(annotations=read_only)
-    def repo_map(focus: list[str] | None = None, budget: int = 2000) -> str:
+    def repo_map(
+        focus: list[str] | None = None,
+        mention: list[str] | None = None,
+        budget: int | None = None,
+    ) -> str:
         """Sketch what this repository is built around, within a token budget.
 
-        Start here when the task names no file. Once you know which files
-        matter, pass them as `focus` and the same budget is spent on what
-        those files reach rather than on the project as a whole.
+        Start here when the task names no file. Pass the names the task
+        talks about as `mention` (a class, a function, a file stem) and the
+        map is drawn around them; once you know which files matter, pass
+        them as `focus`. Either turns a map of the project into a map of
+        the task.
 
         focus: repository-relative paths to rank around, e.g. ["src/app.ts"].
-        budget: target size in tokens; the map is trimmed to fit.
+        mention: identifiers or file stems from the task, e.g. ["InvoiceExporter", "invoice"].
+        budget: target size in tokens; defaults to 4000 unsteered, 2000 steered.
         """
         return _answer(
             lambda: tools.repo_map(
-                store, focus=tuple(focus or ()), budget=budget, cache=cache
+                store,
+                focus=tuple(focus or ()),
+                mention=tuple(mention or ()),
+                budget=budget,
+                cache=cache,
             )
         )
 

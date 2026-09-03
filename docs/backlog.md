@@ -224,6 +224,13 @@ before and after.
 
 ### 3.2 Let the agent say what it is looking for
 
+*Done 2026-09-04.* `repo_map` takes `mention`: each word is matched to
+symbols by name and to files by stem, case-insensitively, and the walk
+restarts there with the focus weight. Words that match nothing are named
+in the header. The CLI has `--mention`. Restart seeding rather than
+aider's edge multiplier, so the cached graph stays immutable; the effect
+on localisation is unmeasured, like every other ranking choice, until 3.8.
+
 aider's map takes *mentioned identifiers* and *mentioned filenames* from
 the conversation and steers the ranking with them: an edge whose name is
 mentioned is weighted ×10, and any identifier of eight or more characters
@@ -238,6 +245,10 @@ those edges, is the single largest relevance lever this project does not
 have, and it is a day's work because every piece already exists.
 
 ### 3.3 Spend more when the agent has nothing
+
+*Done 2026-09-04.* An unsteered map defaults to 4,000 tokens, a steered
+one to 2,000. Doubling rather than aider's eightfold, because Claude Code
+warns at ten thousand tokens per tool result.
 
 aider multiplies the map budget by 8 when no files are in the chat, capped
 by the context window, on the reasoning that a map is worth most exactly

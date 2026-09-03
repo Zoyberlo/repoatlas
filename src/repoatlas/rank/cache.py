@@ -17,6 +17,7 @@ unfocused one pays for nothing but the render.
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -37,6 +38,11 @@ class _Loaded:
     snapshot: IndexSnapshot
     graph: SymbolGraph
     global_ranking: list[RankedSymbol] | None = None
+    by_name: dict[str, list[str]] = field(default_factory=dict)
+    """Lower-cased symbol name to ids, for turning a mention into seeds."""
+
+    by_stem: dict[str, list[str]] = field(default_factory=dict)
+    """Lower-cased file stem to paths, so a mention can name a file too."""
 
 
 @dataclass(slots=True)
@@ -71,6 +77,13 @@ class RankCache:
                 snapshot.symbols[symbol.id] = symbol
             graph = SymbolGraph.from_rows(snapshot.symbols, store.edge_rows(), self.options)
             loaded = _Loaded(generation=generation, snapshot=snapshot, graph=graph)
+            for symbol in snapshot.symbols.values():
+                if symbol.synthetic or symbol.local:
+                    continue
+                loaded.by_name.setdefault(symbol.name.lower(), []).append(symbol.id)
+            for path in {symbol.path for symbol in snapshot.symbols.values()}:
+                stem = path.rsplit("/", 1)[-1].split(".", 1)[0].lower()
+                loaded.by_stem.setdefault(stem, []).append(path)
             self._loaded = loaded
             self.loads += 1
             return loaded
@@ -80,6 +93,34 @@ class RankCache:
 
     def graph(self, store: IndexStore) -> SymbolGraph:
         return self._current(store).graph
+
+    def seeds_for(self, store: IndexStore, mentions: Iterable[str]) -> tuple[set[str], set[str], set[str]]:
+        """Turn words into the symbols and files they name.
+
+        A mention matches a symbol by name, case-insensitively, and a file
+        by its stem, so `InvoiceExporter` seeds the class and `invoice`
+        seeds `invoice.ts`. What matched nothing is returned as well, so
+        the answer can say so instead of quietly ranking the whole
+        repository as if nothing had been asked.
+        """
+        loaded = self._current(store)
+        symbols: set[str] = set()
+        paths: set[str] = set()
+        unmatched: set[str] = set()
+        for mention in mentions:
+            key = mention.strip().lower()
+            if not key:
+                continue
+            hit = False
+            for symbol_id in loaded.by_name.get(key, ()):
+                symbols.add(symbol_id)
+                hit = True
+            for path in loaded.by_stem.get(key, ()):
+                paths.add(path)
+                hit = True
+            if not hit:
+                unmatched.add(mention)
+        return symbols, paths, unmatched
 
     def ranking(
         self,

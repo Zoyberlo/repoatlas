@@ -54,6 +54,15 @@ Detail = Literal["concise", "detailed"]
 # truncated by the client, where the agent cannot see what went missing.
 DEFAULT_BUDGET = 4000
 MAP_BUDGET = 2000
+MAP_BUDGET_UNSTEERED = 4000
+"""The map budget when nothing steers it.
+
+A map is worth most exactly when the agent has nothing else to go on,
+which is the first call of a session, before any file is known. aider
+multiplies its map budget by eight in that case. Doubling is what fits
+here: Claude Code warns at ten thousand tokens per tool result, and a map
+that trips the warning is one the agent learns not to ask for.
+"""
 
 
 class ToolError(ValueError):
@@ -478,15 +487,26 @@ def repo_map(
     store: IndexStore,
     *,
     focus: tuple[str, ...] = (),
-    budget: int = MAP_BUDGET,
+    mention: tuple[str, ...] = (),
+    budget: int | None = None,
     estimator: TokenEstimator | None = None,
     cache: RankCache | None = None,
 ) -> str:
     """Sketch what the repository is built around, within a token budget.
 
     Start here when the task names no file. With ``focus`` set to the files
-    being worked on, the same budget is spent on what those files reach
-    instead of on what is globally central.
+    being worked on, or ``mention`` set to the names the task talks about,
+    the same budget is spent on what those reach instead of on what is
+    globally central.
+
+    ``mention`` is the lever a task description gives: "the invoice export"
+    names `InvoiceExporter` and `invoice.ts` before any file is open. Each
+    word is matched to symbols by name and to files by stem, and the walk
+    restarts there. aider does the same with the identifiers in the chat,
+    weighting them ten times an ordinary file.
+
+    ``budget`` defaults to more when nothing steers the map, because that is
+    when the agent has least else to go on.
 
     ``cache`` keeps the graph between calls. Without one, every call loads
     and ranks the whole index; a server passes the one it holds.
@@ -497,7 +517,13 @@ def repo_map(
         return "the index is empty; run an index first\n"
     focus_paths = {item.replace("\\", "/").lstrip("./") for item in focus}
     unknown = focus_paths - set(store.languages())
-    ranked = cache.ranking(store, focus_paths=focus_paths)
+    seed_symbols, seed_paths, unmatched = cache.seeds_for(store, mention)
+    steered = bool(focus_paths or seed_symbols or seed_paths)
+    if budget is None:
+        budget = MAP_BUDGET if steered else MAP_BUDGET_UNSTEERED
+    ranked = cache.ranking(
+        store, focus_paths=focus_paths | seed_paths, focus_symbols=seed_symbols
+    )
     rendered = render_map(
         ranked, MapOptions(budget=budget), estimator=estimator or store.estimator()
     )
@@ -506,6 +532,8 @@ def repo_map(
         # Silently ignoring an unrecognised focus would return a global map
         # that looks like an answer to the question actually asked.
         header += f"; focus not in the index: {', '.join(sorted(unknown))}"
+    if unmatched:
+        header += f"; mentioned but not found: {', '.join(sorted(unmatched))}"
     return f"{header}\n\n{rendered.text}"
 
 

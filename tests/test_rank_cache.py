@@ -128,6 +128,56 @@ class TestCacheReuse:
         assert warm[0] == warm[1] == cold
 
 
+class TestMentions:
+    def test_a_mentioned_symbol_leads_the_map(self, store: IndexStore) -> None:
+        cache = RankCache()
+        plain = tools.repo_map(store, budget=2000, cache=cache)
+        steered = tools.repo_map(store, mention=("Formatter",), budget=2000, cache=cache)
+        assert cache.loads == 1
+        first_file = steered.split("\n")[2]
+        assert first_file == "src/app.ts:"
+        assert plain != steered
+
+    def test_a_mention_may_name_a_file_by_its_stem(self, store: IndexStore) -> None:
+        cache = RankCache()
+        _symbols, paths, unmatched = cache.seeds_for(store, ("app",))
+        assert paths == {"src/app.ts"}
+        assert not unmatched
+
+    def test_matching_is_case_insensitive(self, store: IndexStore) -> None:
+        cache = RankCache()
+        symbols, _, unmatched = cache.seeds_for(store, ("formatter",))
+        assert "src/app.ts#Formatter" in symbols
+        assert not unmatched
+
+    def test_a_mention_that_names_nothing_is_reported(self, store: IndexStore) -> None:
+        answer = tools.repo_map(store, mention=("Nonesuch", "User"), cache=RankCache())
+        assert "mentioned but not found: Nonesuch" in answer
+        assert "User" not in answer.split("\n")[0]
+
+    def test_an_unsteered_map_gets_the_larger_default_budget(self, store: IndexStore) -> None:
+
+        cache = RankCache()
+        # The fixture fits any budget, so the default is observed through
+        # what the renderer was asked for rather than through the text.
+        seen: list[int] = []
+        original = tools.render_map
+
+        def spy(ranked, options=None, **kwargs):
+            seen.append(options.budget)
+            return original(ranked, options, **kwargs)
+
+        tools.render_map = spy
+        try:
+            tools.repo_map(store, cache=cache)
+            tools.repo_map(store, focus=("src/app.ts",), cache=cache)
+            tools.repo_map(store, mention=("User",), cache=cache)
+            tools.repo_map(store, budget=123, cache=cache)
+        finally:
+            tools.render_map = original
+        assert seen == [tools.MAP_BUDGET_UNSTEERED, tools.MAP_BUDGET, tools.MAP_BUDGET, 123]
+
+
 class TestAdapter:
     def test_the_server_holds_one_cache(self, store: IndexStore) -> None:
         pytest.importorskip("mcp", reason="needs the serve extra")

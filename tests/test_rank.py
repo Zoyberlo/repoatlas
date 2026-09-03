@@ -511,6 +511,16 @@ class TestMapCli:
         with pytest.raises(SystemExit, match="no such repository or index"):
             main(["map", str(tmp_path / "absent.db")])
 
+    def test_a_mention_steers_the_map(self, capsys) -> None:
+        from repoatlas.cli import main
+
+        assert main(["map", str(FIXTURE), "--no-git", "--mention", "Formatter", "--budget", "2000"]) == 0
+        steered = capsys.readouterr().out
+        assert main(["map", str(FIXTURE), "--no-git", "--budget", "2000"]) == 0
+        plain = capsys.readouterr().out
+        assert steered.split("\n")[0] == "src/app.ts:"
+        assert steered != plain
+
     def test_a_calibrated_token_constant_changes_what_fits(self, capsys) -> None:
         from repoatlas.cli import main
 

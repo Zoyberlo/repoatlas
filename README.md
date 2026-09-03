@@ -265,6 +265,24 @@ constant in the index. Every tool over that index, and the `map` command,
 then estimate with it. `index_status` says which model the index is
 calibrated for, or that it is not.
 
+### Steering by name
+
+A task description names things before any file is open: "the invoice
+export" is `InvoiceExporter` and `invoice.ts`. `--mention` takes those
+words, matches each to symbols by name and to files by stem, and restarts
+the walk there, so the map is drawn around them:
+
+```bash
+repoatlas map . --budget 300 --mention Resolver --mention cascade
+```
+
+Words that match nothing are named in the map's header rather than
+silently ignored, since a global map looks exactly like an answer to the
+question that was asked. The MCP tool takes the same `mention` list, and
+spends 4,000 tokens when nothing steers it and 2,000 when something does:
+a map is worth most on the first call of a session, when the agent has
+nothing else to go on.
+
 ## Serving it to an agent
 
 ```bash

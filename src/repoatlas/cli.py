@@ -151,6 +151,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="a file to rank around; repeatable",
     )
     repo_map.add_argument(
+        "--mention",
+        action="append",
+        default=[],
+        help="a symbol name or file stem the task talks about; repeatable",
+    )
+    repo_map.add_argument(
         "--max-files", type=int, default=0, help="list at most this many files"
     )
     repo_map.add_argument(
@@ -495,8 +501,19 @@ def _cmd_map(args: argparse.Namespace) -> int:
             raise SystemExit(f"repoatlas: {exc}") from None
 
     focus_paths = {_normalise_focus(item) for item in args.focus}
+    focus_symbols: set[str] = set()
+    if args.mention:
+        wanted = {item.strip().lower() for item in args.mention if item.strip()}
+        for symbol in snapshot.symbols.values():
+            if symbol.synthetic or symbol.local:
+                continue
+            stem = symbol.path.rsplit("/", 1)[-1].split(".", 1)[0].lower()
+            if symbol.name.lower() in wanted:
+                focus_symbols.add(symbol.id)
+            if stem in wanted:
+                focus_paths.add(symbol.path)
     ranked = rank_symbols(
-        snapshot, focus_paths=focus_paths, options=RankOptions()
+        snapshot, focus_paths=focus_paths, focus_symbols=focus_symbols, options=RankOptions()
     )
     rendered = render_map(
         ranked,
