@@ -71,7 +71,7 @@ What is reported, and why each matters:
 | Reference precision / recall / F1 | The number heuristic resolution actually loses on. |
 | Per-edge-kind breakdown | A producer can be strong on containment and weak on calls; one blended figure hides that. |
 | Dangling edge rate | Edges pointing at symbols the index never defined are claims it cannot support. |
-| Confidence calibration | An edge claiming 0.95 should be right 95% of the time. This is what turns the resolution cascade from a guess into a tuned ladder. |
+| Confidence calibration | An edge claiming 0.95 should be right 95% of the time. This is what turns the resolution cascade from a guess into a tuned ladder, and it is how the tier confidences were set rather than argued over. |
 | Bootstrap intervals over files | Whether a change is real. Files are the resampling unit because errors cluster: one badly parsed file emits a burst of wrong edges. |
 
 Three comparison choices are deliberate, and the last two were forced by
@@ -105,6 +105,26 @@ structure, so it never emits a containment edge. Scored against it, every
 containment edge is a false positive for a claim the oracle does not
 contradict. Such kinds are counted and reported as unscored rather than
 wrong; `restrict_to_oracle_edge_kinds=False` scores them anyway.
+
+### The resolution cascade, and how its numbers were set
+
+Cross-file resolution without a compiler is a ladder of decreasing
+evidence. Each rung has a confidence, and those confidences are not
+opinions: they come from running the cascade against an oracle and reading
+the calibration table.
+
+| Rung | Evidence | Claimed | Observed on the TypeScript fixture |
+| --- | --- | ---: | ---: |
+| `import_map` | The name was imported, and the import names a file this index covers | 0.95 | 1.000 |
+| `same_module` | A member of the type the reference sits in, or a definition in the same file | 0.90 | 0.889 |
+| `unique_name` | Exactly one definition of the name in the repository | 0.75 | not exercised |
+| `suffix` | Several definitions share the name; one was chosen | 0.55 | 0.500 |
+| `fuzzy` | Nothing better | 0.35 | not exercised |
+
+The fixture is two files, so treat these as a smoke test of the method
+rather than as tuned values. The method is the point: when a rung's observed
+precision drifts from its claim, the report says which rung and by how much,
+and the number moves rather than the argument.
 
 ### Targets
 

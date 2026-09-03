@@ -54,12 +54,13 @@
 (scoped_call_expression
   name: (name) @name) @reference.call
 
+; `new User()` names the class; what runs is its constructor.
 (object_creation_expression
-  (name) @name) @reference.call
+  (name) @name) @reference.construct
 
 (object_creation_expression
   (qualified_name
-    (name) @name)) @reference.call
+    (name) @name)) @reference.construct
 
 (base_clause
   (name) @name) @reference.class
@@ -96,3 +97,12 @@
 
 (namespace_use_clause
   (name) @name) @reference.import
+
+; A property read that is not a call: `$this->email`.
+(member_access_expression
+  name: (name) @name) @reference.member
+
+; A constant used by name inside a call.
+(arguments
+  (argument
+    (name) @name)) @reference.value

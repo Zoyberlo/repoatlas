@@ -69,8 +69,11 @@
   function: (member_expression
     property: (property_identifier) @name)) @reference.call
 
+; `new User()` names the class, but what runs is its constructor. The
+; resolver prefers a constructor member when the class declares one, which
+; is why this is its own kind rather than a plain call.
 (new_expression
-  constructor: (identifier) @name) @reference.call
+  constructor: (identifier) @name) @reference.construct
 
 (extends_clause
   value: (identifier) @name) @reference.class
@@ -95,3 +98,24 @@
 
 (import_clause
   (identifier) @name) @reference.import
+
+; A member read that is not a call: `this.label`, `user.name`. The call
+; pattern above captures the same token when it is being invoked, and the
+; extractor keeps the more specific kind when both fire on one span.
+(member_expression
+  property: (property_identifier) @name) @reference.member
+
+; A value used by name: an argument, a returned name, an initialiser. These
+; are the uses of a constant or a function that is passed rather than
+; called, which no call or member pattern sees.
+(arguments
+  (identifier) @name) @reference.value
+
+(return_statement
+  (identifier) @name) @reference.value
+
+(variable_declarator
+  value: (identifier) @name) @reference.value
+
+(template_substitution
+  (identifier) @name) @reference.value

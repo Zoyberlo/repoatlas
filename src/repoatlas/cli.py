@@ -167,9 +167,29 @@ def _cmd_index(args: argparse.Namespace) -> int:
         real = sum(1 for s in result.snapshot.symbols.values() if not s.synthetic)
         print(f"files:      {result.files}")
         print(f"symbols:    {real}")
-        print(f"references: {len(result.references)} (unresolved)")
-        print(f"elapsed:    {result.duration_seconds:.2f}s "
-              f"({result.throughput():.0f} files/s)")
+        resolution = result.resolution
+        print(
+            f"references: {len(result.references)} "
+            f"({resolution.resolution_rate:.0%} resolved)"
+        )
+        print(f"edges:      {len(result.snapshot.edges)}")
+        print(
+            f"elapsed:    {result.duration_seconds:.2f}s parse "
+            f"+ {result.resolve_seconds:.2f}s resolve "
+            f"({result.throughput():.0f} files/s)"
+        )
+        if resolution.resolved:
+            print()
+            print("resolution tiers")
+            for tier, count in sorted(
+                resolution.by_tier.items(), key=lambda pair: -pair[1]
+            ):
+                share = count / resolution.resolved
+                print(f"  {tier:<14}{count:>7}{share:>8.0%}")
+            if resolution.external:
+                print(f"  {'external':<14}{resolution.external:>7}")
+            if resolution.unresolved:
+                print(f"  {'unresolved':<14}{resolution.unresolved:>7}")
         if result.by_language:
             print()
             print(f"{'language':<12}{'files':>7}{'symbols':>9}{'refs':>8}{'errors':>9}")

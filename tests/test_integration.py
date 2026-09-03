@@ -132,17 +132,31 @@ class TestAccuracyAgainstOracle:
         result = compare_snapshots(build.snapshot, oracle)
         assert "contains" in result.unscored_edge_kinds
         assert result.unscored_edges > 0
-        assert result.references.false_positives == 0
+        contains = [e for e in build.snapshot.edges if e.kind is EdgeKind.CONTAINS]
+        # Not every containment edge is counted: one whose target is out of
+        # the symbol scope was already dropped, before edge kinds mattered.
+        assert result.unscored_edges <= len(contains)
 
-    def test_reference_recall_is_zero_until_the_resolver_exists(
-        self, build, oracle
-    ) -> None:
-        # Deliberate, and the number to watch: the extractor collects
-        # references but resolves none, so it claims no reference edges.
-        # This asserts the honest zero rather than hiding it.
+    def test_reference_accuracy_does_not_regress(self, build, oracle) -> None:
+        # The headline number for the resolver, pinned so a change to a tag
+        # query or a cascade rung has to justify itself. Bounds rather than
+        # exact values: the point is to catch a fall, not to freeze the
+        # figure at a digit that means nothing on two files.
         result = compare_snapshots(build.snapshot, oracle)
-        assert result.references.recall == 0.0
-        assert result.references.false_negatives > 0
+        assert result.references.precision >= 0.85, result.references
+        assert result.references.recall >= 0.70, result.references
+        assert result.references.f1 >= 0.80, result.references
+
+    def test_every_rung_is_calibrated_within_a_tenth(self, build, oracle) -> None:
+        # A rung claiming 0.95 that is right half the time is worse than no
+        # confidence at all, because an agent would trust it. This is the
+        # check that keeps the numbers in `ResolutionTier` honest.
+        result = compare_snapshots(build.snapshot, oracle)
+        assert result.calibration is not None
+        worst = result.calibration.worst_bin()
+        assert worst is not None
+        assert abs(worst.gap) <= 0.10, result.calibration.as_dict()
+        assert result.calibration.expected_error <= 0.05
 
     def test_scoring_locals_too_shows_the_scope_difference(
         self, build, oracle

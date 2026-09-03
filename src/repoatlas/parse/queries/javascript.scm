@@ -38,8 +38,9 @@
   function: (member_expression
     property: (property_identifier) @name)) @reference.call
 
+; `new User()` names the class; what runs is its constructor.
 (new_expression
-  constructor: (identifier) @name) @reference.call
+  constructor: (identifier) @name) @reference.construct
 
 (class_heritage
   (identifier) @name) @reference.class
@@ -54,3 +55,17 @@
 
 (import_clause
   (identifier) @name) @reference.import
+
+; A member read that is not a call: `this.label`, `user.name`.
+(member_expression
+  property: (property_identifier) @name) @reference.member
+
+; A value used by name rather than called.
+(arguments
+  (identifier) @name) @reference.value
+
+(return_statement
+  (identifier) @name) @reference.value
+
+(variable_declarator
+  value: (identifier) @name) @reference.value

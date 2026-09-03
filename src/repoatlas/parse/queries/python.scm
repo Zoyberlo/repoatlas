@@ -70,3 +70,15 @@
 
 (aliased_import
   alias: (identifier) @name) @reference.import
+
+; An attribute read that is not a call: `self.value`, `config.debug`.
+(attribute
+  attribute: (identifier) @name) @reference.member
+
+; A value used by name: an argument, a returned name. These are the uses of
+; a constant or a function passed rather than called.
+(argument_list
+  (identifier) @name) @reference.value
+
+(return_statement
+  (identifier) @name) @reference.value

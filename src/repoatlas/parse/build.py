@@ -1,14 +1,12 @@
 """Building a whole-repository snapshot from per-file extractions.
 
-At this stage the snapshot carries symbols and containment only. References
-are collected and counted but not yet turned into edges, because resolving a
-name to a definition is the next stage and the stage where confidence tiers
-come from.
+Two phases, and the split is what keeps re-indexing cheap. Extraction
+needs one file at a time and yields symbols, containment and a list of
+names it could not yet place. Resolution needs the whole repository and
+turns those names into edges, each carrying how it was worked out.
 
-That is deliberate, and it is also measurable: definition precision and
-recall against an oracle can be scored today, and they are the floor
-everything else rests on. An index that misses a definition makes every edge
-that should have targeted it dangling.
+Re-parsing a changed file therefore never invalidates another file's
+symbols, only the edges that cross between them.
 """
 
 from __future__ import annotations
@@ -20,7 +18,10 @@ from pathlib import Path
 
 from .. import __version__
 from ..model import Edge, EdgeKind, IndexSnapshot, ResolutionTier, SymbolKind
+from ..resolve.cascade import ResolutionStats, Resolver, SymbolIndex
+from ..resolve.modules import ModuleResolver, resolver_for
 from .extract import FileExtraction, Reference, extract_source
+from .imports import FileImports
 from .languages import LanguageUnavailable
 from .walk import SourceFile, WalkStats, iter_source_files
 
@@ -72,9 +73,12 @@ class BuildResult:
     """
 
     by_language: dict[str, LanguageStats] = field(default_factory=dict)
+    imports: dict[str, FileImports] = field(default_factory=dict)
+    resolution: ResolutionStats = field(default_factory=ResolutionStats)
     walk: WalkStats = field(default_factory=WalkStats)
     failures: list[tuple[str, str]] = field(default_factory=list)
     duration_seconds: float = 0.0
+    resolve_seconds: float = 0.0
 
     @property
     def files(self) -> int:
@@ -100,7 +104,9 @@ class BuildResult:
             "symbols": len(self.snapshot.symbols),
             "references": len(self.references),
             "error_rate": round(self.error_rate, 4),
+            "resolution": self.resolution.as_dict(),
             "duration_seconds": round(self.duration_seconds, 3),
+            "resolve_seconds": round(self.resolve_seconds, 3),
             "files_per_second": round(self.throughput(), 1),
             "walk": self.walk.as_dict(),
             "by_language": {
@@ -140,6 +146,7 @@ def _add_extraction(
             )
         )
 
+    result.imports[extraction.path] = extraction.imports
     for reference in extraction.references:
         result.references.append((extraction.path, reference))
 
@@ -149,12 +156,16 @@ def build_snapshot(
     *,
     files: Iterable[SourceFile] | None = None,
     use_git: bool = True,
+    resolve: bool = True,
 ) -> BuildResult:
-    """Parse a repository into a snapshot of symbols and containment.
+    """Parse a repository into a snapshot of symbols, containment and edges.
 
     A file that cannot be parsed is recorded in ``failures`` and skipped;
     one broken file must not cost the whole index. A language whose grammar
     will not load is reported once rather than once per file.
+
+    ``resolve=False`` stops after extraction, which is what a caller
+    wanting to measure the two phases separately needs.
     """
     root_path = Path(root).resolve()
     walk_stats = WalkStats()
@@ -195,7 +206,44 @@ def build_snapshot(
     result.duration_seconds = time.perf_counter() - started
 
     _add_module_symbols(result)
+    if resolve:
+        _resolve_references(result, root_path, source_files)
     return result
+
+
+def _resolve_references(
+    result: BuildResult, root: Path, files: list[SourceFile]
+) -> None:
+    """Turn the collected references into edges."""
+    started = time.perf_counter()
+    known = frozenset(source.path for source in files)
+    languages = {source.path: source.language.name for source in files}
+    resolvers: dict[str, ModuleResolver] = {}
+    for language in {source.language.name for source in files}:
+        resolver = resolver_for(language, root, known)
+        if resolver is not None:
+            resolvers[language] = resolver
+
+    resolver_state = Resolver(
+        index=SymbolIndex(result.snapshot.symbols),
+        imports=result.imports,
+        resolvers=resolvers,
+        languages=languages,
+        module_symbols={
+            symbol.path: symbol.id
+            for symbol in result.snapshot.symbols.values()
+            if symbol.synthetic
+        },
+        stats=result.resolution,
+    )
+
+    by_file: dict[str, list[Reference]] = {}
+    for path, reference in result.references:
+        by_file.setdefault(path, []).append(reference)
+    for path, references in by_file.items():
+        for edge in resolver_state.resolve_file(path, references):
+            result.snapshot.add_edge(edge)
+    result.resolve_seconds = time.perf_counter() - started
 
 
 def _add_module_symbols(result: BuildResult) -> None:

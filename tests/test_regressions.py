@@ -150,13 +150,19 @@ class TestScipRegressions:
 
         small, large = build(1_000), build(4_000)
 
-        def timed(payload: bytes) -> tuple[float, int]:
-            started = time.perf_counter()
-            snapshot = read_scip_binary(payload)
-            return time.perf_counter() - started, len(snapshot.edges)
+        def timed(payload: bytes, runs: int = 3) -> tuple[float, int]:
+            # Best of several. A shared runner descheduling mid-measurement
+            # inflates one sample, and on the smaller input that noise lands
+            # in the denominator, where it swamps the ratio being tested.
+            best = float("inf")
+            edges = 0
+            for _ in range(runs):
+                started = time.perf_counter()
+                snapshot = read_scip_binary(payload)
+                best = min(best, time.perf_counter() - started)
+                edges = len(snapshot.edges)
+            return best, edges
 
-        # Warm up once so import and cache effects do not land on `small`.
-        timed(small)
         small_time, small_edges = timed(small)
         large_time, large_edges = timed(large)
         assert small_edges == 5_000

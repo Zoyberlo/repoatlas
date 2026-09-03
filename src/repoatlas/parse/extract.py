@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from ..model import SourceRange, Symbol, SymbolKind
 from ..spans import ScopeIndex
+from .imports import FileImports, extract_imports
 from .languages import LanguageSpec, get_language, get_parser, query_source
 
 if TYPE_CHECKING:  # pragma: no cover - imported only for type checking
@@ -34,6 +35,18 @@ __all__ = [
 # Capture prefixes, in the tree-sitter tags convention.
 _DEFINITION_PREFIX = "definition."
 _REFERENCE_PREFIX = "reference."
+
+# How much a reference kind tells the resolver, most first. A call names a
+# callable; a bare member read could be anything.
+_REFERENCE_PRECEDENCE = {
+    "class": 6,
+    "import": 5,
+    "construct": 4,
+    "call": 3,
+    "type": 2,
+    "member": 1,
+    "value": 0,
+}
 
 _KIND_BY_CAPTURE = {
     "class": SymbolKind.CLASS,
@@ -149,6 +162,13 @@ class FileExtraction:
     language: str
     symbols: list[Symbol] = field(default_factory=list)
     references: list[Reference] = field(default_factory=list)
+    imports: FileImports = field(default_factory=FileImports)
+    """What this file borrows, and from where.
+
+    Collected during extraction because it comes from the same parse,
+    and consumed during resolution, which needs the whole repository.
+    """
+
     has_errors: bool = False
     """Whether tree-sitter had to recover from a syntax error.
 
@@ -250,8 +270,10 @@ def _collect(
     cursor = QueryCursor(_compiled_query(spec.name))
 
     definitions: dict[tuple[int, int, int, int], _RawDefinition] = {}
-    references: list[tuple[str, str, SourceRange]] = []
-    seen_references: set[tuple[str, str, SourceRange]] = set()
+    # One use site is one reference however many patterns matched it, so
+    # references are keyed by span and the strongest kind wins.
+    reference_kinds: dict[SourceRange, str] = {}
+    reference_names: dict[SourceRange, str] = {}
 
     for _pattern_index, captures in cursor.matches(tree.root_node):
         name_nodes = captures.get("name")
@@ -291,17 +313,24 @@ def _collect(
                 ]:
                     definitions[key] = _RawDefinition(name, kind, name_span, full_span)
             elif capture_name.startswith(_REFERENCE_PREFIX):
-                # Two patterns may legitimately capture one token, as a
-                # decorator call does for both the call and decorator
-                # patterns; one use site is still one reference.
-                entry = (name, capture_name[len(_REFERENCE_PREFIX) :], name_span)
-                if entry not in seen_references:
-                    seen_references.add(entry)
-                    references.append(entry)
+                # Several patterns may capture one token. `user.greet()`
+                # matches both the call pattern and the member-read pattern,
+                # and it is one use site either way; the more specific kind
+                # wins, because a call tells the resolver more than a read.
+                reference_kind = capture_name[len(_REFERENCE_PREFIX) :]
+                previous = reference_kinds.get(name_span)
+                if previous is None or _REFERENCE_PRECEDENCE.get(
+                    reference_kind, 0
+                ) > _REFERENCE_PRECEDENCE.get(previous, 0):
+                    reference_kinds[name_span] = reference_kind
+                    reference_names[name_span] = name
 
     ordered = sorted(
         definitions.values(), key=lambda d: (d.name_span.start, d.name_span.end)
     )
+    references = [
+        (reference_names[span], kind, span) for span, kind in reference_kinds.items()
+    ]
     return ordered, references
 
 
@@ -399,6 +428,7 @@ def extract_source(
         language=spec.name,
         symbols=symbols,
         references=references,
+        imports=extract_imports(tree, spec),
         has_errors=error_count > 0,
         error_count=error_count,
     )

@@ -141,11 +141,29 @@ class TestReferenceFacts:
         assert facts[0].site_span.to_scip() == [1, 0, 5]
 
     def test_rejects_a_siteless_edge_when_a_site_is_required(self) -> None:
-        snapshot = snapshot_with(make_symbol("Child"), make_symbol("Base", line=7))
-        snapshot.add_edge(Edge("Child", "Base", EdgeKind.INHERITS))
+        snapshot = snapshot_with(make_symbol("f"), make_symbol("g", line=7))
+        snapshot.add_edge(Edge("f", "g", EdgeKind.CALLS))
         facts, unprojectable = reference_facts(snapshot, require_site=True)
         assert not facts
         assert len(unprojectable) == 1
+
+    def test_an_inheritance_edge_is_anchored_on_the_declaring_symbol(self) -> None:
+        # SCIP states inheritance as a relationship carrying no occurrence,
+        # so an `extends` token is evidence only one side has. Both anchor
+        # on the declaring symbol, which both do have.
+        snapshot = snapshot_with(make_symbol("Child", line=1), make_symbol("Base", line=7))
+        snapshot.add_edge(
+            Edge(
+                "Child",
+                "Base",
+                EdgeKind.INHERITS,
+                site_path="src/a.py",
+                site_range=SourceRange.of(1, 30, 1, 34),
+            )
+        )
+        facts, unprojectable = reference_facts(snapshot, require_site=True)
+        assert not unprojectable
+        assert facts[0].site_span.to_scip() == [1, 0, 5]
 
     def test_collapses_reference_like_kinds_by_default(self) -> None:
         snapshot = snapshot_with(make_symbol("f"), make_symbol("g", line=5))

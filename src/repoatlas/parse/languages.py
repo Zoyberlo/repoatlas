@@ -72,6 +72,16 @@ class LanguageSpec:
     def query_path(self) -> Path:
         return _QUERY_DIR / f"{self.query_name or self.name}.scm"
 
+    @property
+    def imports_query_path(self) -> Path:
+        """Where this language's import query lives.
+
+        Imports are queried separately from tags because an import binds
+        names and names a module at once, which the tag query's
+        one-name-per-match shape cannot express.
+        """
+        return _QUERY_DIR / f"{self.query_name or self.name}.imports.scm"
+
 
 # Ordered by how much of the target stack they cover. Each entry needs a
 # matching queries/<name>.scm, which `test_languages.py` enforces.
@@ -123,6 +133,18 @@ def query_source(name: str) -> str:
     except FileNotFoundError:
         raise LanguageUnavailable(
             f"no tag query for {name!r}; expected {spec.query_path}"
+        ) from None
+
+
+@functools.cache
+def imports_query_source(name: str) -> str:
+    """Read the import query for a language."""
+    spec = language_by_name(name)
+    try:
+        return spec.imports_query_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise LanguageUnavailable(
+            f"no import query for {name!r}; expected {spec.imports_query_path}"
         ) from None
 
 

@@ -227,6 +227,7 @@ def compare_snapshots(
         collapse_kinds=options.collapse_edge_kinds,
         paths=scope,
         require_site=False,
+        target_kinds=options.symbol_kinds,
     )
     oracle_refs, _ = reference_facts(
         oracle,
@@ -234,6 +235,7 @@ def compare_snapshots(
         collapse_kinds=options.collapse_edge_kinds,
         paths=scope,
         require_site=False,
+        target_kinds=options.symbol_kinds,
     )
     for edge in unprojectable:
         if edge.dst_id not in candidate.symbols:

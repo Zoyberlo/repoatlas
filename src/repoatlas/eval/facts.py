@@ -198,6 +198,14 @@ def _edge_group(kind: EdgeKind, collapse: bool) -> str:
     return str(kind.value)
 
 
+# An edge whose evidence one producer records and the other cannot is
+# not comparable by that evidence. SCIP states inheritance as a
+# relationship on the declaring symbol, with no occurrence anywhere, so
+# both sides anchor these on the declaring symbol instead of on the
+# `extends` clause a parser can see.
+_ANCHOR_ON_SOURCE = frozenset({EdgeKind.INHERITS, EdgeKind.IMPLEMENTS})
+
+
 def reference_facts(
     snapshot: IndexSnapshot,
     *,
@@ -206,6 +214,8 @@ def reference_facts(
     kinds: set[EdgeKind] | None = None,
     paths: set[str] | None = None,
     require_site: bool = True,
+    target_kinds: frozenset[SymbolKind] | None = None,
+    include_local_targets: bool = False,
 ) -> tuple[list[RefFact], list[Edge]]:
     """Project edges into reference facts.
 
@@ -224,12 +234,22 @@ def reference_facts(
         if target is None:
             unprojectable.append(edge)
             continue
-        if edge.site_path is not None and edge.site_range is not None:
+        # An edge to a symbol outside the comparison's scope is out of
+        # scope too. An oracle records a use of a function parameter; an
+        # index that deliberately does not list parameters can never
+        # produce that edge, and scoring it would measure the difference
+        # in purpose a second time.
+        if target_kinds is not None and target.kind not in target_kinds:
+            continue
+        if target.local and not include_local_targets:
+            continue
+        anchor_on_source = edge.kind in _ANCHOR_ON_SOURCE
+        if not anchor_on_source and edge.site_path is not None and edge.site_range is not None:
             site_path = normalise_path(edge.site_path, case_fold=case_fold)
             site_span = edge.site_range
         else:
             source = snapshot.symbols.get(edge.src_id)
-            if source is None or require_site:
+            if source is None or (require_site and not anchor_on_source):
                 unprojectable.append(edge)
                 continue
             # Relationship edges carry no occurrence; anchor them on the

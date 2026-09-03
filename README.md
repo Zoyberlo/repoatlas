@@ -3,10 +3,11 @@
 A universal code index for LLM coding agents, built so its accuracy can be
 measured rather than asserted.
 
-**Status: early. The extractor finds definitions and scores 1.00 against a
-real `scip-typescript` index; cross-file reference resolution is the next
-stage and currently scores zero, on purpose.** The evaluation harness was
-built first, and the next section explains why.
+**Status: early but measured. Against a real `scip-typescript` index the
+extractor scores 1.00 on definitions and 0.84 on resolved references, and
+every confidence rung is calibrated to within five points of what it
+claims.** The evaluation harness was built first, and the next section
+explains why.
 
 ## Why this exists, and why it starts with tests
 
@@ -56,14 +57,26 @@ Not scored, because the oracle emits no such edge: 8 edges of kind contains.
 | kind | precision | recall | F1 | tp | fp | fn |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | definitions | 1.000 | 1.000 | 1.000 | 13 | 0 | 0 |
-| references | 0.000 | 0.000 | 0.000 | 0 | 0 | 29 |
+| references | 0.900 | 0.783 | 0.837 | 18 | 2 | 5 |
+
+## Confidence calibration
+
+Expected calibration error 0.031, worst bin 0.050, over 18 edges.
+
+| confidence bin | edges | claimed | observed | gap |
+| --- | ---: | ---: | ---: | ---: |
+| 0.45 to 0.65 | 2 | 0.550 | 0.500 | +0.050 |
+| 0.88 to 0.93 | 9 | 0.900 | 0.889 | +0.011 |
+| 0.93 to 0.97 | 7 | 0.950 | 1.000 | -0.050 |
 ```
 
-That reference row is the honest zero: the extractor collects references but
-resolves none yet, so it claims no reference edges and the report says so
-rather than omitting the row. The `index.scip` in that fixture is genuine
-`scip-typescript` output, committed so CI re-checks these numbers on every
-platform without a Node toolchain.
+That calibration table is the part to read. Resolving a name without a
+compiler is guesswork, and guesswork is fine as long as the guess says how
+sure it is. An edge claiming 0.95 is right every time here; one claiming
+0.55 is right about half the time. Both are honest, and an agent can weigh
+them. The `index.scip` in that fixture is genuine `scip-typescript` output,
+committed so CI re-checks these numbers on every platform without a Node
+toolchain.
 
 Parse anything and see what came out:
 
@@ -157,9 +170,10 @@ runs wherever Python does, on Linux, macOS, Windows and WSL.
 2. ~~Tree-sitter extractor with per-language tag queries, scored against the
    harness from the first commit~~ done: Python, TypeScript, TSX, JavaScript,
    PHP, at 1.00 definition precision and recall on the TypeScript fixture
-3. Cross-file resolution cascade, its confidence tiers tuned against oracle
-   calibration rather than guessed. This is what turns the reference row from
-   zero into a number
+3. ~~Cross-file resolution cascade, its confidence tiers tuned against oracle
+   calibration rather than guessed~~ done: five rungs from a resolved import
+   down to a bare name match, at 0.90 reference precision and 0.031
+   calibration error on the TypeScript fixture
 4. SQLite storage with content-hash incremental updates
 5. Ranking: personalised PageRank over the symbol graph, budgeted output
 6. MCP server, a small number of tools, every output under a token budget
@@ -173,7 +187,7 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
-pytest                 # 360 tests
+pytest                 # 405 tests
 ruff check .
 mypy
 ```
