@@ -216,7 +216,7 @@ def run_localize(
         touched = set(case.touched)
         case.recall_plain = len(touched & plain_set) / len(touched)
         case.first_hit_plain = bool(plain_files) and plain_files[0] in touched
-        seeds, paths, unmatched = cache.seeds_for(store, case.mentions)
+        _seeds, _paths, unmatched = cache.seeds_for(store, case.mentions)
         case.matched_mentions = len(case.mentions) - len(unmatched)
         steered = tools.repo_map(store, mention=case.mentions, budget=budget, cache=cache)
         steered_files = _files_in_map(steered)
