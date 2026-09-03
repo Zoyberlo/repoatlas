@@ -54,8 +54,17 @@ _PRIVATE_KEYWORDS = ("private ", "protected ", "private static ", "protected sta
 
 
 def _is_private(symbol: Symbol) -> bool:
-    """Whether the language or the convention marks this symbol private."""
-    if symbol.name.startswith("_"):
+    """Whether the language or the convention marks this symbol private.
+
+    A leading underscore is the convention, `#name` is how JavaScript
+    spells it, and `private` is how the typed languages do. A dunder is the
+    exception to the underscore rule: `__init__` and `__str__` are the most
+    public thing a Python class has.
+    """
+    name = symbol.name
+    if name.startswith("#"):
+        return True
+    if name.startswith("_") and not (name.startswith("__") and name.endswith("__")):
         return True
     signature = (symbol.signature or "").lstrip()
     return signature.startswith(_PRIVATE_KEYWORDS)

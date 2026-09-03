@@ -94,6 +94,16 @@ class TestSearchSymbols:
         assert estimate_tokens(result) <= 80
         assert "not shown" in result
 
+    def test_the_count_of_what_was_left_out_is_accurate(self, store: IndexStore) -> None:
+        # Over-fetching by one only ever knew "at least one more", and said
+        # "1 more" when there were hundreds.
+        everything = tools.search_symbols(store, "e", limit=500, budget=100_000)
+        total = int(everything.split(" match", 1)[0])
+        assert total > 3
+        first = tools.search_symbols(store, "e", limit=2, budget=100_000)
+        assert first.startswith(f"{total} match")
+        assert f"[{total - 2} more not shown" in first
+
 
 class TestGetSymbol:
     def test_describes_where_a_symbol_is(self, store: IndexStore) -> None:
@@ -207,6 +217,14 @@ class TestNeighbours:
     ) -> None:
         result = tools.neighbours(store, "src/app.ts#Formatter", direction="out")
         assert "Formatter uses nothing" in result
+
+    def test_an_unknown_edge_kind_is_refused_with_the_valid_ones(
+        self, store: IndexStore
+    ) -> None:
+        # `EdgeKind("bogus")` is a ValueError, which the adapter would turn
+        # into "Error executing tool". The agent needs the list instead.
+        with pytest.raises(tools.ToolError, match="calls"):
+            tools.neighbours(store, USER_CLASS, kinds=("bogus",))
 
 
 class TestFileOutline:

@@ -132,7 +132,7 @@ already has locally.
 
 ## 2. Defects found by reading
 
-Small, certain, and each about an hour.
+Small, certain, and each about an hour. *The first five were fixed on 2026-09-04;* the last two remain.
 
 - **`neighbours` with an unknown edge kind raises `ValueError`**, not
   `ToolError`, so the agent sees a generic failure instead of "kinds must

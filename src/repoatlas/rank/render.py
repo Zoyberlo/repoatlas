@@ -166,6 +166,20 @@ def _render(selected: Sequence[RankedSymbol], options: MapOptions) -> tuple[str,
     return text, len(ordered_files)
 
 
+def _top_files(items: Sequence[RankedSymbol], count: int) -> list[RankedSymbol]:
+    """Keep only the symbols of the ``count`` files whose best symbol ranks highest.
+
+    ``items`` arrive highest first, so the first symbol seen for a file is
+    its best, and the file order this produces is the one the renderer
+    would have chosen anyway.
+    """
+    best: dict[str, float] = {}
+    for item in items:
+        best.setdefault(item.symbol.path, item.score)
+    keep = set(sorted(best, key=lambda path: (-best[path], path))[:count])
+    return [item for item in items if item.symbol.path in keep]
+
+
 def _depth(symbol: Symbol, siblings: Sequence[RankedSymbol]) -> int:
     """How far to indent, counting containers that are themselves shown.
 
@@ -205,6 +219,11 @@ def render_map(
     total = len(items)
     if not items:
         return RepoMap(text="", tokens=0, included=0, total=0, files=0)
+    if options.max_files:
+        # Cap the files first, then fit the budget within them. Capping
+        # after the fit threw away symbols the search had already paid for
+        # and left the map well under budget with the files it kept.
+        items = _top_files(items, options.max_files)
 
     def attempt(count: int) -> tuple[str, int, int]:
         text, files = _render(_with_ancestors(items[:count], items), options)

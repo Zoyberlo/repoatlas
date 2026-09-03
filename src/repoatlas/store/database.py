@@ -526,44 +526,52 @@ class IndexStore:
         symbols are excluded: neither is somewhere to navigate to.
         """
         cleaned = query.strip()
+        source, parameters = self._search_source(cleaned, kinds)
+        # Ranked by how directly the symbol answers the query. A match on
+        # the name itself beats one that only landed in the qualified name,
+        # which otherwise lets a short private member of a matching class
+        # outrank the class. Among equals, shorter wins, so `User` comes
+        # before `UserRepositoryFactory`.
+        sql = (
+            f"SELECT {_SYMBOL_COLUMNS} {source}"
+            " ORDER BY (lower(s.name) = lower(?)) DESC,"
+            " (instr(lower(s.name), lower(?)) > 0) DESC,"
+            " length(s.name) ASC, s.path ASC, s.name_start_line ASC LIMIT ?"
+        )
+        parameters = [*parameters, cleaned, cleaned, limit]
+        return [_symbol_from(row) for row in self._connection.execute(sql, parameters)]
+
+    def search_count(self, query: str, *, kinds: Sequence[str] = ()) -> int:
+        """How many symbols :meth:`search` would match without a limit.
+
+        A search result that says how much it left out has to know, and
+        over-fetching by one only ever knows "at least one more".
+        """
+        source, parameters = self._search_source(query.strip(), kinds)
+        row = self._connection.execute(f"SELECT count(*) {source}", parameters).fetchone()
+        return int(row[0]) if row else 0
+
+    def _search_source(self, cleaned: str, kinds: Sequence[str]) -> tuple[str, list[Any]]:
+        """The FROM and WHERE of a search, shared by the query and its count."""
         if len(cleaned) < 3:
             # Trigram indexes cannot answer a shorter query, so fall back to
             # a scan, which is cheap because it is bounded by the limit.
-            sql = (
-                "SELECT s.id, s.path, s.name, s.kind, s.qualified_name, s.container_id, "
-                "s.language, s.signature, s.documentation, s.is_local, s.is_synthetic, "
-                "s.name_start_line, s.name_start_char, s.name_end_line, s.name_end_char, "
-                "s.full_start_line, s.full_start_char, s.full_end_line, s.full_end_char "
+            source = (
                 "FROM symbols s WHERE s.is_synthetic = 0 AND s.is_local = 0 "
                 "AND instr(lower(s.name), lower(?)) > 0"
             )
             parameters: list[Any] = [cleaned]
         else:
-            sql = (
-                "SELECT s.id, s.path, s.name, s.kind, s.qualified_name, s.container_id, "
-                "s.language, s.signature, s.documentation, s.is_local, s.is_synthetic, "
-                "s.name_start_line, s.name_start_char, s.name_end_line, s.name_end_char, "
-                "s.full_start_line, s.full_start_char, s.full_end_line, s.full_end_char "
+            source = (
                 "FROM symbol_search JOIN symbols s ON s.rowid = symbol_search.rowid "
                 "WHERE symbol_search MATCH ? AND s.is_synthetic = 0 AND s.is_local = 0"
             )
             parameters = [_fts_query(cleaned)]
         if kinds:
             placeholders = ", ".join("?" for _ in kinds)
-            sql += f" AND s.kind IN ({placeholders})"
+            source += f" AND s.kind IN ({placeholders})"
             parameters.extend(kinds)
-        # Ranked by how directly the symbol answers the query. A match on
-        # the name itself beats one that only landed in the qualified name,
-        # which otherwise lets a short private member of a matching class
-        # outrank the class. Among equals, shorter wins, so `User` comes
-        # before `UserRepositoryFactory`.
-        sql += (
-            " ORDER BY (lower(s.name) = lower(?)) DESC,"
-            " (instr(lower(s.name), lower(?)) > 0) DESC,"
-            " length(s.name) ASC, s.path ASC, s.name_start_line ASC LIMIT ?"
-        )
-        parameters.extend([cleaned, cleaned, limit])
-        return [_symbol_from(row) for row in self._connection.execute(sql, parameters)]
+        return source, parameters
 
     def symbol(self, symbol_id: str) -> Symbol | None:
         row = self._connection.execute(
@@ -620,6 +628,14 @@ class IndexStore:
             "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()"
         ).fetchone()
         return int(row[0]) if row else 0
+
+
+_SYMBOL_COLUMNS = (
+    "s.id, s.path, s.name, s.kind, s.qualified_name, s.container_id, "
+    "s.language, s.signature, s.documentation, s.is_local, s.is_synthetic, "
+    "s.name_start_line, s.name_start_char, s.name_end_line, s.name_end_char, "
+    "s.full_start_line, s.full_start_char, s.full_end_line, s.full_end_char"
+)
 
 
 def _fts_query(text: str) -> str:

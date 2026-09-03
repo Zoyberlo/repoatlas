@@ -158,7 +158,7 @@ def search_symbols(
         raise ToolError("give a name or part of one to search for")
     offset = _decode_cursor(cursor)
     # Over-fetch by the offset so paging does not need a second index.
-    hits = store.search(query, limit=offset + limit + 1, kinds=kinds)
+    hits = store.search(query, limit=offset + limit, kinds=kinds)
     window = hits[offset : offset + limit]
     if not window:
         if offset:
@@ -166,9 +166,13 @@ def search_symbols(
         kind_note = f" of kind {', '.join(kinds)}" if kinds else ""
         return f"nothing{kind_note} matches {query!r}\n"
 
+    # A count rather than a peek. Fetching one past the window only ever
+    # knew "at least one more", and told the agent "1 more" when there
+    # were five hundred.
+    total = store.search_count(query, kinds=kinds)
     references = store.reference_counts([item.id for item in window])
     budgeted = _Budget(budget, estimator or store.estimator())
-    budgeted.add(f"{len(window)} match(es) for {query!r}:")
+    budgeted.add(f"{total} match(es) for {query!r}:")
     shown = 0
     for symbol in window:
         count = references.get(symbol.id, 0)
@@ -176,7 +180,7 @@ def search_symbols(
         if not budgeted.add(_describe(symbol, detail=detail, suffix=suffix)):
             break
         shown += 1
-    remaining = len(hits) - offset - shown
+    remaining = total - offset - shown
     hint = f"pass cursor={offset + shown} for more" if remaining > 0 else ""
     return budgeted.render(max(0, remaining), hint)
 
@@ -351,7 +355,7 @@ def neighbours(
         raise ToolError(
             f"no symbol with id {symbol_id!r}; use search_symbols to find its id"
         )
-    wanted = {EdgeKind(kind) for kind in kinds} if kinds else None
+    wanted = _edge_kinds(kinds)
 
     budgeted = _Budget(budget, estimator or store.estimator())
     arrow = {"out": "uses", "in": "used by", "both": "connected to"}[direction]
@@ -393,6 +397,25 @@ def neighbours(
             "both": f"{subject} is connected to nothing the index resolved\n",
         }[direction]
     return budgeted.render(truncated, "narrow with kinds or min_confidence")
+
+
+def _edge_kinds(kinds: tuple[str, ...]) -> set[EdgeKind] | None:
+    """Parse a kind filter, refusing an unknown one with the valid list.
+
+    `EdgeKind("bogus")` raises `ValueError`, which the adapter would turn
+    into "Error executing tool", a dead end. Naming the valid kinds is a
+    next step.
+    """
+    if not kinds:
+        return None
+    valid = {kind.value: kind for kind in EdgeKind}
+    unknown = [kind for kind in kinds if kind not in valid]
+    if unknown:
+        raise ToolError(
+            f"unknown edge kind(s) {', '.join(unknown)}; "
+            f"kinds are {', '.join(sorted(valid))}"
+        )
+    return {valid[kind] for kind in kinds}
 
 
 def _step(

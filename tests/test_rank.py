@@ -175,6 +175,20 @@ class TestRanking:
         ranked = {i.symbol.id: i.score for i in rank_symbols(snapshot)}
         assert ranked["pub"] > ranked["priv"]
 
+    def test_a_hash_field_is_private(self) -> None:
+        public = symbol("a#x", "x", kind=SymbolKind.FIELD, line=1, signature="x: string;")
+        hidden = symbol("a#y", "#y", kind=SymbolKind.FIELD, line=5, signature="#y: string;")
+        ranked = {i.symbol.id: i.score for i in rank_symbols(snapshot_of([public, hidden], []))}
+        assert ranked["a#y"] < ranked["a#x"]
+
+    def test_a_dunder_is_public_api(self) -> None:
+        # `__init__` is the most public thing a class has; the underscore
+        # rule must not hide it behind `_helper`.
+        init = symbol("a#__init__", "__init__", kind=SymbolKind.METHOD, line=1)
+        helper = symbol("a#_helper", "_helper", kind=SymbolKind.METHOD, line=5)
+        ranked = {i.symbol.id: i.score for i in rank_symbols(snapshot_of([init, helper], []))}
+        assert ranked["a#__init__"] > ranked["a#_helper"]
+
     def test_a_private_keyword_counts_as_much_as_an_underscore(self) -> None:
         # TypeScript, PHP and Java say it in a word, not in the name.
         public = symbol("pub", "label", kind=SymbolKind.FIELD, signature="label: string;")
@@ -286,6 +300,14 @@ class TestMapBudget:
         result = render_map(rank_symbols(snapshot), MapOptions(budget=100_000))
         assert result.included == result.total
         assert result.coverage == 1.0
+
+    def test_a_file_cap_still_spends_the_budget(self, ranked) -> None:
+        # Capping files after the fit threw away symbols the search had
+        # already paid for, leaving the map far under budget.
+        capped = render_map(ranked, MapOptions(budget=1000, max_files=3))
+        assert capped.files <= 3
+        assert capped.tokens <= 1000
+        assert capped.tokens >= 1000 * 0.5, capped.as_dict()
 
     def test_an_empty_ranking_renders_an_empty_map(self) -> None:
         result = render_map([], MapOptions(budget=1000))
