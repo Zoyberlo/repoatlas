@@ -20,7 +20,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import __version__
-from ..model import IndexSnapshot, SourceRange, Symbol, SymbolKind
+from ..model import (
+    Edge,
+    EdgeKind,
+    IndexSnapshot,
+    ResolutionTier,
+    SourceRange,
+    Symbol,
+    SymbolKind,
+)
 from ..parse.build import LanguageStats, _resolve_references
 from ..parse.extract import extract_source
 from ..parse.languages import SUPPORTED, LanguageUnavailable, query_source
@@ -280,6 +288,22 @@ def _resolve_into(
     snapshot = IndexSnapshot()
     for symbol in store.symbols():
         snapshot.symbols[symbol.id] = symbol
+    # Containment is derived from the symbols themselves rather than stored
+    # as edges, so it has to be rebuilt here. Without this the stored index
+    # carried no containment at all, and a map built from a store ranked
+    # differently from one built by parsing the same repository directly.
+    for symbol in snapshot.symbols.values():
+        if symbol.container_id and symbol.container_id in snapshot.symbols:
+            snapshot.add_edge(
+                Edge(
+                    src_id=symbol.container_id,
+                    dst_id=symbol.id,
+                    kind=EdgeKind.CONTAINS,
+                    tier=ResolutionTier.ORACLE,
+                    site_path=symbol.path,
+                    site_range=symbol.name_range,
+                )
+            )
     build = BuildResult(
         snapshot=snapshot,
         references=store.references(),

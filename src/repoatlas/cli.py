@@ -27,6 +27,10 @@ Three commands, matching the three things you do with an oracle:
     being worked on, which turns a map of the repository into a map of
     the task.
 
+``serve``
+    Run the MCP server over stdio, so an agent can query the index
+    directly.
+
 ``compare``
     Score one index against another and write the report. Either side may
     be a repository directory, which is parsed on the spot, so scoring the
@@ -154,6 +158,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="walk the filesystem instead of asking git",
     )
     repo_map.add_argument("--format", choices=("text", "json"), default="text")
+
+    serve = subcommands.add_parser("serve", help="run the MCP server over stdio")
+    serve.add_argument("root", type=Path, help="the repository to serve")
+    serve.add_argument(
+        "--store",
+        type=Path,
+        help="where to keep the index; defaults to .repoatlas/index.db in the root",
+    )
+    serve.add_argument(
+        "--no-refresh",
+        action="store_true",
+        help="serve the stored index as it is, without re-indexing first",
+    )
+    serve.add_argument(
+        "--no-git",
+        action="store_true",
+        dest="serve_no_git",
+        help="walk the filesystem instead of asking git which files are tracked",
+    )
 
     compare = subcommands.add_parser("compare", help="score a candidate index against an oracle")
     compare.add_argument(
@@ -471,6 +494,28 @@ def _normalise_focus(value: str) -> str:
     return cleaned.lstrip("/")
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    """Run the MCP server over stdio."""
+    from .server.app import serve as run_server
+
+    root = args.root
+    if not root.is_dir():
+        raise SystemExit(f"repoatlas: not a directory: {root}")
+    store_path = args.store or root / ".repoatlas" / "index.db"
+    try:
+        run_server(
+            root,
+            store_path,
+            refresh=not args.no_refresh,
+            use_git=not args.serve_no_git,
+        )
+    except RuntimeError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+    except KeyboardInterrupt:  # pragma: no cover - interactive only
+        pass
+    return _EXIT_OK
+
+
 def _cmd_inspect(args: argparse.Namespace) -> int:
     snapshot = _load(args.index)
     print(f"producer: {snapshot.producer or 'unknown'}")
@@ -550,6 +595,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "index": _cmd_index,
         "search": _cmd_search,
         "map": _cmd_map,
+        "serve": _cmd_serve,
         "verify-oracle": _cmd_verify_oracle,
         "compare": _cmd_compare,
     }

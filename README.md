@@ -3,7 +3,7 @@
 A universal code index for LLM coding agents, built so its accuracy can be
 measured rather than asserted.
 
-**Status: early but measured. Against a real `scip-typescript` index the
+**Status: usable. An agent can query it over MCP today. Measured: Against a real `scip-typescript` index the
 extractor scores 1.00 on definitions and 0.84 on resolved references, and
 every confidence rung is calibrated to within five points of what it
 claims.** The evaluation harness was built first, and the next section
@@ -137,6 +137,47 @@ rather than an overview of the project. It is the same mechanism aider
 uses, moved from files to symbols so a large class does not have to be
 included whole.
 
+## Serving it to an agent
+
+```bash
+repoatlas serve /path/to/repo
+```
+
+Seven tools over stdio, every one read-only and every answer bounded. Add
+it to Claude Code with a `.mcp.json` entry:
+
+```json
+{
+  "mcpServers": {
+    "repoatlas": {
+      "command": "repoatlas",
+      "args": ["serve", "."]
+    }
+  }
+}
+```
+
+| Tool | The question it answers |
+| --- | --- |
+| `repo_map` | What is this project built around? |
+| `search_symbols` | Where is this defined, and does it matter? |
+| `get_symbol` | What is this, and what uses it? |
+| `find_references` | What breaks if I change this? |
+| `neighbours` | What does this depend on, one hop out? |
+| `file_outline` | Is this file worth opening, and which lines? |
+| `index_status` | How much of the repository does this cover? |
+
+Seven rather than thirty because every schema is loaded into the model's
+context on every turn. Each description says *when* to use the tool, not
+only what it returns: agents handed a graph tool never called it in
+fifty-eight percent of trials, defaulting to grep, so a description that
+merely describes is a tool nobody uses. The server instructions say plainly
+where grep is still the better choice.
+
+Every answer is trimmed to a token budget and says what it left out.
+Claude Code truncates a tool result at 25,000 tokens, and a result cut by
+the client is cut at a point the agent cannot see.
+
 Parse without storing, to see what came out:
 
 ```bash
@@ -237,7 +278,8 @@ runs wherever Python does, on Linux, macOS, Windows and WSL.
    trigram symbol search, and a re-index that parses only what changed
 5. ~~Ranking: personalised PageRank over the symbol graph, budgeted output~~
    done: rank, focus, and a binary search that fits a map to a token budget
-6. MCP server, a small number of tools, every output under a token budget
+6. ~~MCP server, a small number of tools, every output under a token budget~~
+   done: seven read-only tools over stdio, each answer budgeted
 7. Framework plugins for the string-keyed edges no generic parser can see:
    Laravel views and routes, Vue single-file components, Blade includes
 
@@ -248,7 +290,7 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
-pytest                 # 502 tests
+pytest                 # 554 tests
 ruff check .
 mypy
 ```

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import threading
 from collections.abc import Iterable, Sequence
 from contextlib import closing
 from dataclasses import dataclass
@@ -126,9 +127,22 @@ class IndexStore:
         self.path = Path(path)
         if self.path.name != ":memory:":
             self.path.parent.mkdir(parents=True, exist_ok=True)
+        # The server runs synchronous tool functions on a worker thread, so
+        # the connection outlives the thread that opened it. Sharing one is
+        # safe only because this SQLite is built serialized, which is
+        # checked rather than assumed; writes still take the lock below,
+        # because the explicit BEGIN and COMMIT here are a transaction
+        # protocol that serialized mode does not make atomic on its own.
+        if sqlite3.threadsafety < 3:  # pragma: no cover - depends on the build
+            raise StoreError(
+                "this Python's SQLite is not built for shared connections; "
+                f"threadsafety is {sqlite3.threadsafety}, 3 is required"
+            )
+        self._lock = threading.RLock()
         self._connection = sqlite3.connect(
             ":memory:" if self.path.name == ":memory:" else str(self.path),
             isolation_level=None,
+            check_same_thread=False,
         )
         self._connection.row_factory = None
         # Anything that fails from here on leaves a connection open unless it
@@ -170,7 +184,7 @@ class IndexStore:
 
     def transaction(self) -> Any:
         """A context manager wrapping one atomic batch of writes."""
-        return _Transaction(self._connection)
+        return _Transaction(self._connection, self._lock)
 
     # --- metadata ----------------------------------------------------------
 
@@ -399,18 +413,7 @@ class IndexStore:
             "SELECT site_path, src_id, dst_id, kind, tier, confidence, "
             "site_start_line, site_start_char, site_end_line, site_end_char FROM edges"
         ).fetchall()
-        return [
-            Edge(
-                src_id=row[1],
-                dst_id=row[2],
-                kind=EdgeKind(row[3]),
-                tier=ResolutionTier.from_label(row[4]),
-                confidence=row[5],
-                site_path=row[0],
-                site_range=_range_from(row, 6),
-            )
-            for row in rows
-        ]
+        return [_edge_from(row) for row in rows]
 
     def references(self) -> list[tuple[str, Reference]]:
         rows = self._connection.execute(
@@ -536,6 +539,39 @@ class IndexStore:
         ).fetchone()
         return _symbol_from(row) if row else None
 
+    def edges_from(self, symbol_id: str) -> list[Edge]:
+        """Edges whose source is this symbol: what it uses."""
+        return self._edges_where("src_id = ?", symbol_id)
+
+    def edges_to(self, symbol_id: str) -> list[Edge]:
+        """Edges whose target is this symbol: what uses it."""
+        return self._edges_where("dst_id = ?", symbol_id)
+
+    def _edges_where(self, clause: str, *parameters: Any) -> list[Edge]:
+        rows = self._connection.execute(
+            "SELECT site_path, src_id, dst_id, kind, tier, confidence, "
+            "site_start_line, site_start_char, site_end_line, site_end_char "
+            f"FROM edges WHERE {clause}",
+            parameters,
+        ).fetchall()
+        return [_edge_from(row) for row in rows]
+
+    def reference_counts(self, symbol_ids: Sequence[str]) -> dict[str, int]:
+        """How many distinct symbols use each of these, in one query.
+
+        One query rather than one per symbol: a search returning twenty hits
+        would otherwise make twenty round trips to decorate its own output.
+        """
+        if not symbol_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in symbol_ids)
+        rows = self._connection.execute(
+            f"SELECT dst_id, count(DISTINCT src_id) FROM edges "
+            f"WHERE dst_id IN ({placeholders}) GROUP BY dst_id",
+            tuple(symbol_ids),
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+
     def counts(self) -> dict[str, int]:
         with closing(self._connection.cursor()) as cursor:
             return {
@@ -553,6 +589,18 @@ class IndexStore:
 def _fts_query(text: str) -> str:
     """Quote a user string so FTS5 reads it as a literal, not as syntax."""
     return '"' + text.replace('"', '""') + '"'
+
+
+def _edge_from(row: Sequence[Any]) -> Edge:
+    return Edge(
+        src_id=row[1],
+        dst_id=row[2],
+        kind=EdgeKind(row[3]),
+        tier=ResolutionTier.from_label(row[4]),
+        confidence=row[5],
+        site_path=row[0],
+        site_range=_range_from(row, 6),
+    )
 
 
 def _symbol_from(row: Sequence[Any]) -> Symbol:
@@ -576,15 +624,27 @@ def _symbol_from(row: Sequence[Any]) -> Symbol:
 class _Transaction:
     """One atomic batch of writes."""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: sqlite3.Connection, lock: threading.RLock) -> None:
         self._connection = connection
+        self._lock = lock
 
     def __enter__(self) -> sqlite3.Connection:
-        self._connection.execute("BEGIN")
+        # Held for the whole transaction. Two threads interleaving their
+        # statements between one BEGIN and one COMMIT would commit each
+        # other's half-finished work.
+        self._lock.acquire()
+        try:
+            self._connection.execute("BEGIN")
+        except BaseException:
+            self._lock.release()
+            raise
         return self._connection
 
     def __exit__(self, exc_type: object, *_: object) -> None:
-        if exc_type is None:
-            self._connection.execute("COMMIT")
-        else:
-            self._connection.execute("ROLLBACK")
+        try:
+            if exc_type is None:
+                self._connection.execute("COMMIT")
+            else:
+                self._connection.execute("ROLLBACK")
+        finally:
+            self._lock.release()
