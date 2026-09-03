@@ -91,6 +91,16 @@ SUPPORTED: tuple[LanguageSpec, ...] = (
     LanguageSpec("tsx", "tsx", (".tsx",), query_name="typescript"),
     LanguageSpec("javascript", "javascript", (".js", ".mjs", ".cjs", ".jsx")),
     LanguageSpec("php", "php", (".php", ".phtml")),
+    # A Vue component is HTML with a script island; the island is parsed by
+    # whichever of TypeScript or JavaScript its `lang` attribute names, and
+    # `embeds` records that so the extractor knows to look.
+    LanguageSpec(
+        "vue", "vue", (".vue",), embeds=("typescript", "tsx", "javascript")
+    ),
+    # Blade must be matched by name, not by suffix: `Path.suffix` of
+    # `index.blade.php` is `.php`, so a suffix rule would hand every
+    # template to the PHP grammar and find nothing in it.
+    LanguageSpec("blade", "blade", ()),
 )
 
 _BY_EXTENSION: dict[str, LanguageSpec] = {}
@@ -104,12 +114,22 @@ for _spec in SUPPORTED:
         _BY_FILENAME[_filename] = _spec
 
 
+# Suffixes that only mean something as a pair. `Path.suffix` sees the last
+# one, which for a Blade template is `.php` and would send it to the wrong
+# grammar entirely.
+_COMPOUND_SUFFIXES = {".blade.php": "blade"}
+
+
 def language_for_path(path: str | Path) -> LanguageSpec | None:
     """Pick the language for a file, or ``None`` if it is not one we handle."""
     name = Path(path).name
     exact = _BY_FILENAME.get(name)
     if exact is not None:
         return exact
+    lowered = name.lower()
+    for suffix, language in _COMPOUND_SUFFIXES.items():
+        if lowered.endswith(suffix):
+            return _BY_NAME[language]
     # `.d.ts` is TypeScript, and `Path.suffix` gives `.ts` for it already.
     return _BY_EXTENSION.get(Path(name).suffix.lower())
 

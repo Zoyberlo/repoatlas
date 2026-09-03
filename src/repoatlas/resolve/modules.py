@@ -83,6 +83,10 @@ class NodeResolver:
         ".jsx",
         ".mjs",
         ".cjs",
+        # A bundler resolves `./MyButton` to `MyButton.vue`; Vue's own
+        # documentation writes the extension, but both appear in real
+        # projects.
+        ".vue",
     )
     INDEX_NAMES = ("index.ts", "index.tsx", "index.js", "index.jsx", "index.mjs")
 
@@ -317,7 +321,7 @@ def resolver_for(
     language: str, root: Path, known_files: frozenset[str]
 ) -> ModuleResolver | None:
     """Build the resolver for a language, reading its project configuration."""
-    if language in ("typescript", "tsx", "javascript"):
+    if language in ("typescript", "tsx", "javascript", "vue"):
         base_url, aliases = _read_tsconfig(root)
         return NodeResolver(known_files=known_files, base_url=base_url, aliases=aliases)
     if language == "python":

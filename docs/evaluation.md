@@ -135,6 +135,57 @@ on transitive type-hierarchy questions ([type-resolved reachability study]).
 Those are the numbers to beat and to be honest about: the goal is to clear
 grep decisively, not to pretend to match a compiler.
 
+### Framework conventions, and why they are not a rung
+
+A convention edge sits outside the cascade rather than at the top of it, and
+the reason is that its evidence is a different kind. Every rung of the
+cascade weighs how likely a name is to mean a particular definition. A
+convention weighs nothing: `view('users.index')` names
+`resources/views/users/index.blade.php` and no other file, so the only
+question is whether that file is in the repository. If it is, the edge is a
+fact. If it is not, there is no weaker reading to fall back on.
+
+That second half is the part that costs something to get right. A template
+name looks like an identifier if you squint. Letting `view('users.nope')`
+fall through to the name cascade in a project whose controller defines
+`nope` produces an edge that is confidently wrong, which is the one failure
+mode this whole project exists to avoid. So the convention kinds are cut off
+from the cascade entirely, with one exception: a Vue component tag *is* an
+identifier, because the script block imported it. The name itself decides,
+by whether it parses as one.
+
+Detection reads a manifest rather than a directory layout, for the same
+reason. `resources/views` is a folder name anyone may use; a `composer.json`
+requiring `laravel/framework` is the project stating what it is.
+
+What is not measured here is coverage: how many of a real Laravel project's
+view calls use a name that is a literal string at all. Calls like
+`view($template)` and `view('admin.' . $section)` are invisible to any
+static reader, and the fraction they represent is unknown until a real
+repository is measured. Precision is not in doubt, because a convention only
+claims an edge when the file it names exists. Recall is.
+
+### A dependency that segfaults
+
+tree-sitter 0.26.0 corrupts the heap when this extractor parses a Vue
+component, and the process dies later, in an unrelated file's tag query,
+with a Windows access violation and no Python traceback. It reproduced on
+four runs out of four; the same source on 0.25.2 ran six times out of six
+without incident.
+
+It is recorded here rather than in a comment because of what it says about
+testing a parser. Every accuracy number in this document comes from
+comparing outputs, and a crash produces no output to compare. Bisecting it
+also punished the obvious method: deselecting individual tests appeared to
+move the fault around, because the fault depends on heap layout rather than
+on any one test. Adding a probe module that did nothing was enough to make
+it reappear.
+
+So the version range in `pyproject.toml` is load-bearing, and a test asserts
+it is still in force. That test cannot catch the crash; nothing can, because
+a segfault takes the runner with it. It can only stop a future bump from
+reintroducing it silently.
+
 ### Ranking, and what has not been measured about it
 
 Ranking is where this project currently asserts more than it has shown. The

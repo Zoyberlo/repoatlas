@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .. import __version__
 from ..model import Edge, EdgeKind, IndexSnapshot, ResolutionTier, SymbolKind
+from ..plugins import active_plugins
 from ..resolve.cascade import ResolutionStats, Resolver, SymbolIndex
 from ..resolve.modules import ModuleResolver, resolver_for
 from .extract import FileExtraction, Reference, extract_source
@@ -205,7 +206,7 @@ def build_snapshot(
         _add_extraction(result, extraction)
     result.duration_seconds = time.perf_counter() - started
 
-    _add_module_symbols(result)
+    _add_module_symbols(result, source_files)
     if resolve:
         _resolve_references(result, root_path, source_files)
     return result
@@ -234,6 +235,8 @@ def _resolve_references(
             for symbol in result.snapshot.symbols.values()
             if symbol.synthetic
         },
+        plugins=active_plugins(root, known),
+        known_files=known,
         stats=result.resolution,
     )
 
@@ -246,7 +249,9 @@ def _resolve_references(
     result.resolve_seconds = time.perf_counter() - started
 
 
-def _add_module_symbols(result: BuildResult) -> None:
+def _add_module_symbols(
+    result: BuildResult, files: Iterable[SourceFile] = ()
+) -> None:
     """Give every parsed file a stand-in symbol for its top level.
 
     A top-level reference such as an import has no enclosing function or
@@ -258,6 +263,10 @@ def _add_module_symbols(result: BuildResult) -> None:
 
     paths = {symbol.path for symbol in result.snapshot.symbols.values()}
     paths.update(path for path, _ in result.references)
+    # Every parsed file, not only those that yielded something. A
+    # template that defines nothing is still a place an edge can point
+    # to, and the store gives one to every file it records.
+    paths.update(source.path for source in files)
     origin = SourceRange.of(0, 0, 0, 0)
     for path in sorted(paths):
         module_id = f"{path}#<module>"

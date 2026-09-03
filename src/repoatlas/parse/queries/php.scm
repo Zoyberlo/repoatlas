@@ -106,3 +106,21 @@
 (arguments
   (argument
     (name) @name)) @reference.value
+
+; `view('users.index')` names a Blade template, and `route('users.show')`
+; names a route definition. Neither is a symbol any parser can see: both are
+; strings that mean a file only under a framework's conventions, which is
+; why they carry their own reference kinds for a plugin to resolve.
+(function_call_expression
+  function: (name) @_fn
+  arguments: (arguments
+    (argument
+      (string) @name))
+  (#eq? @_fn "view")) @reference.view
+
+(function_call_expression
+  function: (name) @_fn
+  arguments: (arguments
+    (argument
+      (string) @name))
+  (#eq? @_fn "route")) @reference.route

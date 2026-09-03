@@ -27,7 +27,11 @@ dependencies = []
 
 [project.optional-dependencies]
 parse = [
-  "tree-sitter>=0.25,<0.27",
+  # Capped below 0.26: that release segfaults this extractor. Parsing a
+  # Vue component corrupts the heap, and the crash lands later, in an
+  # unrelated file's tag query. Reproduced 4 runs out of 4 on 0.26.0 and
+  # 0 out of 6 on 0.25.2, same source. See docs/evaluation.md.
+  "tree-sitter>=0.25,<0.26",
   "tree-sitter-language-pack>=1.16",
 ]
 serve = ["mcp>=1.28"]
@@ -35,7 +39,11 @@ dev = [
   # `parse` and `serve` are included so CI actually runs the extractor and
   # adapter tests rather than skipping them, which would leave the oracle
   # comparison and the whole protocol boundary unverified.
-  "tree-sitter>=0.25,<0.27",
+  # Capped below 0.26: that release segfaults this extractor. Parsing a
+  # Vue component corrupts the heap, and the crash lands later, in an
+  # unrelated file's tag query. Reproduced 4 runs out of 4 on 0.26.0 and
+  # 0 out of 6 on 0.25.2, same source. See docs/evaluation.md.
+  "tree-sitter>=0.25,<0.26",
   "tree-sitter-language-pack>=1.16",
   "mcp>=1.28",
   "pytest>=8.0",

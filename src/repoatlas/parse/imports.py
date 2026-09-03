@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..model import SourceRange
-from .languages import LanguageSpec, get_language, imports_query_source
+from .languages import get_language, imports_query_source
 
 if TYPE_CHECKING:  # pragma: no cover - imported only for type checking
     from tree_sitter import Node, Query, Tree
@@ -177,11 +177,16 @@ def _python_module(node: Node) -> tuple[str, int]:
     return text[level:], level
 
 
-def extract_imports(tree: Tree, spec: LanguageSpec) -> FileImports:
-    """Read every import in one parsed file."""
+def extract_imports(tree: Tree, language: str) -> FileImports:
+    """Read every import in one parsed file.
+
+    Takes a language name rather than a spec so an embedded region can
+    reuse it: the script block of a Vue component is TypeScript, and it
+    has no spec of its own.
+    """
     from tree_sitter import QueryCursor
 
-    cursor = QueryCursor(_compiled_imports_query(spec.name))
+    cursor = QueryCursor(_compiled_imports_query(language))
     result = FileImports()
     # A module may bind several names, and the query yields one match per
     # statement, so statements are keyed by their own span to merge.

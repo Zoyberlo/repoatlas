@@ -36,6 +36,7 @@ repoatlas serve /path/to/repo     # seven read-only tools over MCP
 - [Serving it to an agent](#serving-it-to-an-agent)
 - [What the first real measurement changed](#what-the-first-real-measurement-changed)
 - [Design commitments](#design-commitments)
+- [Framework conventions](#framework-conventions)
 - [Roadmap](#roadmap)
 
 ## Why this exists, and why it starts with tests
@@ -295,6 +296,37 @@ plug in as optional oracles instead.
 is decoded straight from the protobuf wire format, so the correctness suite
 runs wherever Python does, on Linux, macOS, Windows and WSL.
 
+## Framework conventions
+
+Some of the most important edges in a project are invisible to every parser
+that has ever read it. `view('users.index')` is a string; to Laravel it is
+`resources/views/users/index.blade.php`, and it is how a controller reaches
+the thing a user actually looks at.
+
+A plugin recognises a repository and answers one question: what file does
+this conventional name refer to. Nothing else in the index knows the
+framework exists.
+
+| Written | Resolves to |
+| --- | --- |
+| `view('users.index')` | `resources/views/users/index.blade.php` |
+| `@extends('layouts.app')` | `resources/views/layouts/app.blade.php` |
+| `@include('partials.header')` | `resources/views/partials/header.blade.php` |
+| `<x-forms.input />` | `resources/views/components/forms/input.blade.php` |
+| `<x-data-table />` | `app/View/Components/DataTable.php` |
+| `<MyButton />`, `<my-button />` | the file the script block imported |
+
+Detection reads the project's own manifest, not its directory names: a
+`resources/views` folder proves nothing, a `composer.json` requiring
+`laravel/framework` does.
+
+A convention that resolves is evidence rather than inference, so it carries
+the same confidence as a resolved import. A convention that does not resolve
+produces **no edge at all**. This is the part worth insisting on: a template
+name is not an identifier, and letting `view('users.nope')` fall through to
+the name cascade would match any function called `nope` and label the result
+0.95.
+
 ## Roadmap
 
 - [x] **Data model, SCIP oracle reader, comparison harness, metrics**
@@ -311,13 +343,16 @@ runs wherever Python does, on Linux, macOS, Windows and WSL.
 - [x] **Ranking**: personalised PageRank over the symbol graph, with a binary
       search that fits a map to a token budget
 - [x] **MCP server**: seven read-only tools over stdio, each answer budgeted
-- [ ] **Framework plugins** for the string-keyed edges no generic parser can
-      see: Laravel views and routes, Vue single-file components, Blade
-      includes
+- [x] **Framework plugins** for the string-keyed edges no generic parser can
+      see: Laravel views, layouts, includes and Blade components; Vue
+      single-file components in both spellings
+- [ ] **Documentation layer**: per-file summaries anchored to symbol ranges,
+      cached by content hash and measured against the same harness
 
 Known gaps, stated rather than buried: the ranking weights are judgement
-calls that no benchmark has yet settled, Kotlin is not supported, and the
-only committed oracle fixture is TypeScript.
+calls that no benchmark has yet settled, Kotlin is not supported, Laravel
+route names need a route table nothing yet reads, and the only committed
+oracle fixture is TypeScript.
 
 The full plan, including how tiers 3 and 4 of evaluation work and which
 benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md).
@@ -326,7 +361,7 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
-pytest                 # 564 tests
+pytest                 # 609 tests
 ruff check .
 mypy
 ```

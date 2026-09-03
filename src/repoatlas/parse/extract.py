@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from ..model import SourceRange, Symbol, SymbolKind
 from ..spans import ScopeIndex
+from .embedded import embedded_regions, parse_embedded
 from .imports import FileImports, extract_imports
 from .languages import LanguageSpec, get_language, get_parser, query_source
 
@@ -30,6 +31,7 @@ __all__ = [
     "ReferenceKind",
     "extract_file",
     "extract_source",
+    "to_range",
 ]
 
 # Capture prefixes, in the tree-sitter tags convention.
@@ -130,6 +132,30 @@ def _refine_kind(kind: SymbolKind, name: str, container: Symbol | None) -> Symbo
     return SymbolKind.METHOD
 
 
+def _unquote(text: str) -> str:
+    """Strip one matching pair of quotes from a captured string literal.
+
+    Template languages name their targets with strings, so the capture is
+    `'layouts.app'` where the name is `layouts.app`. Only a matched pair is
+    removed, so an identifier that merely starts with a quote is untouched.
+    """
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        return text[1:-1]
+    return text
+
+
+def _is_component_name(name: str) -> bool:
+    """Whether a tag names a component rather than a native element.
+
+    Vue's own rule, and the one every template language that mixes the two
+    settles on: a custom component is written in PascalCase or contains a
+    hyphen, because HTML reserves the bare lowercase names. Without this,
+    every `div` and `span` in a template becomes a reference that can never
+    resolve, burying the ones that can.
+    """
+    return "-" in name or (name[:1].isupper() if name else False)
+
+
 ReferenceKind = str
 """One of ``call``, ``class``, ``type``, ``import`` or another query suffix.
 
@@ -189,7 +215,7 @@ class FileExtraction:
         return {symbol.id: symbol for symbol in self.symbols}
 
 
-def _to_range(node: Node) -> SourceRange:
+def to_range(node: Node) -> SourceRange:
     """Convert a tree-sitter node span to a model range.
 
     tree-sitter reports a point's column in bytes, which is what SCIP calls
@@ -282,12 +308,12 @@ def _declaration_line(lines: list[str], span: SourceRange) -> str:
 
 
 def _collect(
-    tree: Tree, spec: LanguageSpec, lines: list[str]
+    tree: Tree, language: str, lines: list[str]
 ) -> tuple[list[_RawDefinition], list[tuple[str, str, SourceRange]]]:
     """Run the tag query and split its captures into definitions and uses."""
     from tree_sitter import QueryCursor
 
-    cursor = QueryCursor(_compiled_query(spec.name))
+    cursor = QueryCursor(_compiled_query(language))
 
     definitions: dict[tuple[int, int, int, int], _RawDefinition] = {}
     # One use site is one reference however many patterns matched it, so
@@ -300,7 +326,7 @@ def _collect(
         if not name_nodes:
             continue
         name_node = name_nodes[0]
-        name_span = _to_range(name_node)
+        name_span = to_range(name_node)
         name_text = name_node.text
         if name_text is None:
             continue
@@ -308,6 +334,9 @@ def _collect(
         # PHP property names arrive with their sigil; the name people search
         # for does not include it.
         name = name.lstrip("$")
+        # A string-keyed reference such as `@extends('layouts.app')` captures
+        # the literal, quotes and all. The name is what is inside them.
+        name = _unquote(name)
         if not name:
             continue
 
@@ -316,7 +345,7 @@ def _collect(
                 kind = _KIND_BY_CAPTURE.get(
                     capture_name[len(_DEFINITION_PREFIX) :], SymbolKind.UNKNOWN
                 )
-                full_span = _to_range(nodes[0])
+                full_span = to_range(nodes[0])
                 if not full_span.contains(name_span):
                     # A query that captures a node not containing its own
                     # identifier is a bug in the query, not in the source.
@@ -421,7 +450,25 @@ def extract_source(
     parser = get_parser(spec.name)
     tree = parser.parse(source)
     lines = source.decode("utf-8", errors="replace").splitlines()
-    raw_definitions, raw_references = _collect(tree, spec, lines)
+    raw_definitions, raw_references = _collect(tree, spec.name, lines)
+
+    # A Vue component's definitions live in its script block, which is
+    # another language. Parsing it here rather than in a second pass keeps
+    # every symbol in one file's extraction, so the store's per-file
+    # delete-and-insert still covers all of them.
+    embedded_imports: list[FileImports] = []
+    for region in embedded_regions(tree, spec.name):
+        inner = parse_embedded(source, region)
+        if inner is None:
+            continue
+        inner_definitions, inner_references = _collect(
+            inner, region.language, lines
+        )
+        raw_definitions.extend(inner_definitions)
+        raw_references.extend(inner_references)
+        embedded_imports.append(extract_imports(inner, region.language))
+    raw_definitions.sort(key=lambda d: (d.name_span.start, d.name_span.end))
+
     symbols = _assign_ids(path, raw_definitions)
 
     scopes: ScopeIndex[int] = ScopeIndex(
@@ -432,6 +479,8 @@ def extract_source(
 
     references: list[Reference] = []
     for name, kind, span in raw_references:
+        if kind == "component" and not _is_component_name(name):
+            continue
         if span in definition_spans:
             # The identifier in `class A(B)` is a definition of A and a
             # reference to B; a name that is its own definition site is not
@@ -450,13 +499,18 @@ def extract_source(
         )
     references.sort(key=lambda reference: (reference.span.start, reference.name))
 
+    file_imports = extract_imports(tree, spec.name)
+    for extra in embedded_imports:
+        file_imports.statements.extend(extra.statements)
+        file_imports.namespace = file_imports.namespace or extra.namespace
+
     error_count = _count_errors(tree)
     return FileExtraction(
         path=path,
         language=spec.name,
         symbols=symbols,
         references=references,
-        imports=extract_imports(tree, spec),
+        imports=file_imports,
         has_errors=error_count > 0,
         error_count=error_count,
     )

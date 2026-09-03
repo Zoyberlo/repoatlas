@@ -18,12 +18,14 @@ against calibration rather than kept out of loyalty.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
 from ..model import Edge, EdgeKind, ResolutionTier, Symbol, SymbolKind
 from ..parse.extract import Reference
 from ..parse.imports import FileImports
+from ..plugins.base import FrameworkPlugin
 from .modules import ModuleResolver
 
 __all__ = ["ResolutionStats", "Resolver", "SymbolIndex"]
@@ -37,7 +39,27 @@ _EDGE_KIND_BY_REFERENCE = {
     "member": EdgeKind.REFERENCES,
     "construct": EdgeKind.CALLS,
     "value": EdgeKind.REFERENCES,
+    # A template a controller renders, or a partial a layout pulls in.
+    # Both are dependencies of the file that names them.
+    "view": EdgeKind.IMPORTS,
+    "extends": EdgeKind.INHERITS,
+    "include": EdgeKind.IMPORTS,
+    "component": EdgeKind.IMPORTS,
+    "route": EdgeKind.REFERENCES,
 }
+
+# Reference kinds whose name is a framework convention rather than an
+# identifier. `view('users.index')` names a template; letting it fall
+# through the identifier cascade would match any function called
+# `index`, and a confident wrong edge is worse than none.
+_CONVENTION_KINDS = frozenset(
+    {"view", "extends", "include", "component", "route"}
+)
+
+# The exception. A component tag in a Vue template *is* an identifier:
+# `<MyButton />` is the symbol the script block imported. Blade's
+# `<x-alert />` is not. The name itself says which.
+_IDENTIFIER = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*\Z")
 
 # Kinds that can be reached through a receiver: `this.x`, `self.x`.
 _MEMBER_REFERENCE_KINDS = frozenset({"call", "member"})
@@ -220,6 +242,16 @@ class Resolver:
     module_symbols: dict[str, str] = field(default_factory=dict)
     """File path to its synthetic module symbol id, for top-level references."""
 
+    plugins: tuple[FrameworkPlugin, ...] = ()
+    """Framework plugins that recognised this repository.
+
+    Consulted before any other rung, because a convention is not a
+    guess: `view('users.index')` names one file, and either it is in the
+    repository or the reference goes unresolved.
+    """
+
+    known_files: frozenset[str] = frozenset()
+
     stats: ResolutionStats = field(default_factory=ResolutionStats)
 
     def resolve_file(self, path: str, references: list[Reference]) -> list[Edge]:
@@ -269,6 +301,23 @@ class Resolver:
 
     def _target(self, path: str, reference: Reference) -> tuple[Symbol | None, ResolutionTier]:
         name = reference.name
+
+        # Rung zero: a framework convention. Either the file the
+        # convention names is in the repository or it is not, so a hit
+        # is evidence rather than inference and ranks with a resolved
+        # import.
+        if reference.kind in _CONVENTION_KINDS:
+            resolved = self._by_convention(path, reference)
+            if resolved is not None:
+                return resolved, ResolutionTier.IMPORT_MAP
+            identifier = _as_identifier(reference)
+            if identifier is None:
+                # Nothing below this rung can read the name, because it
+                # is not one an identifier cascade would recognise.
+                self.stats.unresolved += 1
+                return None, ResolutionTier.FUZZY
+            name = identifier
+
         file_imports = self.imports.get(path)
 
         # Rung one: the name was imported, and the import names a file this
@@ -284,6 +333,16 @@ class Resolver:
                     chosen = _prefer(candidates, reference)
                     if chosen is not None:
                         return chosen, ResolutionTier.IMPORT_MAP
+                    # A default or namespace import whose target declares no
+                    # matching name: the module never named what it exported,
+                    # so the file itself is the answer. A Vue single-file
+                    # component is exactly this, and so is any module whose
+                    # default export is anonymous.
+                    if binding.original is None:
+                        module_id = self.module_symbols.get(resolved_path)
+                        module_symbol = self.index.get(module_id) if module_id else None
+                        if module_symbol is not None:
+                            return module_symbol, ResolutionTier.IMPORT_MAP
                     # The file is ours but the name is not in it: a re-export,
                     # or a name the extractor missed. Weaker, not absent.
                     fallback = _prefer(self.index.by_name(binding.source_name), reference)
@@ -330,12 +389,50 @@ class Resolver:
         self.stats.unresolved += 1
         return None, ResolutionTier.FUZZY
 
+    def _by_convention(self, path: str, reference: Reference) -> Symbol | None:
+        """Ask each plugin what file this conventional name refers to."""
+        for plugin in self.plugins:
+            if reference.kind not in plugin.kinds:
+                continue
+            target_path = plugin.resolve(
+                reference.kind,
+                reference.name,
+                from_path=path,
+                files=self.known_files,
+            )
+            if target_path is None or target_path == path:
+                continue
+            module_id = self.module_symbols.get(target_path)
+            target = self.index.get(module_id) if module_id else None
+            if target is not None:
+                return target
+        return None
+
     def _resolve_module(self, path: str, module: str, relative_level: int) -> str | None:
         language = self.languages.get(path)
         resolver = self.resolvers.get(language or "")
         if resolver is None:
             return None
         return resolver.resolve(module, from_path=path, relative_level=relative_level)
+
+
+def _as_identifier(reference: Reference) -> str | None:
+    """The identifier a conventional name also is, if it is one.
+
+    Only component tags qualify, and only in a template whose components
+    are imported symbols. Vue writes `<MyButton />` for an import and
+    accepts `<my-button />` for the same one, so both readings are tried;
+    Blade's `<x-alert />` is neither and returns nothing.
+    """
+    if reference.kind != "component":
+        return None
+    name = reference.name
+    if _IDENTIFIER.match(name):
+        return name
+    if name.startswith("x-") or "." in name or "-" not in name:
+        return None
+    pascal = "".join(part[:1].upper() + part[1:] for part in name.split("-") if part)
+    return pascal if _IDENTIFIER.match(pascal) else None
 
 
 def _is_external(module: str) -> bool:
