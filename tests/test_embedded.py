@@ -141,6 +141,48 @@ class TestVueScriptBlocks:
         assert result.symbols == [] and not result.has_errors
 
 
+class TestBladePhpIslands:
+    ISLANDS = (
+        b"<div>{{ $user->name }} {{ route('users.show', $user) }}</div>\n"
+        b"@php\n"
+        b"    $total = count($items);\n"
+        b"@endphp\n"
+        b"<p>{!! render($html) !!}</p>\n"
+    )
+
+    def references(self):
+        result = extract("v.blade.php", self.ISLANDS)
+        return {
+            (ref.kind, ref.name): (ref.span.start.line + 1, ref.span.start.character)
+            for ref in result.references
+        }
+
+    def test_an_echo_yields_a_member_reference_at_its_real_position(self) -> None:
+        found = self.references()
+        # `name` in `$user->name` sits on line 1 at column 15 of the host file.
+        assert found[("member", "name")] == (1, 15)
+
+    def test_a_route_call_inside_an_echo_is_a_route_reference(self) -> None:
+        found = self.references()
+        assert ("route", "users.show") in found
+
+    def test_a_php_block_is_parsed_too(self) -> None:
+        found = self.references()
+        # `count` is called on line 3; the island's second line keeps its
+        # own columns.
+        assert found[("call", "count")] == (3, 13)
+
+    def test_a_raw_echo_is_an_island_as_well(self) -> None:
+        found = self.references()
+        assert found[("call", "render")] == (5, 7)
+
+    def test_islands_do_not_disturb_directives(self) -> None:
+        result = extract("v.blade.php", b"@extends('layouts.app')\n<b>{{ $x->y }}</b>\n")
+        kinds = {(ref.kind, ref.name) for ref in result.references}
+        assert ("extends", "layouts.app") in kinds
+        assert ("member", "y") in kinds
+
+
 class TestBladeDirectives:
     def test_extends_include_and_components_are_read(self) -> None:
         result = extract("resources/views/home.blade.php", BLADE)

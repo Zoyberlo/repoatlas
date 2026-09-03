@@ -468,6 +468,28 @@ def extract_source(
         inner = parse_embedded(source, region)
         if inner is None:
             continue
+        if region.is_prefixed:
+            # The island was parsed with a prefix in front, so its tree's
+            # positions are its own; collect against the island's lines
+            # and move every span back onto the host file.
+            island = region.prefix + source[region.node.start_byte : region.node.end_byte]
+            island_lines = island.decode("utf-8", errors="replace").splitlines()
+            inner_definitions, inner_references = _collect(
+                inner, region.language, island_lines
+            )
+            prefix_text = region.prefix.decode("utf-8", errors="replace")
+            for definition in inner_definitions:
+                if definition.name_span.start.line == 0 and definition.signature.startswith(
+                    prefix_text
+                ):
+                    definition.signature = definition.signature[len(prefix_text) :]
+                definition.name_span = region.adjust(definition.name_span)
+                definition.full_span = region.adjust(definition.full_span)
+            raw_definitions.extend(inner_definitions)
+            raw_references.extend(
+                (name, kind, region.adjust(span)) for name, kind, span in inner_references
+            )
+            continue
         inner_definitions, inner_references = _collect(
             inner, region.language, lines
         )

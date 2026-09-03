@@ -180,7 +180,7 @@ Small, certain, and each about an hour. *The first five were fixed on 2026-09-04
   re-index. A tool answer that differs between otherwise identical calls
   is a cache miss for the agent's whole conversation prefix (see 3.5).
   Move it last, or drop it.
-- **Blade's PHP islands are not parsed.** `{{ $user->name }}` and `@php`
+- *Done 2026-09-04:* **Blade's PHP islands are not parsed.** `{{ $user->name }}` and `@php`
   blocks produce no references, so a Blade template reaches its components
   and layouts but never the PHP it calls. The `php_only` grammar the Blade
   injections expect is not in the language pack; parsing the island with

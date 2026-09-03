@@ -41,9 +41,41 @@ class EmbeddedRegion:
 
     span: SourceRange
 
+    prefix: bytes = b""
+    """Bytes the inner grammar needs in front of the island to parse it.
+
+    Blade's PHP islands are bare expressions and statements, and the PHP
+    grammar only reads code after an open tag. Prefixing `<?php ` makes
+    them parse, at the cost of every position on the island's first line
+    being off by the prefix's length; :func:`adjust` puts them back.
+    """
+
     @property
     def is_empty(self) -> bool:
         return self.node.start_byte >= self.node.end_byte
+
+    @property
+    def is_prefixed(self) -> bool:
+        return bool(self.prefix)
+
+    def adjust(self, span: SourceRange) -> SourceRange:
+        """Map a span in the prefixed island back onto the host file.
+
+        Row 0 of the island is the host row it starts on, shifted by the
+        island's starting column and back by the prefix; every later row
+        is the host row at the same offset, with its columns untouched.
+        """
+        row0, col0 = self.node.start_point
+        shift = len(self.prefix)
+
+        def point(row: int, col: int) -> tuple[int, int]:
+            if row == 0:
+                return row0, col0 + max(0, col - shift)
+            return row0 + row, col
+
+        start = point(span.start.line, span.start.character)
+        end = point(span.end.line, span.end.character)
+        return SourceRange.of(start[0], start[1], end[0], end[1])
 
 
 def _attribute_value(tag: Node, name: str) -> str | None:
@@ -110,8 +142,28 @@ def _vue_regions(tree: Tree) -> Iterator[EmbeddedRegion]:
         yield EmbeddedRegion(language=language, node=raw, span=to_range(raw))
 
 
+_PHP_OPEN_TAG = b"<?php "
+
+
+def _blade_regions(tree: Tree) -> Iterator[EmbeddedRegion]:
+    """The PHP inside a Blade template: `{{ }}`, `{!! !!}` and `@php` blocks.
+
+    The grammar exposes each as a `php_only` node with absolute positions.
+    Directive arguments such as `@if($user->isAdmin())` are `parameter`
+    nodes instead, and are not islands; that is a gap this does not close.
+    """
+    from .extract import to_range
+
+    for node in _walk(tree.root_node):
+        if node.type == "php_only":
+            yield EmbeddedRegion(
+                language="php", node=node, span=to_range(node), prefix=_PHP_OPEN_TAG
+            )
+
+
 _REGION_FINDERS: dict[str, Callable[[Tree], Iterator[EmbeddedRegion]]] = {
     "vue": _vue_regions,
+    "blade": _blade_regions,
 }
 
 
@@ -145,6 +197,11 @@ def parse_embedded(source: bytes, region: EmbeddedRegion) -> Tree | None:
         parser = get_parser(region.language)
     except LanguageUnavailable:
         return None
+    if region.is_prefixed:
+        # A prefixed island is parsed on its own with the prefix in front;
+        # the caller maps positions back through `region.adjust`.
+        island = source[region.node.start_byte : region.node.end_byte]
+        return parser.parse(region.prefix + island)
     parser.included_ranges = [
         Range(
             start_point=Point(*region.node.start_point),

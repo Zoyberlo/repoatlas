@@ -426,6 +426,21 @@ class TestLaravelEdges:
         assert "resources/views/layouts/app.blade.php#<module>" in result.snapshot.symbols
 
 
+class TestBladeReachesPhp:
+    def test_a_method_called_from_a_template_resolves(self, tmp_path: Path) -> None:
+        # The link that was missing: a Blade template reached its layouts
+        # and components but never the PHP it calls.
+        write(tmp_path, "composer.json", json.dumps({"require": {"laravel/framework": "^11"}}))
+        write(
+            tmp_path,
+            "app/Models/User.php",
+            "<?php\nnamespace App\\Models;\nclass User\n{\n    public function isAdmin(): bool\n    {\n        return true;\n    }\n}\n",
+        )
+        write(tmp_path, "resources/views/profile.blade.php", "<p>{{ $user->isAdmin() }}</p>\n")
+        targets = edge_targets(tmp_path)
+        assert targets[("resources/views/profile.blade.php", 1)] == "app/Models/User.php#User.isAdmin"
+
+
 class TestQuasarEdges:
     def test_an_auto_imported_component_resolves(self, tmp_path: Path) -> None:
         quasar_project(tmp_path)
