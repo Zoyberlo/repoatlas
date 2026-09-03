@@ -189,6 +189,13 @@ numbers, and says what it would change here.
 
 ### 3.1 Select by coverage per token, not by rank prefix
 
+*Done 2026-09-04.* Lazy greedy by gain per token with per-file diminishing
+returns (rank / √k, exponent exposed as `spread`), costs including the
+class and file header a symbol brings, one pass instead of a dozen
+renders. On this repository at 2,000 tokens: 37 files and 69 types shown
+against 27 and 58 for the prefix, same tokens. On the uniform synthetic
+index there is nothing to spread and the two agree, as they should.
+
 `render_map` takes the top *n* symbols by PageRank and binary-searches *n*
 against the budget. Rank is the only signal, so a file whose thirty methods
 all rank well fills the budget with thirty lines of one file, and a second

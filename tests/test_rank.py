@@ -28,6 +28,7 @@ from repoatlas.model import (
 )
 from repoatlas.rank import (
     MapOptions,
+    RankedSymbol,
     RankOptions,
     SymbolGraph,
     estimate_tokens,
@@ -342,6 +343,46 @@ class TestMapBudget:
         result = render_map(rank_symbols(snapshot), MapOptions(budget=100_000))
         assert result.included == result.total
         assert result.coverage == 1.0
+
+    def test_one_file_cannot_crowd_out_the_others(self) -> None:
+        # Thirty well-ranked methods in one file, one slightly weaker
+        # class in another. A rank prefix would show thirty lines of the
+        # first file; coverage per token shows the second file too.
+        crowd = [
+            symbol(f"big#m{i}", f"method_{i}", path="big.py", line=i, signature=f"def method_{i}(self):")
+            for i in range(30)
+        ]
+        other = symbol("small#K", "Keeper", path="small.py", kind=SymbolKind.CLASS, signature="class Keeper:")
+        ranked = [RankedSymbol(item, score=1.0 - i * 0.001, in_degree=0) for i, item in enumerate(crowd)]
+        ranked.append(RankedSymbol(other, score=0.9, in_degree=0))
+        result = render_map(ranked, MapOptions(budget=120))
+        assert "small.py:" in result.text
+        assert result.files == 2
+
+    def test_no_spread_reduces_to_the_rank_prefix(self) -> None:
+        crowd = [
+            symbol(f"big#m{i}", f"method_{i}", path="big.py", line=i, signature=f"def method_{i}(self):")
+            for i in range(30)
+        ]
+        other = symbol("small#K", "Keeper", path="small.py", kind=SymbolKind.CLASS, signature="class Keeper:")
+        ranked = [RankedSymbol(item, score=1.0 - i * 0.001, in_degree=0) for i, item in enumerate(crowd)]
+        ranked.append(RankedSymbol(other, score=0.9, in_degree=0))
+        result = render_map(ranked, MapOptions(budget=120, spread=0.0))
+        assert "small.py:" not in result.text
+
+    def test_a_long_signature_has_to_earn_its_length(self) -> None:
+        terse = symbol("a#t", "t", path="a.py", line=1, signature="def t():")
+        verbose = symbol(
+            "b#v", "v", path="b.py", line=1,
+            signature="def v(" + ", ".join(f"argument_number_{i}: int" for i in range(12)) + "):",
+        )
+        ranked = [
+            RankedSymbol(verbose, score=0.51, in_degree=0),
+            RankedSymbol(terse, score=0.50, in_degree=0),
+        ]
+        result = render_map(ranked, MapOptions(budget=14))
+        assert "a.py:" in result.text
+        assert "b.py:" not in result.text
 
     def test_a_file_cap_still_spends_the_budget(self, ranked) -> None:
         # Capping files after the fit threw away symbols the search had

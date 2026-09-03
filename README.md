@@ -265,6 +265,22 @@ constant in the index. Every tool over that index, and the `map` command,
 then estimate with it. `index_status` says which model the index is
 calibrated for, or that it is not.
 
+### How the budget is spent
+
+Selection is a greedy over gain per token. Rank is the gain, the rendered
+line is the cost, and the *k*-th symbol taken from one file is worth its
+rank divided by √k, so a file whose thirty methods all rank well cannot
+fill the map with thirty lines of itself while a file that would have told
+the agent something new gets nothing. That is coverage with diminishing
+returns, a submodular objective, and the lazy greedy that maximises it
+carries the usual constant-factor guarantee; the budgeted context-selection
+literature (PACMS, AdaGReS) reaches the same shape from embeddings.
+
+On this repository at 2,000 tokens it shows 37 files and 69 types where
+the rank prefix showed 27 and 58, for the same tokens. The exponent is a
+judgement, `--spread 0` gives the plain prefix back, and the localisation
+benchmark in the backlog is what would settle it.
+
 ### Steering by name
 
 A task description names things before any file is open: "the invoice

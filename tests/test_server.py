@@ -256,8 +256,10 @@ class TestRepoMap:
         assert "symbols," in result
 
     def test_focus_changes_the_answer(self, store: IndexStore) -> None:
-        broad = tools.repo_map(store, budget=120)
-        focused = tools.repo_map(store, focus=("src/app.ts",), budget=120)
+        # Ninety tokens is where the two selections part on this fixture;
+        # larger budgets show all of it either way.
+        broad = tools.repo_map(store, budget=90)
+        focused = tools.repo_map(store, focus=("src/app.ts",), budget=90)
         assert focused != broad
 
     def test_an_unrecognised_focus_is_reported_not_ignored(
