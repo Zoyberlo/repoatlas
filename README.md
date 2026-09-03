@@ -177,16 +177,16 @@ The latest run on 10,000 such files (79,993 symbols,
 
 | what | time |
 | --- | ---: |
-| cold index | 12.4 s |
-| re-index, nothing changed | 0.94 s |
-| re-index, one file changed | 4.3 s |
-| `repo_map`, first call | 1053 ms |
-| `repo_map`, after that | 19 ms |
-| `repo_map` with `focus` | 162 ms |
-| `search_symbols` | 70 ms |
-| `get_symbol` on the most used symbol | 25 ms |
-| `find_references` on it | 37 ms |
-| `neighbours` on it | 251 ms |
+| cold index | 12.7 s |
+| re-index, nothing changed | 0.96 s |
+| re-index, one file changed | 2.5 s |
+| `repo_map`, first call | 1180 ms |
+| `repo_map`, after that | 44 ms |
+| `repo_map` with `focus` | 263 ms |
+| `search_symbols` | 89 ms |
+| `get_symbol` on the most used symbol | 29 ms |
+| `find_references` on it | 40 ms |
+| `neighbours` on it | 107 ms |
 
 The first run of this benchmark took 296 seconds to index cold. The
 resolver's bottom rung chose among every definition sharing a name, and
