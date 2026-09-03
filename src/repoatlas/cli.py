@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from . import __version__
 from .eval.compare import ComparisonOptions, compare_snapshots
@@ -32,11 +32,11 @@ from .eval.report import to_json, to_markdown
 from .model import IndexSnapshot
 from .oracle.scip import ScipError, cross_check, read_scip
 
-__all__ = ["main", "build_parser"]
+__all__ = ["build_parser", "main"]
 
 _EXIT_OK = 0
 _EXIT_FAILED_CHECK = 1
-_EXIT_BAD_INPUT = 2
+# Malformed arguments exit 2, which argparse does on its own.
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -178,11 +178,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "verify-oracle": _cmd_verify_oracle,
         "compare": _cmd_compare,
     }
-    handler = handlers.get(args.command)
-    if handler is None:  # pragma: no cover - argparse rejects this first
-        parser.error(f"unknown command: {args.command}")
-        return _EXIT_BAD_INPUT
-    return handler(args)
+    # The subparser is declared required with a fixed set of names, so
+    # argparse has already rejected anything that is not a key here.
+    return handlers[args.command](args)
 
 
 if __name__ == "__main__":  # pragma: no cover
