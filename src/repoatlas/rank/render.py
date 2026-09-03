@@ -22,7 +22,7 @@ symbol count that would be wrong on every repository but one.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from ..model import Symbol, SymbolKind
@@ -116,15 +116,18 @@ def _synthetic_signature(symbol: Symbol) -> str:
 
 
 def _with_ancestors(
-    selected: Sequence[RankedSymbol], everything: Sequence[RankedSymbol]
+    selected: Sequence[RankedSymbol], by_id: Mapping[str, RankedSymbol]
 ) -> list[RankedSymbol]:
     """Add the containers of everything chosen.
 
     A method shown without its class is a line of code with no address. The
     class costs one line and turns a list of names into a structure, so it
     is pulled in even when its own rank did not earn a place.
+
+    ``by_id`` is every candidate, built once by the caller: the budget
+    search calls this a dozen times, and rebuilding a hundred-thousand-entry
+    table on each was most of what a warm map cost.
     """
-    by_id = {item.symbol.id: item for item in everything}
     chosen: dict[str, RankedSymbol] = {item.symbol.id: item for item in selected}
     queue = list(selected)
     while queue:
@@ -157,9 +160,10 @@ def _render(selected: Sequence[RankedSymbol], options: MapOptions) -> tuple[str,
     lines: list[str] = []
     for path in ordered_files:
         entries = sorted(by_file[path], key=lambda item: item.symbol.name_range)
+        shown = {item.symbol.id: item.symbol for item in entries}
         lines.append(f"{path}:")
         for item in entries:
-            depth = _depth(item.symbol, by_file[path])
+            depth = _depth(item.symbol, shown)
             lines.append(_entry_line(item, options, depth))
         lines.append("")
     text = "\n".join(lines).rstrip() + "\n" if lines else ""
@@ -180,23 +184,20 @@ def _top_files(items: Sequence[RankedSymbol], count: int) -> list[RankedSymbol]:
     return [item for item in items if item.symbol.path in keep]
 
 
-def _depth(symbol: Symbol, siblings: Sequence[RankedSymbol]) -> int:
+def _depth(symbol: Symbol, shown: Mapping[str, Symbol]) -> int:
     """How far to indent, counting containers that are themselves shown.
 
     Indenting by the true nesting depth would leave a method dangling under
     a class the budget excluded, which reads as a rendering fault rather
     than as an omission.
     """
-    shown = {item.symbol.id for item in siblings}
     depth = 0
     container = symbol.container_id
     seen: set[str] = set()
-    by_id = {item.symbol.id: item.symbol for item in siblings}
     while container and container in shown and container not in seen:
         seen.add(container)
         depth += 1
-        parent = by_id.get(container)
-        container = parent.container_id if parent else None
+        container = shown[container].container_id
     return depth
 
 
@@ -225,22 +226,29 @@ def render_map(
         # and left the map well under budget with the files it kept.
         items = _top_files(items, options.max_files)
 
+    by_id = {item.symbol.id: item for item in items}
+
     def attempt(count: int) -> tuple[str, int, int]:
-        text, files = _render(_with_ancestors(items[:count], items), options)
+        text, files = _render(_with_ancestors(items[:count], by_id), options)
         return text, estimate(text), files
 
-    whole_text, whole_tokens, whole_files = attempt(total)
-    if whole_tokens <= options.budget:
-        return RepoMap(
-            text=whole_text,
-            tokens=whole_tokens,
-            included=total,
-            total=total,
-            files=whole_files,
-        )
+    # Every entry costs at least one token, so a ranking longer than the
+    # budget cannot fit whole and is not worth rendering to find out. On a
+    # hundred-thousand-symbol index that one render was most of a map call.
+    if total <= options.budget:
+        whole_text, whole_tokens, whole_files = attempt(total)
+        if whole_tokens <= options.budget:
+            return RepoMap(
+                text=whole_text,
+                tokens=whole_tokens,
+                included=total,
+                total=total,
+                files=whole_files,
+            )
 
     floor = int(options.budget * (1 - options.tolerance))
-    low, high = 0, total
+    # The same bound caps the search: no more symbols than tokens.
+    low, high = 0, min(total, options.budget)
     best: tuple[str, int, int, int] = ("", 0, 0, 0)
     while low <= high:
         middle = (low + high) // 2

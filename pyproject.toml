@@ -34,7 +34,10 @@ parse = [
   "tree-sitter>=0.25,<0.26",
   "tree-sitter-language-pack>=1.16",
 ]
-serve = ["mcp>=1.28"]
+# numpy is optional everywhere and used when present: it turns the
+# ranking's power iteration from seconds into milliseconds on a large
+# index. Serving is where that latency is paid on every call.
+serve = ["mcp>=1.28", "numpy>=1.26"]
 dev = [
   # `parse` and `serve` are included so CI actually runs the extractor and
   # adapter tests rather than skipping them, which would leave the oracle
@@ -46,6 +49,7 @@ dev = [
   "tree-sitter>=0.25,<0.26",
   "tree-sitter-language-pack>=1.16",
   "mcp>=1.28",
+  "numpy>=1.26",
   "pytest>=8.0",
   "pytest-cov>=5.0",
   "mypy>=1.11",

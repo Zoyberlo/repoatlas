@@ -11,17 +11,33 @@ calculation toward whatever the agent is looking at: seed the walk at the
 files in the working set, and rank concentrates on what those files reach
 rather than on whatever is globally popular.
 
-The implementation is power iteration over the sparse graph, with no
-dependency. NetworkX would do this in one call, but the core of this
-project installs with nothing, and the algorithm is thirty lines.
+The implementation is power iteration over the sparse graph. The core of
+this project installs with nothing, so there is a pure-Python path, and it
+is the reference: thirty lines, and every number below was first produced
+by it. But a hundred-thousand-symbol index has half a million edges, and
+a Python loop over them twenty times is five seconds, paid on every
+focused map. When numpy is present the same iteration runs as a handful
+of array operations in a few tens of milliseconds, and a test holds the
+two paths to the same answer.
 """
 
 from __future__ import annotations
 
+import importlib
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
-from ..model import Edge, EdgeKind, IndexSnapshot, Symbol, SymbolKind
+from ..model import EdgeKind, IndexSnapshot, Symbol, SymbolKind
+
+# Loaded by name so the type checker never follows the import: numpy is
+# optional, reached through an `Any`-typed handle, and absent on a core
+# install. Tests exercise both branches by replacing the handle.
+try:
+    _numpy: Any = importlib.import_module("numpy")
+except ImportError:  # pragma: no cover - depends on the environment
+    _numpy = None
 
 __all__ = ["RankOptions", "RankedSymbol", "SymbolGraph", "rank_symbols"]
 
@@ -166,29 +182,55 @@ class SymbolGraph:
     out_edges: dict[str, dict[str, float]] = field(default_factory=dict)
     in_degree: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     nodes: list[str] = field(default_factory=list)
+    _arrays: Any = field(default=None, repr=False, compare=False)
+    """The transition table as arrays, built on first use and kept.
+
+    A graph is ranked many times per generation, once per focused map, and
+    laying the edges out as arrays costs a pass over all of them. Done
+    once, here, rather than on every call.
+    """
 
     @classmethod
     def build(
         cls, snapshot: IndexSnapshot, options: RankOptions | None = None
     ) -> SymbolGraph:
+        return cls.from_rows(
+            snapshot.symbols,
+            ((e.src_id, e.dst_id, e.kind.value, e.score) for e in snapshot.edges),
+            options,
+        )
+
+    @classmethod
+    def from_rows(
+        cls,
+        symbols: dict[str, Symbol],
+        rows: Iterable[tuple[str, str, str, float]],
+        options: RankOptions | None = None,
+    ) -> SymbolGraph:
+        """Build from bare ``(src, dst, kind, confidence)`` rows.
+
+        This is the form the store hands over: four columns rather than ten,
+        and no ``Edge`` objects built along the way, which on a large index
+        was most of a cold start.
+        """
         options = options or RankOptions()
         graph = cls()
         keep = {
             symbol.id
-            for symbol in snapshot.symbols.values()
+            for symbol in symbols.values()
             if (options.include_synthetic or not symbol.synthetic)
             and (options.include_local or not symbol.local)
         }
         graph.nodes = sorted(keep)
         incoming: dict[str, set[str]] = defaultdict(set)
-        for edge in snapshot.edges:
-            weight = _edge_weight(edge)
+        contains = EdgeKind.CONTAINS.value
+        for source, target, kind, confidence in rows:
+            weight = _EDGE_WEIGHT_BY_VALUE.get(kind, 0.5) * confidence
             if weight <= 0:
                 continue
-            if edge.src_id not in keep or edge.dst_id not in keep:
+            if source not in keep or target not in keep:
                 continue
-            source, target = edge.src_id, edge.dst_id
-            if edge.kind is EdgeKind.CONTAINS:
+            if kind == contains:
                 source, target = target, source
             if source == target:
                 continue
@@ -215,14 +257,12 @@ class SymbolGraph:
         return sum(len(targets) for targets in self.out_edges.values())
 
 
-def _edge_weight(edge: Edge) -> float:
-    """How much rank one edge carries.
-
-    Confidence is a multiplier rather than a filter. A fuzzy guess is still
-    weak evidence of importance, and dropping it entirely would make the map
-    of a language with no module resolver look emptier than it is.
-    """
-    return _EDGE_WEIGHT.get(edge.kind, 0.5) * edge.score
+# Keyed by the stored string, so a row from the store needs no enum
+# round trip. Confidence is a multiplier rather than a filter: a fuzzy
+# guess is still weak evidence of importance, and dropping it entirely
+# would make the map of a language with no module resolver look emptier
+# than it is.
+_EDGE_WEIGHT_BY_VALUE = {kind.value: weight for kind, weight in _EDGE_WEIGHT.items()}
 
 
 def _personalisation(
@@ -277,6 +317,89 @@ def rank_symbols(
     restart = _personalisation(
         graph, snapshot, focus_paths or set(), focus_symbols or set(), options
     )
+    scores = _power_iteration(graph, restart, options)
+
+    ranked = [
+        RankedSymbol(
+            symbol=snapshot.symbols[node],
+            score=scores.get(node, 0.0),
+            in_degree=graph.in_degree.get(node, 0),
+        )
+        for node in graph.nodes
+        if node in snapshot.symbols
+    ]
+    # Ties broken by position rather than by dictionary order, so two runs
+    # over the same index produce the same map.
+    ranked.sort(key=lambda item: (-item.score, item.symbol.path, item.symbol.name_range))
+    return ranked
+
+
+def _power_iteration(
+    graph: SymbolGraph, restart: dict[str, float], options: RankOptions
+) -> dict[str, float]:
+    """Run the walk to convergence, with arrays when they are available."""
+    if _numpy is not None:
+        return _power_iteration_arrays(graph, restart, options)
+    return _power_iteration_pure(graph, restart, options)
+
+
+def _power_iteration_arrays(
+    graph: SymbolGraph, restart: dict[str, float], options: RankOptions
+) -> dict[str, float]:
+    """The same walk as the pure path, as array operations.
+
+    One `bincount` moves every edge's share of rank in a single call; the
+    dangling mass and the restart are two vector operations. Twenty
+    iterations over half a million edges take tens of milliseconds where
+    the loop took seconds.
+    """
+    np = _numpy
+    if graph._arrays is None:
+        index = {node: position for position, node in enumerate(graph.nodes)}
+        sources: list[int] = []
+        targets: list[int] = []
+        probabilities: list[float] = []
+        for source, moves in graph.out_edges.items():
+            total = sum(moves.values())
+            if total <= 0:
+                continue
+            position = index[source]
+            for target, weight in moves.items():
+                sources.append(position)
+                targets.append(index[target])
+                probabilities.append(weight / total)
+        has_out = np.zeros(len(graph.nodes), dtype=bool)
+        source_array = np.asarray(sources, dtype=np.int64)
+        has_out[source_array] = True
+        graph._arrays = (
+            index,
+            source_array,
+            np.asarray(targets, dtype=np.int64),
+            np.asarray(probabilities, dtype=np.float64),
+            has_out,
+        )
+    index, sources, targets, probabilities, has_out = graph._arrays
+    count = len(graph.nodes)
+    restart_vector = np.zeros(count, dtype=np.float64)
+    for node, weight in restart.items():
+        restart_vector[index[node]] = weight
+    damping = options.damping
+    scores = restart_vector.copy()
+    for _ in range(options.max_iterations):
+        dangling = float(scores[~has_out].sum())
+        moved = np.bincount(targets, weights=scores[sources] * probabilities, minlength=count)
+        updated = (1.0 - damping + damping * dangling) * restart_vector + damping * moved
+        delta = float(np.abs(updated - scores).sum())
+        scores = updated
+        if delta < options.tolerance:
+            break
+    return {node: float(scores[position]) for node, position in index.items()}
+
+
+def _power_iteration_pure(
+    graph: SymbolGraph, restart: dict[str, float], options: RankOptions
+) -> dict[str, float]:
+    """The reference walk, in plain dictionaries."""
     scores = dict(restart)
     damping = options.damping
 
@@ -312,17 +435,4 @@ def rank_symbols(
         scores = updated
         if delta < options.tolerance:
             break
-
-    ranked = [
-        RankedSymbol(
-            symbol=snapshot.symbols[node],
-            score=scores.get(node, 0.0),
-            in_degree=graph.in_degree.get(node, 0),
-        )
-        for node in graph.nodes
-        if node in snapshot.symbols
-    ]
-    # Ties broken by position rather than by dictionary order, so two runs
-    # over the same index produce the same map.
-    ranked.sort(key=lambda item: (-item.score, item.symbol.path, item.symbol.name_range))
-    return ranked
+    return scores

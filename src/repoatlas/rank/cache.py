@@ -60,8 +60,16 @@ class RankCache:
             loaded = self._loaded
             if loaded is not None and loaded.generation == generation:
                 return loaded
-            snapshot = store.snapshot()
-            graph = SymbolGraph.build(snapshot, self.options)
+            # Symbols in full, edges as bare rows: the graph needs four
+            # columns of an edge's ten, and building objects for half a
+            # million of them was most of a cold start.
+            snapshot = IndexSnapshot(
+                project_root=store.get_meta("project_root"),
+                producer=store.get_meta("producer"),
+            )
+            for symbol in store.symbols():
+                snapshot.symbols[symbol.id] = symbol
+            graph = SymbolGraph.from_rows(snapshot.symbols, store.edge_rows(), self.options)
             loaded = _Loaded(generation=generation, snapshot=snapshot, graph=graph)
             self._loaded = loaded
             self.loads += 1

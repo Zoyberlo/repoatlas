@@ -105,7 +105,10 @@ class TestCacheReuse:
         assert cache.loads == 1
         assert set(plain) == set(focused)
         assert plain != focused
-        assert focused[0].startswith("src/app.ts#")
+        # Rank flows toward definitions, so the focused walk lands on what
+        # app.ts uses as much as on app.ts itself; what it must do is lift
+        # app.ts's own symbols above where the global walk put them.
+        assert focused.index("src/app.ts#Admin") < plain.index("src/app.ts#Admin")
 
     def test_a_changed_index_is_reloaded(self, store: IndexStore, project: Path) -> None:
         cache = RankCache()

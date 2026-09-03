@@ -475,6 +475,17 @@ class IndexStore:
             parameters = (path,)
         return [_symbol_from(row) for row in self._connection.execute(query, parameters)]
 
+    def edge_rows(self) -> list[tuple[str, str, str, float]]:
+        """Every edge as ``(src, dst, kind, confidence)``, nothing more.
+
+        The graph needs four columns of the ten, and building an ``Edge``
+        for each of half a million rows was five times the cost of reading
+        them. This is what the ranking cache loads.
+        """
+        return self._connection.execute(
+            "SELECT src_id, dst_id, kind, confidence FROM edges"
+        ).fetchall()
+
     def edges(self) -> list[Edge]:
         rows = self._connection.execute(
             "SELECT site_path, src_id, dst_id, kind, tier, confidence, "

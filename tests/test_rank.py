@@ -251,6 +251,48 @@ class TestRanking:
         assert ranked["core"].in_degree == 3
 
 
+class TestTwoWalks:
+    """The array path is an accelerator, not a second algorithm."""
+
+    def _ranking(self, snapshot, **kwargs):
+        return [(i.symbol.id, i.score) for i in rank_symbols(snapshot, **kwargs)]
+
+    def test_arrays_and_dictionaries_agree(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from repoatlas.rank import pagerank
+
+        pytest.importorskip("numpy", reason="the array path needs numpy")
+        snapshot = build_snapshot(FIXTURE, use_git=False).snapshot
+        with_arrays = self._ranking(snapshot, focus_paths={"src/app.ts"})
+        monkeypatch.setattr(pagerank, "_numpy", None)
+        pure = self._ranking(snapshot, focus_paths={"src/app.ts"})
+        assert [i for i, _ in with_arrays] == [i for i, _ in pure]
+        for (_, a), (_, b) in zip(with_arrays, pure, strict=True):
+            assert a == pytest.approx(b, abs=1e-9)
+
+    def test_the_pure_walk_stands_on_its_own(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from repoatlas.rank import pagerank
+
+        monkeypatch.setattr(pagerank, "_numpy", None)
+        a = symbol("a#f")
+        b = symbol("a#g", line=3)
+        ranked = rank_symbols(snapshot_of([a, b], [call("a#f", "a#g")]))
+        assert ranked[0].symbol.id == "a#g"
+
+    def test_the_arrays_are_built_once_per_graph(self) -> None:
+        from repoatlas.rank import pagerank
+        from repoatlas.rank.pagerank import SymbolGraph
+
+        pytest.importorskip("numpy", reason="the array path needs numpy")
+        snapshot = build_snapshot(FIXTURE, use_git=False).snapshot
+        graph = SymbolGraph.build(snapshot)
+        assert graph._arrays is None
+        rank_symbols(snapshot, graph=graph)
+        first = graph._arrays
+        rank_symbols(snapshot, graph=graph, focus_paths={"src/app.ts"})
+        assert graph._arrays is first
+        assert pagerank._numpy is not None
+
+
 class TestTokenEstimate:
     def test_an_empty_string_costs_nothing(self) -> None:
         assert estimate_tokens("") == 0

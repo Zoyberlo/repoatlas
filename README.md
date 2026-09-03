@@ -272,6 +272,30 @@ Every answer is trimmed to a token budget and says what it left out. Claude
 Code truncates a tool result at 25,000 tokens, and a result cut by the client
 is cut at a point the agent cannot see.
 
+### What a map call costs on a large index
+
+Measured on a synthetic index of 100,000 symbols in 5,000 files with
+500,000 call edges, on one laptop:
+
+| call | before | now |
+| --- | ---: | ---: |
+| first `repo_map` after the server starts | 5.7 s | 2.6 s |
+| every `repo_map` after that | 1.1 s | 0.04 s |
+| `repo_map` with `focus`, first time | 7.3 s | 1.0 s |
+| `repo_map` with `focus`, after that | 7.3 s | 0.37 s |
+
+Three changes did it. The server keeps the graph and the global ranking
+between calls, keyed by a generation the index bumps when it changes. The
+global ranking is written to the store at index time, so the first map
+after a restart runs no power iteration at all. And the budget fit no
+longer renders the whole ranking to discover it does not fit; every entry
+costs at least a token, so the search is bounded by the budget.
+
+The power iteration itself runs as array operations when `numpy` is
+installed, which `repoatlas[serve]` brings in; without it the same walk
+runs in plain Python and a test holds the two to the same answer. The
+core still installs with nothing.
+
 ## What the first real measurement changed
 
 Running against genuine `scip-typescript` output immediately falsified two

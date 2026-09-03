@@ -48,6 +48,15 @@ Done means: a map rendered at budget 2,000 counts within ten percent of
 
 ### 1.2 The map is recomputed from scratch on every call
 
+*Done 2026-09-04.* Cold 5.7 s → 2.6 s, warm 1.1 s → 0.04 s, focused
+7.3 s → 1.0 s first and 0.37 s after, on the 100k-symbol synthetic index.
+Graph and global ranking cached per store generation; global ranks
+persisted at index time; the budget search bounded by the budget instead
+of rendering everything first; power iteration as numpy array operations
+when available, with a test holding both walks to one answer. The cold
+start is now dominated by loading 100k symbol rows (about 1 s) and the
+edge rows (0.4 s); the remaining lever there is loading symbols lazily.
+
 `repo_map` calls `store.snapshot()`, which loads every symbol and edge, then
 runs PageRank, then renders. Nothing is cached between calls.
 
