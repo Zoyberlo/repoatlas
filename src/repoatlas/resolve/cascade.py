@@ -28,7 +28,7 @@ from ..parse.imports import FileImports
 from ..plugins.base import FrameworkPlugin
 from .modules import ModuleResolver
 
-__all__ = ["ResolutionStats", "Resolver", "SymbolIndex"]
+__all__ = ["CONVENTION_KINDS", "ResolutionStats", "Resolver", "SymbolIndex"]
 
 # Reference kinds the tag queries produce, mapped to the edge they become.
 _EDGE_KIND_BY_REFERENCE = {
@@ -52,9 +52,10 @@ _EDGE_KIND_BY_REFERENCE = {
 # identifier. `view('users.index')` names a template; letting it fall
 # through the identifier cascade would match any function called
 # `index`, and a confident wrong edge is worse than none.
-_CONVENTION_KINDS = frozenset(
+CONVENTION_KINDS = frozenset(
     {"view", "extends", "include", "component", "route"}
 )
+_CONVENTION_KINDS = CONVENTION_KINDS
 
 # The exception. A component tag in a Vue template *is* an identifier:
 # `<MyButton />` is the symbol the script block imported. Blade's

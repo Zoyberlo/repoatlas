@@ -1,15 +1,26 @@
 """Keeping a store current without rebuilding it.
 
-Two phases with very different costs. Parsing a file is expensive; resolving
-names across the repository is not, by roughly sixty to one on the projects
-measured. So the split is: parse only what changed, then resolve everything.
+Parsing only what changed is the easy half. The other half is which
+references to resolve again, and the tempting answer, only the ones in the
+changed files, is wrong: a file nobody touched still refers to a symbol
+that has just moved or vanished.
 
-That asymmetry is worth being explicit about, because the tempting
-optimisation is wrong. Patching only the edges of changed files leaves stale
-edges *into* them: a file nobody touched still refers to a symbol that has
-just moved or vanished. Finding every such edge is harder than recomputing
-the lot, and getting it wrong produces an index that looks fine and points
-at the wrong line.
+There is a rule that is both narrow and right. A reference outside the
+changed files resolves through the cascade, and every rung of the cascade
+asks about symbols *by name*: the import rung looks the imported name up
+in its target file, the member and same-file rungs look it up in one
+scope, and the bottom rungs look it up across the repository. So a
+reference's answer can only change if a symbol with its name was added,
+removed or moved. The set to revisit is therefore every reference in a
+changed file, plus every reference whose name is among the names the
+change touched, plus the framework-convention references when a file
+appeared or vanished, since those name files rather than symbols. That is
+usually a small fraction of the repository, and a test holds it to the
+same edges a full rebuild produces.
+
+Two things still fall back to the whole repository: a rebuild the toolchain
+forced, and a change in which framework plugins are active, which nothing
+in the files can predict.
 """
 
 from __future__ import annotations
@@ -33,8 +44,8 @@ from ..parse.build import LanguageStats, _resolve_references
 from ..parse.extract import extract_source
 from ..parse.languages import SUPPORTED, LanguageUnavailable, query_source
 from ..parse.walk import SourceFile, WalkStats, iter_source_files
-from ..plugins import frameworks_source
-from ..rank.pagerank import rank_symbols
+from ..plugins import active_plugins, frameworks_source
+from ..rank.pagerank import SymbolGraph, rank_symbols
 from ..resolve.cascade import ResolutionStats
 from .database import FileRecord, IndexStore, content_digest, toolchain_version
 
@@ -93,6 +104,11 @@ class UpdateResult:
     resolution: ResolutionStats = field(default_factory=ResolutionStats)
     failures: list[tuple[str, str]] = field(default_factory=list)
     walk: WalkStats = field(default_factory=WalkStats)
+    scoped: bool = False
+    """Whether resolution revisited only what the change could reach."""
+
+    revisited: int = 0
+    """How many references a scoped resolution looked at again."""
 
     @property
     def total_seconds(self) -> float:
@@ -105,6 +121,8 @@ class UpdateResult:
             "parse_seconds": round(self.parse_seconds, 3),
             "resolve_seconds": round(self.resolve_seconds, 3),
             "resolution": self.resolution.as_dict(),
+            "scoped": self.scoped,
+            "revisited": self.revisited,
             "by_language": {
                 name: stats.as_dict() for name, stats in sorted(self.by_language.items())
             },
@@ -204,6 +222,15 @@ def update_store(
     if changes.full_rebuild:
         store.reset()
 
+    # What the changed files defined *before* this update, per name, in the
+    # form resolution sees it. Compared with what they define afterwards,
+    # this says which names an untouched reference could resolve
+    # differently for. A body edit that moves no definition changes no
+    # name, and revisits only the file's own references.
+    definitions_before = store.definitions_by_name(
+        [source.path for source in changes.dirty] + list(changes.removed)
+    )
+
     started = time.perf_counter()
     with store.transaction():
         for path in changes.removed:
@@ -262,7 +289,37 @@ def update_store(
     # burn the one cost a no-op re-index is supposed to avoid.
     if resolve and not changes.is_empty:
         started = time.perf_counter()
-        _resolve_into(store, root_path, source_files, result)
+        plugins_now = ",".join(
+            sorted(plugin.name for plugin in active_plugins(root_path, {s.path for s in source_files}))
+        )
+        plugins_before = store.get_meta("plugins")
+        scoped = (
+            not changes.full_rebuild
+            and not changes.was_empty
+            and plugins_before == plugins_now
+        )
+        if scoped:
+            touched = [source.path for source in changes.dirty]
+            definitions_after = store.definitions_by_name(touched)
+            changed_names = {
+                name
+                for name in definitions_before.keys() | definitions_after.keys()
+                if definitions_before.get(name) != definitions_after.get(name)
+            }
+            _resolve_scoped(
+                store,
+                root_path,
+                source_files,
+                result,
+                touched=touched,
+                removed=list(changes.removed),
+                changed_names=changed_names,
+                files_changed=bool(changes.added or changes.removed),
+            )
+        else:
+            _resolve_into(store, root_path, source_files, result)
+        with store.transaction():
+            store.set_meta("plugins", plugins_now)
         result.resolve_seconds = time.perf_counter() - started
     return result
 
@@ -284,6 +341,79 @@ def _module_symbol(path: str) -> Symbol:
         full_range=origin,
         synthetic=True,
     )
+
+
+def _resolve_scoped(
+    store: IndexStore,
+    root: Path,
+    files: list[SourceFile],
+    result: UpdateResult,
+    *,
+    touched: list[str],
+    removed: list[str],
+    changed_names: set[str],
+    files_changed: bool,
+) -> None:
+    """Resolve only what the change can have affected, and patch the edges.
+
+    The symbol table is loaded whole, because every rung of the cascade
+    needs the repository's definitions by name; that is the one term that
+    still grows with the repository rather than with the change. The
+    references, imports and edges are the change's own.
+    """
+    from ..parse.build import BuildResult
+    from ..resolve.cascade import CONVENTION_KINDS
+
+    snapshot = IndexSnapshot()
+    for symbol in store.symbols():
+        snapshot.symbols[symbol.id] = symbol
+
+    stale = set(touched) | set(removed)
+    affected = store.references(
+        paths=touched,
+        names=changed_names,
+        kinds=CONVENTION_KINDS if files_changed else (),
+    )
+    affected = [(path, reference) for path, reference in affected if path not in removed]
+    build = BuildResult(
+        snapshot=snapshot,
+        references=affected,
+        imports=store.imports(paths={path for path, _ in affected}),
+        resolution=result.resolution,
+    )
+    _resolve_references(build, root, files)
+
+    # Containment for the re-parsed files is rebuilt from their symbols,
+    # exactly as the full path does for every file.
+    for symbol in snapshot.symbols.values():
+        if symbol.path in stale and symbol.container_id in snapshot.symbols:
+            build.snapshot.add_edge(
+                Edge(
+                    src_id=symbol.container_id,
+                    dst_id=symbol.id,
+                    kind=EdgeKind.CONTAINS,
+                    tier=ResolutionTier.ORACLE,
+                    site_path=symbol.path,
+                    site_range=symbol.name_range,
+                )
+            )
+
+    with store.transaction():
+        store.delete_edges_in(stale)
+        store.delete_edges_at(
+            (path, reference.span.start.line, reference.span.start.character)
+            for path, reference in affected
+            if path not in stale
+        )
+        store.add_edges(build.snapshot.edges)
+        graph = SymbolGraph.from_rows(snapshot.symbols, store.edge_rows())
+        ranked = rank_symbols(snapshot, graph=graph)
+        store.replace_ranks(
+            (item.symbol.id, item.score, item.in_degree) for item in ranked
+        )
+        store.bump_generation()
+    result.scoped = True
+    result.revisited = len(affected)
 
 
 def _resolve_into(

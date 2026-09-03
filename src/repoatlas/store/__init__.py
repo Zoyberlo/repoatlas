@@ -4,10 +4,11 @@ A single SQLite file. Reading it is the common case, by a wide margin, so
 it has to open cold in milliseconds and answer a symbol lookup without
 loading the whole graph.
 
-Updating parses only the files whose contents changed, then re-resolves
-every reference. That asymmetry is deliberate and measured: parsing costs
-roughly sixty times what resolution does, and patching edges selectively
-would leave stale ones pointing into files that just moved.
+Updating parses only the files whose contents changed, then resolves
+again only the references the change can have reached: those in the
+changed files, those whose name's definitions changed, and the framework
+conventions when a file appeared or vanished. A test holds that to the
+same edges a rebuild produces.
 """
 
 from __future__ import annotations

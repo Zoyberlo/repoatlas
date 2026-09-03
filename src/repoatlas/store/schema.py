@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS edges (
 CREATE INDEX IF NOT EXISTS edges_by_src ON edges(src_id);
 CREATE INDEX IF NOT EXISTS edges_by_dst ON edges(dst_id);
 CREATE INDEX IF NOT EXISTS edges_by_site ON edges(site_path);
+CREATE INDEX IF NOT EXISTS edges_by_site_position
+    ON edges(site_path, site_start_line, site_start_char);
 
 -- Names a file uses that resolution has yet to place. Kept so one changed
 -- file can be re-resolved against the repository without re-parsing it all.
@@ -119,6 +121,9 @@ CREATE TABLE IF NOT EXISTS refs (
 );
 
 CREATE INDEX IF NOT EXISTS refs_by_path ON refs(path);
+-- A re-index re-resolves the references whose name a change touched,
+-- so they have to be findable by name without a scan.
+CREATE INDEX IF NOT EXISTS refs_by_name ON refs(name);
 
 CREATE TABLE IF NOT EXISTS imports (
     id             INTEGER PRIMARY KEY,

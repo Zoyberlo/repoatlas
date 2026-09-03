@@ -414,14 +414,51 @@ class IndexStore:
                         ],
                     )
 
+    def delete_edges_in(self, paths: Iterable[str]) -> None:
+        """Drop every edge whose site is in one of these files."""
+        wanted = list(paths)
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            self._connection.execute(
+                f"DELETE FROM edges WHERE site_path IN ({placeholders})", chunk
+            )
+
+    def delete_edges_at(self, sites: Iterable[tuple[str, int, int]]) -> None:
+        """Drop the edges written at exact sites: (path, line, character)."""
+        self._connection.executemany(
+            "DELETE FROM edges WHERE site_path = ? AND site_start_line = ? "
+            "AND site_start_char = ?",
+            list(sites),
+        )
+
+    def add_edges(self, edges: Iterable[Edge]) -> None:
+        """Insert edges without touching the ones already stored."""
+        self._connection.executemany(
+            "INSERT INTO edges(site_path, src_id, dst_id, kind, tier, "
+            "confidence, site_start_line, site_start_char, site_end_line, "
+            "site_end_char) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    edge.site_path,
+                    edge.src_id,
+                    edge.dst_id,
+                    edge.kind.value,
+                    edge.tier.label,
+                    edge.score,
+                    *_range_columns(edge.site_range),
+                )
+                for edge in edges
+            ],
+        )
+
     def replace_edges(self, edges: Iterable[Edge]) -> None:
         """Swap every resolved edge for a freshly resolved set.
 
-        Resolution is global and cheap, roughly one part in sixty of the
-        cost of parsing, so it is redone whole rather than patched. That
-        removes the subtle failure this stage would otherwise invite: an
-        edge from an untouched file into a file that just changed is stale,
-        and finding every such edge is harder than recomputing them all.
+        The full path, used for a first index, a forced rebuild, and a
+        change in which plugins are active. Ordinary updates patch edges
+        for the references a change can reach instead; see
+        `incremental._resolve_scoped` for the rule and its proof.
         """
         self._connection.execute("DELETE FROM edges")
         self._connection.executemany(
@@ -493,11 +530,69 @@ class IndexStore:
         ).fetchall()
         return [_edge_from(row) for row in rows]
 
-    def references(self) -> list[tuple[str, Reference]]:
-        rows = self._connection.execute(
-            "SELECT path, name, kind, container_id, start_line, start_char, "
-            "end_line, end_char FROM refs"
-        ).fetchall()
+    def definitions_by_name(self, paths: Iterable[str]) -> dict[str, set[tuple[Any, ...]]]:
+        """What these files define, per name, in the form resolution sees it.
+
+        Each definition is reduced to the fields the cascade and its
+        tie-breaks consult: id, kind, whether it is local, its container,
+        its position and whether its body sits on one line. Two snapshots
+        of a file that agree here resolve every outside reference the same
+        way, so a change that leaves a name's set untouched need not revisit
+        that name.
+        """
+        found: dict[str, set[tuple[Any, ...]]] = {}
+        wanted = list(paths)
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = self._connection.execute(
+                "SELECT name, id, kind, is_local, container_id, path, "
+                "name_start_line, name_start_char, full_start_line, full_end_line, "
+                "qualified_name FROM symbols WHERE is_synthetic = 0 "
+                f"AND path IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                found.setdefault(row[0], set()).add(tuple(row[1:]))
+        return found
+
+    def references(
+        self,
+        *,
+        paths: Iterable[str] | None = None,
+        names: Iterable[str] | None = None,
+        kinds: Iterable[str] | None = None,
+    ) -> list[tuple[str, Reference]]:
+        """References, all of them or only those a re-index needs to revisit.
+
+        With no filter, everything. With filters, the union of references
+        in ``paths``, references named in ``names``, and references of the
+        ``kinds`` given, each fetched by its index. The union is what a
+        change can affect (see `incremental._resolve_scoped`), and fetching
+        it directly is what keeps a one-file re-index proportional to the
+        file.
+        """
+        columns = (
+            "path, name, kind, container_id, start_line, start_char, end_line, end_char"
+        )
+        if paths is None and names is None and kinds is None:
+            rows = self._connection.execute(f"SELECT {columns} FROM refs").fetchall()
+        else:
+            seen: set[tuple[str, int, int]] = set()
+            rows = []
+            for column, values in (("path", paths), ("name", names), ("kind", kinds)):
+                wanted = list(values or ())
+                for start in range(0, len(wanted), 500):
+                    chunk = wanted[start : start + 500]
+                    placeholders = ", ".join("?" for _ in chunk)
+                    for row in self._connection.execute(
+                        f"SELECT {columns} FROM refs WHERE {column} IN ({placeholders})",
+                        chunk,
+                    ):
+                        key = (row[0], row[4], row[5])
+                        if key not in seen:
+                            seen.add(key)
+                            rows.append(row)
         return [
             (
                 row[0],
@@ -511,12 +606,16 @@ class IndexStore:
             for row in rows
         ]
 
-    def imports(self) -> dict[str, FileImports]:
+    def imports(self, *, paths: Iterable[str] | None = None) -> dict[str, FileImports]:
+        """Every file's imports, or only those of ``paths``."""
         result: dict[str, FileImports] = {}
         for path, namespace in self._connection.execute(
             "SELECT path, namespace FROM files"
         ):
             result[path] = FileImports(namespace=namespace)
+        if paths is not None:
+            wanted = set(paths)
+            result = {path: value for path, value in result.items() if path in wanted}
         bindings: dict[int, list[ImportBinding]] = {}
         for row in self._connection.execute(
             "SELECT import_id, local, original, start_line, start_char, "
@@ -533,6 +632,8 @@ class IndexStore:
             "SELECT id, path, module, relative_level, start_line, start_char, "
             "end_line, end_char FROM imports ORDER BY id"
         ):
+            if paths is not None and row[1] not in result:
+                continue
             file_imports = result.setdefault(row[1], FileImports())
             file_imports.statements.append(
                 ImportStatement(

@@ -94,6 +94,17 @@ returns in under 200 ms, and the first after restart in under one second.
 
 ### 1.3 Re-indexing one file re-resolves the whole repository
 
+*Done 2026-09-04.* Revisited: references in changed files, references
+whose name's definition set changed (compared as the fields the cascade
+consults, so a body edit changes no name), and convention references when
+a file appeared or vanished; full pass when plugins change. Eleven tests
+compare every scoped update with a fresh rebuild. On the 10k synthetic
+index a body-only edit revisits 13 references and takes 2.5 s, down from
+4.3 s (and 20 s before the resolver fix); a change to a name defined in
+every file revisits 10,000 and takes 2.8 s. What remains is linear in the
+repository, not the change: loading 80k symbols for the cascade's name
+tables (about 1 s) and re-ranking (about 0.4 s).
+
 `store/incremental.py` parses only what changed and then resolves
 everything. The docstring defends this, and the defence is right about
 correctness: an edge *into* a changed file can only be recomputed by

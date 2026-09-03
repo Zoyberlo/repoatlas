@@ -196,8 +196,14 @@ Choosing once per name made it twelve seconds. A synthetic repository is
 what found it, because no real one on hand had six thousand `run`s, and
 every real one of any size does.
 
-The one-file re-index is still resolution of the whole repository, which
-is the next thing to narrow; see [docs/backlog.md](docs/backlog.md).
+A one-file re-index no longer resolves the whole repository. A reference
+outside the changed file can only change its answer if a symbol with its
+name was added, removed or moved, so only those references are revisited,
+plus the file's own, plus the framework conventions when a file appeared
+or vanished. On the synthetic index an edit that moves no definition
+revisits 13 references out of 93,000 and takes 2.5 s, most of it loading
+the symbol table the cascade needs and re-ranking; a test holds every
+scoped update to the same edges a rebuild produces.
 
 ## Mapping a repository
 
