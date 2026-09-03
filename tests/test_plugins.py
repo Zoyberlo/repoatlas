@@ -9,10 +9,11 @@ falls through to the identifier cascade would happily match any function
 called `index`, and that wrong edge would carry the same confidence as a
 right one.
 
-The rules themselves live in `conventions.json`, so most of what is tested
-here is the engine that reads it: that a malformed rule is refused loudly,
-that two frameworks claiming one reference kind stay out of each other's
-way, and that an explicit import always beats a convention.
+The rules themselves live in `conventions/`, one file per framework, so most
+of what is tested here is the engine that reads them: that a malformed rule
+is refused loudly and says which file it came from, that two frameworks
+claiming one reference kind stay out of each other's way, and that an
+explicit import always beats a convention.
 """
 
 from __future__ import annotations
@@ -22,7 +23,13 @@ from pathlib import Path
 
 import pytest
 
-from repoatlas.plugins import ConventionPlugin, active_plugins, load_registry
+from repoatlas.plugins import (
+    ConventionPlugin,
+    active_plugins,
+    load_framework,
+    load_registry,
+    registry_files,
+)
 from repoatlas.plugins.base import register, registered_plugins
 from repoatlas.plugins.registry import RegistryError, registry_source
 
@@ -112,9 +119,20 @@ def edge_targets(root: Path) -> dict[tuple[str, int], str]:
 
 
 class TestRegistryFormat:
+    def test_one_file_per_framework(self) -> None:
+        assert [path.name for path in registry_files()] == [
+            "laravel.json",
+            "vue.json",
+        ]
+
     def test_the_shipped_registry_loads(self) -> None:
-        names = [framework.name for framework in load_registry()]
-        assert names == ["laravel", "vue"]
+        assert [framework.name for framework in load_registry()] == ["laravel", "vue"]
+
+    def test_a_file_is_named_after_the_framework_inside_it(self) -> None:
+        # A directory listing should say what is supported without opening
+        # anything, the way the tag queries already do.
+        for path in registry_files():
+            assert load_framework(path.read_text(encoding="utf-8")).name == path.stem
 
     def test_every_framework_declares_what_it_claims(self) -> None:
         for framework in load_registry():
@@ -123,46 +141,53 @@ class TestRegistryFormat:
 
     def test_a_framework_without_a_name_is_refused(self) -> None:
         with pytest.raises(RegistryError, match="needs a name"):
-            load_registry('{"frameworks": [{"rules": []}]}')
+            load_framework('{"rules": []}')
 
     def test_a_rule_without_kinds_is_refused(self) -> None:
-        source = '{"frameworks": [{"name": "x", "rules": [{"candidates": [{}]}]}]}'
         with pytest.raises(RegistryError, match="kinds"):
-            load_registry(source)
+            load_framework('{"name": "x", "rules": [{"candidates": [{}]}]}')
 
     def test_a_rule_without_candidates_is_refused(self) -> None:
-        source = '{"frameworks": [{"name": "x", "rules": [{"kinds": ["view"]}]}]}'
         with pytest.raises(RegistryError, match="candidates"):
-            load_registry(source)
+            load_framework('{"name": "x", "rules": [{"kinds": ["view"]}]}')
 
     def test_a_search_by_name_needs_a_stem(self) -> None:
         source = (
-            '{"frameworks": [{"name": "x", "rules": [{"kinds": ["view"],'
-            ' "candidates": [{"under": "src"}]}]}]}'
+            '{"name": "x", "rules": [{"kinds": ["view"],'
+            ' "candidates": [{"under": "src"}]}]}'
         )
         with pytest.raises(RegistryError, match="stem"):
-            load_registry(source)
+            load_framework(source)
 
     def test_a_detection_needs_packages(self) -> None:
-        source = (
-            '{"frameworks": [{"name": "x", "detect": [{"file": "a.json"}],'
-            ' "rules": []}]}'
-        )
+        source = '{"name": "x", "detect": [{"file": "a.json"}], "rules": []}'
         with pytest.raises(RegistryError, match="packages"):
-            load_registry(source)
+            load_framework(source)
 
-    def test_a_malformed_registry_is_refused(self) -> None:
-        with pytest.raises(RegistryError, match="list of frameworks"):
-            load_registry('{"frameworks": {}}')
+    def test_a_file_holding_something_else_is_refused(self) -> None:
+        with pytest.raises(RegistryError, match="one framework"):
+            load_framework("[]")
+
+    def test_a_broken_file_names_itself_in_the_error(self, tmp_path: Path) -> None:
+        # A framework quietly absent is a class of edges quietly missing, so
+        # loading fails loudly and says which file to look at.
+        (tmp_path / "broken.json").write_text("{not json", encoding="utf-8")
+        with pytest.raises(RegistryError, match=r"broken.json"):
+            load_registry(tmp_path)
 
     def test_the_registry_is_part_of_the_toolchain_stamp(self) -> None:
         # A no-op re-index skips resolution, so a changed rule that did not
         # change the stamp would leave the old edges in place for ever.
         from repoatlas.store.incremental import current_toolchain
 
-        first = current_toolchain()
-        assert first == current_toolchain()
+        assert current_toolchain() == current_toolchain()
         assert "laravel" in registry_source()
+
+    def test_the_stamp_notices_a_file_being_renamed(self, tmp_path: Path) -> None:
+        (tmp_path / "a.json").write_text('{"name": "a", "rules": []}', encoding="utf-8")
+        before = registry_source(tmp_path)
+        (tmp_path / "a.json").rename(tmp_path / "b.json")
+        assert registry_source(tmp_path) != before
 
 
 class TestDetection:

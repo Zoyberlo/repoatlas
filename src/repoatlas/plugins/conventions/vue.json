@@ -1,0 +1,40 @@
+{
+  "name": "vue",
+  "summary": "Components a template uses without importing them.",
+  "note": [
+    "Quasar and its neighbours auto-import components, so <UserCard /> with",
+    "no import beside it still names src/components/UserCard.vue, at",
+    "whatever depth the file happens to sit. That is why these candidates",
+    "search by basename rather than build an exact path.",
+    "",
+    "The rejected prefixes are components that ship in node_modules. A tag",
+    "like <q-btn /> is Quasar's own, and no file in the repository is it."
+  ],
+  "detect": [
+    {
+      "file": "package.json",
+      "fields": ["dependencies", "devDependencies"],
+      "packages": [
+        "vue",
+        "quasar",
+        "@quasar/app-vite",
+        "@quasar/app-webpack",
+        "nuxt"
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "kinds": ["component"],
+      "languages": ["vue"],
+      "separator": "",
+      "reject_prefix": ["q-", "el-", "van-", "router-", "keep-", "transition-"],
+      "candidates": [
+        {"under": "src/components", "stem": "{studly}", "suffixes": [".vue"]},
+        {"under": "src/layouts", "stem": "{studly}", "suffixes": [".vue"]},
+        {"under": "src/pages", "stem": "{studly}", "suffixes": [".vue"]},
+        {"under": "components", "stem": "{studly}", "suffixes": [".vue"]}
+      ]
+    }
+  ]
+}

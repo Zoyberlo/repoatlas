@@ -1,0 +1,77 @@
+{
+  "name": "laravel",
+  "summary": "Blade views, layouts, partials, components and Livewire tags.",
+  "note": [
+    "view('users.index') is resources/views/users/index.blade.php. Dots are",
+    "directories, and the same reading covers @extends and @include, which",
+    "are the Blade spelling of the same idea.",
+    "",
+    "A component tag is tried as an anonymous view first and as a class",
+    "second, because that is the order Laravel itself tries them."
+  ],
+  "detect": [
+    {
+      "file": "composer.json",
+      "fields": ["require", "require-dev"],
+      "packages": [
+        "laravel/framework",
+        "laravel/lumen-framework",
+        "illuminate/view",
+        "illuminate/support"
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "kinds": ["view", "extends", "include"],
+      "languages": ["php", "blade"],
+      "separator": ".",
+      "reject": ["::"],
+      "candidates": [
+        {
+          "root": "resources/views",
+          "path": "{path}",
+          "suffixes": [".blade.php", ".blade.phtml", ".php"]
+        }
+      ]
+    },
+    {
+      "kinds": ["component"],
+      "languages": ["blade"],
+      "prefix": "x-",
+      "separator": ".",
+      "candidates": [
+        {
+          "root": "resources/views/components",
+          "path": "{path}",
+          "suffixes": [".blade.php", ".blade.phtml", ".php"]
+        },
+        {
+          "root": "resources/views/components",
+          "path": "{path}/index",
+          "suffixes": [".blade.php", ".blade.phtml", ".php"]
+        },
+        {
+          "root": "app/View/Components",
+          "path": "{studly}",
+          "suffixes": [".php"]
+        }
+      ]
+    },
+    {
+      "kinds": ["component"],
+      "languages": ["blade"],
+      "prefix": "livewire:",
+      "separator": ".",
+      "candidates": [
+        {"root": "app/Livewire", "path": "{studly}", "suffixes": [".php"]},
+        {"root": "app/Http/Livewire", "path": "{studly}", "suffixes": [".php"]},
+        {
+          "root": "resources/views/livewire",
+          "path": "{path}",
+          "suffixes": [".blade.php"]
+        }
+      ]
+    }
+  ]
+}
