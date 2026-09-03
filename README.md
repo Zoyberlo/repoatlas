@@ -44,31 +44,28 @@ pip install -e ".[parse]"
 repoatlas compare tests/fixtures/tsdemo tests/fixtures/tsdemo/index.scip
 ```
 
-```
-# Index accuracy: repoatlas 0.1.0 (tree-sitter) vs scip-typescript 0.4.0
+The report is Markdown, so it renders wherever you paste it. On the
+committed TypeScript fixture it says:
 
-Compared 2 files.
+> **Index accuracy: repoatlas 0.1.0 (tree-sitter) vs scip-typescript 0.4.0**
+>
+> Compared 2 files. Symbol kinds in scope: class, constant, constructor,
+> enum, field, function, interface, macro, method, property, trait,
+> type_alias, variable. Not scored, because the oracle emits no such edge:
+> 8 edges of kind `contains`.
 
-Symbol kinds in scope: class, constant, constructor, enum, field, function,
-interface, macro, method, property, trait, type_alias, variable.
-Not scored, because the oracle emits no such edge: 8 edges of kind contains.
-
-## Headline
 | kind | precision | recall | F1 | tp | fp | fn |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | definitions | 1.000 | 1.000 | 1.000 | 13 | 0 | 0 |
 | references | 0.900 | 0.783 | 0.837 | 18 | 2 | 5 |
 
-## Confidence calibration
-
-Expected calibration error 0.031, worst bin 0.050, over 18 edges.
+Expected calibration error 0.031, worst bin 0.050, over 18 edges:
 
 | confidence bin | edges | claimed | observed | gap |
 | --- | ---: | ---: | ---: | ---: |
 | 0.45 to 0.65 | 2 | 0.550 | 0.500 | +0.050 |
 | 0.88 to 0.93 | 9 | 0.900 | 0.889 | +0.011 |
 | 0.93 to 0.97 | 7 | 0.950 | 1.000 | -0.050 |
-```
 
 That calibration table is the part to read. Resolving a name without a
 compiler is guesswork, and guesswork is fine as long as the guess says how
@@ -290,7 +287,7 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
-pytest                 # 554 tests
+pytest                 # 564 tests
 ruff check .
 mypy
 ```
