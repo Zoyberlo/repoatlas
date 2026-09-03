@@ -48,7 +48,7 @@ __all__ = [
     "search_symbols",
 ]
 
-Detail = Literal["concise", "detailed"]
+Detail = Literal["concise", "detailed", "skeleton"]
 
 # Defaults sit well under the 25,000-token cut so a result is never
 # truncated by the client, where the agent cannot see what went missing.
@@ -202,19 +202,26 @@ def get_symbol(
     detail: Detail = "detailed",
     include_body: bool = False,
     max_body_lines: int = 80,
+    budget: int = DEFAULT_BUDGET,
+    estimator: TokenEstimator | None = None,
 ) -> str:
     """Describe one symbol: where it is, what contains it, what it touches.
 
-    ``include_body`` reads the source from disk. It is off by default
-    because a signature and a location are usually what the next step needs,
-    and a body is the most expensive thing this index can hand over.
+    Three levels of detail, because the gap between a signature and a body
+    is where most of the tokens go. ``detailed`` is the signature and the
+    first line of documentation; ``skeleton`` adds what the symbol
+    contains, every nested definition with its line, which for a class is
+    the whole shape of it in a dozen lines; ``include_body`` reads the
+    source from disk, and is off by default because a body is the most
+    expensive thing this index can hand over and the skeleton usually says
+    which lines of it to read.
     """
     symbol = store.symbol(symbol_id)
     if symbol is None:
         raise ToolError(
             f"no symbol with id {symbol_id!r}; use search_symbols to find its id"
         )
-    lines = [_describe(symbol, detail=detail)]
+    lines = [_describe(symbol, detail="detailed" if detail == "skeleton" else detail)]
     if symbol.container_id:
         container = store.symbol(symbol.container_id)
         if container is not None:
@@ -240,12 +247,57 @@ def get_symbol(
                 f"    ... {total_callers - len(sample)} more; find_references gives all of them"
             )
 
+    if detail == "skeleton":
+        lines.extend(_skeleton(store, symbol, budget, estimator or store.estimator()))
+
     if include_body:
         body = _read_body(store, symbol, max_body_lines)
         if body:
             lines.append("")
             lines.append(body)
     return "\n".join(lines) + "\n"
+
+
+def _skeleton(
+    store: IndexStore, symbol: Symbol, budget: int, estimate: TokenEstimator
+) -> list[str]:
+    """What a symbol contains, as declaration lines, in source order.
+
+    Built from the index rather than by re-parsing: every nested definition
+    is already stored with its declaration line and position. A class
+    skeleton is its methods; a function's is the definitions nested in it,
+    usually none, in which case the body's length is the useful fact.
+    """
+    inside = {symbol.id}
+    members: list[Symbol] = []
+    for candidate in sorted(
+        store.symbols(path=symbol.path), key=lambda item: item.name_range
+    ):
+        if candidate.synthetic or candidate.id == symbol.id:
+            continue
+        if candidate.container_id in inside:
+            inside.add(candidate.id)
+            members.append(candidate)
+    span = symbol.full_range or symbol.name_range
+    body_lines = span.end.line - span.start.line + 1
+    if not members:
+        return [f"  body: {body_lines} line(s); include_body reads them"]
+    depth_of = {symbol.id: 0}
+    budgeted = _Budget(budget, estimate)
+    budgeted.add(f"  contains {len(members)} definition(s) across {body_lines} lines:")
+    shown = 0
+    for member in members:
+        depth = depth_of.get(member.container_id or "", 0) + 1
+        depth_of[member.id] = depth
+        line = member.name_range.start.line + 1
+        text = member.signature or f"{member.kind.value} {member.name}"
+        if not budgeted.add(f"  {'  ' * depth}{line:>5}  {text}"):
+            break
+        shown += 1
+    result = budgeted.lines
+    if shown < len(members):
+        result.append(f"  ... {len(members) - shown} more; file_outline shows the whole file")
+    return result
 
 
 def _read_body(store: IndexStore, symbol: Symbol, max_lines: int) -> str:

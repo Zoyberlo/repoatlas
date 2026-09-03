@@ -157,15 +157,16 @@ def build_server(store: IndexStore, *, name: str = "repoatlas") -> Any:
     @server.tool(annotations=read_only)
     def get_symbol(
         symbol_id: str,
-        detail: Literal["concise", "detailed"] = "detailed",
+        detail: Literal["concise", "detailed", "skeleton"] = "detailed",
         include_body: bool = False,
     ) -> str:
         """Describe one symbol: location, container, and what uses it.
 
-        Use the id from `search_symbols`. Leave `include_body` off unless
-        you actually need the source; a signature and a location are usually
-        enough to decide the next step, and the body is the most expensive
-        thing this index can return.
+        Use the id from `search_symbols`. `detail="skeleton"` adds every
+        definition nested inside it with its line, which for a class is its
+        whole shape in a dozen lines and usually says which lines to read.
+        Leave `include_body` off unless you actually need the source; the
+        body is the most expensive thing this index can return.
         """
         return _answer(
             lambda: tools.get_symbol(

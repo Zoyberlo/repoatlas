@@ -277,6 +277,12 @@ the first call in a session is the unfocused one.
 
 ### 3.4 Three levels of detail, not two
 
+*Done 2026-09-04.* `get_symbol(detail="skeleton")` adds every definition
+nested in the symbol with its line, from the index rather than a re-parse,
+under the tool budget; a leaf reports its body length instead. Control-flow
+headers, which ContextSniper's skeletons include, are not in the index and
+would need a parse at read time; left for when a measurement asks for it.
+
 ContextSniper (2026) keeps a hierarchy per symbol, signature then skeleton
 then body, and includes deeper levels as budget allows, reporting
 competitive repair rates at a fraction of the tokens of full inclusion.

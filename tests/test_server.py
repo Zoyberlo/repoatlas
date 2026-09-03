@@ -151,6 +151,31 @@ class TestGetSymbol:
             assert "body unavailable" in result
             assert "src/user.ts:14" in result
 
+    def test_a_skeleton_lists_what_a_class_contains(self, store: IndexStore) -> None:
+        result = tools.get_symbol(store, USER_CLASS, detail="skeleton")
+        assert "contains" in result
+        assert "14  greet(name: string): string {" in result
+
+    def test_a_skeleton_is_in_source_order_and_nested(self, store: IndexStore) -> None:
+        result = tools.get_symbol(store, USER_CLASS, detail="skeleton")
+        block = result.split("contains", 1)[1]
+        assert block.index("label") < block.index("greet")
+
+    def test_a_leaf_skeleton_says_how_long_the_body_is(self, store: IndexStore) -> None:
+        result = tools.get_symbol(store, GREET, detail="skeleton")
+        assert "body:" in result and "include_body" in result
+
+    def test_a_skeleton_costs_less_than_a_body(self, store: IndexStore) -> None:
+        from repoatlas.rank.tokens import estimate_tokens
+
+        skeleton = tools.get_symbol(store, USER_CLASS, detail="skeleton")
+        body = tools.get_symbol(store, USER_CLASS, include_body=True)
+        assert estimate_tokens(skeleton) < estimate_tokens(body)
+
+    def test_a_skeleton_respects_its_budget(self, store: IndexStore) -> None:
+        result = tools.get_symbol(store, USER_CLASS, detail="skeleton", budget=45)
+        assert "more; file_outline" in result
+
 
 class TestFindReferences:
     def test_groups_uses_by_file(self, store: IndexStore) -> None:
