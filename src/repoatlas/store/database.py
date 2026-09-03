@@ -33,6 +33,7 @@ from ..model import (
 )
 from ..parse.extract import Reference
 from ..parse.imports import FileImports, ImportBinding, ImportStatement
+from ..rank.tokens import TokenEstimator, estimate_tokens, make_estimator
 from .schema import PRAGMAS, SCHEMA, SCHEMA_VERSION
 
 __all__ = ["FileRecord", "IndexStore", "StoreError", "content_digest", "toolchain_version"]
@@ -204,6 +205,41 @@ class IndexStore:
     @property
     def schema_version(self) -> int:
         return int(self.get_meta("schema_version") or 0)
+
+    def chars_per_token(self) -> float | None:
+        """The calibrated token constant, if a calibration was recorded."""
+        raw = self.get_meta("chars_per_token")
+        if raw is None:
+            return None
+        try:
+            value = float(raw)
+        except ValueError:
+            return None
+        return value if value > 0 else None
+
+    def calibrated_model(self) -> str | None:
+        """Which model the recorded constant was counted for."""
+        return self.get_meta("chars_per_token_model")
+
+    def estimator(self) -> TokenEstimator:
+        """The estimator every tool over this store should use.
+
+        Calibrated when a calibration exists, the default otherwise. Kept
+        on the store rather than passed around because the constant is a
+        property of the index and the model reading it, not of any call.
+        """
+        constant = self.chars_per_token()
+        return make_estimator(constant) if constant else estimate_tokens
+
+    def most_referenced(self, *, limit: int = 1) -> list[str]:
+        """Ids of the symbols with the most distinct users, most first."""
+        rows = self._connection.execute(
+            "SELECT e.dst_id FROM edges e JOIN symbols s ON s.id = e.dst_id "
+            "WHERE s.is_synthetic = 0 GROUP BY e.dst_id "
+            "ORDER BY count(DISTINCT e.src_id) DESC, e.dst_id ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [row[0] for row in rows]
 
     def is_compatible(self, toolchain: str) -> bool:
         """Whether the stored index was produced by this toolchain.

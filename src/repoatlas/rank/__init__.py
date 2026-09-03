@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from .pagerank import RankedSymbol, RankOptions, SymbolGraph, rank_symbols
 from .render import MapOptions, RepoMap, render_map
-from .tokens import CHARS_PER_TOKEN, TokenEstimator, estimate_tokens, make_estimator
+from .tokens import (
+    CHARS_PER_TOKEN,
+    TokenEstimator,
+    calibrate_constant,
+    estimate_tokens,
+    estimate_with,
+    make_estimator,
+)
 
 __all__ = [
     "CHARS_PER_TOKEN",
@@ -21,7 +28,9 @@ __all__ = [
     "RepoMap",
     "SymbolGraph",
     "TokenEstimator",
+    "calibrate_constant",
     "estimate_tokens",
+    "estimate_with",
     "make_estimator",
     "rank_symbols",
     "render_map",

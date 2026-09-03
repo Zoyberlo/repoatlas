@@ -32,7 +32,7 @@ from typing import Literal
 
 from ..model import Edge, EdgeKind, Symbol
 from ..rank import MapOptions, RankOptions, rank_symbols, render_map
-from ..rank.tokens import estimate_tokens
+from ..rank.tokens import TokenEstimator
 from ..store import IndexStore
 
 __all__ = [
@@ -65,21 +65,34 @@ class ToolError(ValueError):
 
 @dataclass(slots=True)
 class _Budget:
-    """Tracks how much of an answer has been spent."""
+    """Tracks how much of an answer has been spent.
+
+    The running total is a sum of per-line estimates rather than one
+    estimate of the joined text. That keeps each add constant-time instead
+    of re-estimating everything so far, which was quadratic and measured at
+    forty-eight microseconds per line by three thousand lines. Per-line
+    rounding can only over-count, by less than a token a line, and erring
+    under the budget is the safe direction.
+    """
 
     limit: int
     lines: list[str]
+    spent: int
+    estimate: TokenEstimator
 
-    def __init__(self, limit: int) -> None:
+    def __init__(self, limit: int, estimate: TokenEstimator) -> None:
         self.limit = limit
         self.lines = []
+        self.spent = 0
+        self.estimate = estimate
 
     def add(self, line: str) -> bool:
         """Append a line, or report that the budget is spent."""
-        self.lines.append(line)
-        if estimate_tokens("\n".join(self.lines)) > self.limit:
-            self.lines.pop()
+        cost = self.estimate(line + "\n")
+        if self.spent + cost > self.limit:
             return False
+        self.lines.append(line)
+        self.spent += cost
         return True
 
     def render(self, truncated: int = 0, hint: str = "") -> str:
@@ -133,6 +146,7 @@ def search_symbols(
     cursor: str | None = None,
     detail: Detail = "concise",
     budget: int = DEFAULT_BUDGET,
+    estimator: TokenEstimator | None = None,
 ) -> str:
     """Find definitions whose name contains ``query``.
 
@@ -153,7 +167,7 @@ def search_symbols(
         return f"nothing{kind_note} matches {query!r}\n"
 
     references = store.reference_counts([item.id for item in window])
-    budgeted = _Budget(budget)
+    budgeted = _Budget(budget, estimator or store.estimator())
     budgeted.add(f"{len(window)} match(es) for {query!r}:")
     shown = 0
     for symbol in window:
@@ -265,6 +279,7 @@ def find_references(
     limit: int = 50,
     cursor: str | None = None,
     budget: int = DEFAULT_BUDGET,
+    estimator: TokenEstimator | None = None,
 ) -> str:
     """List where a symbol is used, grouped by file.
 
@@ -285,7 +300,7 @@ def find_references(
     edges.sort(key=lambda edge: (edge.site_path or "", edge.site_range or symbol.name_range))
     offset = _decode_cursor(cursor)
     window = edges[offset : offset + limit]
-    budgeted = _Budget(budget)
+    budgeted = _Budget(budget, estimator or store.estimator())
     budgeted.add(f"{len(edges)} use(s) of {symbol.qualified_name or symbol.name}:")
 
     shown = 0
@@ -317,6 +332,7 @@ def neighbours(
     kinds: tuple[str, ...] = (),
     min_confidence: float = 0.0,
     budget: int = DEFAULT_BUDGET,
+    estimator: TokenEstimator | None = None,
 ) -> str:
     """Walk the graph from one symbol, rendered as a tree.
 
@@ -337,7 +353,7 @@ def neighbours(
         )
     wanted = {EdgeKind(kind) for kind in kinds} if kinds else None
 
-    budgeted = _Budget(budget)
+    budgeted = _Budget(budget, estimator or store.estimator())
     arrow = {"out": "uses", "in": "used by", "both": "connected to"}[direction]
     budgeted.add(f"{arrow}, from {root.qualified_name or root.name} ({_location(root)}):")
 
@@ -392,7 +408,11 @@ def _step(
 
 
 def file_outline(
-    store: IndexStore, path: str, *, budget: int = DEFAULT_BUDGET
+    store: IndexStore,
+    path: str,
+    *,
+    budget: int = DEFAULT_BUDGET,
+    estimator: TokenEstimator | None = None,
 ) -> str:
     """List what one file defines, in source order and nested.
 
@@ -413,7 +433,7 @@ def file_outline(
 
     symbols.sort(key=lambda symbol: symbol.name_range)
     by_id = {symbol.id: symbol for symbol in symbols}
-    budgeted = _Budget(budget)
+    budgeted = _Budget(budget, estimator or store.estimator())
     budgeted.add(f"{cleaned}:")
     shown = 0
     for symbol in symbols:
@@ -438,6 +458,7 @@ def repo_map(
     *,
     focus: tuple[str, ...] = (),
     budget: int = MAP_BUDGET,
+    estimator: TokenEstimator | None = None,
 ) -> str:
     """Sketch what the repository is built around, within a token budget.
 
@@ -451,7 +472,9 @@ def repo_map(
     focus_paths = {item.replace("\\", "/").lstrip("./") for item in focus}
     unknown = focus_paths - set(store.languages())
     ranked = rank_symbols(snapshot, focus_paths=focus_paths, options=RankOptions())
-    rendered = render_map(ranked, MapOptions(budget=budget))
+    rendered = render_map(
+        ranked, MapOptions(budget=budget), estimator=estimator or store.estimator()
+    )
     header = f"{rendered.included} of {rendered.total} symbols, {rendered.files} files"
     if unknown:
         # Silently ignoring an unrecognised focus would return a global map
@@ -474,8 +497,16 @@ def index_status(store: IndexStore) -> str:
         f"files:     {counts['files']}",
         f"symbols:   {counts['symbols']}",
         f"edges:     {counts['edges']}",
-        f"size:      {store.size_bytes() / 1024:.0f} KiB",
     ]
+    constant = store.chars_per_token()
+    if constant:
+        model = store.calibrated_model() or "an unnamed model"
+        lines.append(f"tokens:    calibrated for {model}, {constant:.2f} chars per token")
+    else:
+        lines.append(
+            "tokens:    estimated, not calibrated; run `repoatlas calibrate` "
+            "with the model that will read the answers"
+        )
     languages: dict[str, int] = {}
     for language in store.languages().values():
         languages[language] = languages.get(language, 0) + 1
@@ -484,4 +515,8 @@ def index_status(store: IndexStore) -> str:
             f"{name} {count}" for name, count in sorted(languages.items())
         )
         lines.append(f"languages: {summary}")
+    # Size last, because it is the one line that changes on every re-index
+    # and a prefix that stays byte-identical is what the agent's prompt
+    # cache needs.
+    lines.append(f"size:      {store.size_bytes() / 1024:.0f} KiB")
     return "\n".join(lines) + "\n"

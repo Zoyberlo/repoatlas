@@ -33,6 +33,7 @@ repoatlas serve /path/to/repo     # seven read-only tools over MCP
 - [Scoring an index against a compiler](#scoring-an-index-against-a-compiler)
 - [Indexing and searching](#indexing-and-searching)
 - [Mapping a repository](#mapping-a-repository)
+- [Calibrating the token budget](#calibrating-the-token-budget)
 - [Serving it to an agent](#serving-it-to-an-agent)
 - [What the first real measurement changed](#what-the-first-real-measurement-changed)
 - [Design commitments](#design-commitments)
@@ -207,6 +208,27 @@ repoatlas map . --budget 300 --focus src/repoatlas/store/database.py
 That returns the structure of the store and the one file it leans on, rather
 than an overview of the project. It is the same mechanism aider uses, moved
 from files to symbols so a large class does not have to be included whole.
+
+## Calibrating the token budget
+
+Every budget in this project is enforced by an estimate, and the estimate
+is a constant that moved by a third between model generations: Anthropic's
+token-counting documentation states that models from Opus 4.7 on, which
+includes the Fable and Mythos families, count about 30 percent higher than
+earlier ones for the same text. A map fitted with the old constant is not a
+2,000-token map on the model reading it.
+
+The default now carries that correction. The measurement replaces it:
+
+```bash
+repoatlas calibrate .repoatlas/index.db --model claude-fable-5-1
+```
+
+That renders a few real answers, counts them on the provider's free
+counting endpoint under the named model's tokenizer, and records the
+constant in the index. Every tool over that index, and the `map` command,
+then estimate with it. `index_status` says which model the index is
+calibrated for, or that it is not.
 
 ## Serving it to an agent
 

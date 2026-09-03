@@ -27,6 +27,11 @@ Three commands, matching the three things you do with an oracle:
     being worked on, which turns a map of the repository into a map of
     the task.
 
+``calibrate``
+    Count a few real answers with the provider's tokenizer and record the
+    constant in the index, so a budget of two thousand tokens means two
+    thousand on the model that will read them.
+
 ``serve``
     Run the MCP server over stdio, so an agent can query the index
     directly.
@@ -158,6 +163,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="walk the filesystem instead of asking git",
     )
     repo_map.add_argument("--format", choices=("text", "json"), default="text")
+
+    calibrate = subcommands.add_parser(
+        "calibrate",
+        help="measure the token estimate against a model's real tokenizer",
+    )
+    calibrate.add_argument("store", type=Path, help="the SQLite index to calibrate")
+    calibrate.add_argument(
+        "--model",
+        required=True,
+        help="the model that will read the answers, e.g. claude-fable-5-1",
+    )
+    calibrate.add_argument(
+        "--api-key-env",
+        default="ANTHROPIC_API_KEY",
+        help="environment variable holding the API key",
+    )
+    calibrate.add_argument("--format", choices=("text", "json"), default="text")
 
     serve = subcommands.add_parser("serve", help="run the MCP server over stdio")
     serve.add_argument("root", type=Path, help="the repository to serve")
@@ -430,6 +452,9 @@ def _cmd_map(args: argparse.Namespace) -> int:
     """Render a ranked map of a repository, within a token budget."""
     from .rank import MapOptions, RankOptions, make_estimator, rank_symbols, render_map
 
+    estimator = (
+        make_estimator(args.chars_per_token) if args.chars_per_token else None
+    )
     if args.source.is_dir():
         snapshot = _build(args.source, use_git=not args.no_git).snapshot
     else:
@@ -440,15 +465,15 @@ def _cmd_map(args: argparse.Namespace) -> int:
         try:
             with IndexStore(args.source) as store:
                 snapshot = store.snapshot()
+                # A stored calibration is what the store's tools would use,
+                # so the CLI map should fit the same budget the same way.
+                estimator = estimator or store.estimator()
         except StoreError as exc:
             raise SystemExit(f"repoatlas: {exc}") from None
 
     focus_paths = {_normalise_focus(item) for item in args.focus}
     ranked = rank_symbols(
         snapshot, focus_paths=focus_paths, options=RankOptions()
-    )
-    estimator = (
-        make_estimator(args.chars_per_token) if args.chars_per_token else None
     )
     rendered = render_map(
         ranked,
@@ -492,6 +517,44 @@ def _normalise_focus(value: str) -> str:
     while cleaned.startswith("./"):
         cleaned = cleaned[2:]
     return cleaned.lstrip("/")
+
+
+def _cmd_calibrate(args: argparse.Namespace) -> int:
+    """Pin the token estimate to a model's tokenizer and record it."""
+    import os
+
+    from .rank import calibrate as calibration
+    from .store import IndexStore, StoreError
+
+    api_key = os.environ.get(args.api_key_env, "")
+    if not api_key:
+        raise SystemExit(
+            f"repoatlas: no API key in ${args.api_key_env}; the counting endpoint "
+            "is free but needs one"
+        )
+    if not args.store.exists():
+        raise SystemExit(f"repoatlas: no such index: {args.store}")
+    try:
+        with IndexStore(args.store) as store:
+            before = store.chars_per_token()
+            result = calibration.calibrate_store(
+                store, args.model, calibration.anthropic_counter(args.model, api_key)
+            )
+    except StoreError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+    except calibration.CalibrationError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+
+    if args.format == "json":
+        print(json.dumps(result.as_dict(), indent=2))
+        return _EXIT_OK
+    print(f"model:            {result.model}")
+    print(f"samples:          {result.samples} ({result.counted_tokens} tokens counted)")
+    print(f"default estimate: {result.estimated_before} tokens ({result.error_before:+.1%})")
+    if before:
+        print(f"previous:         {before:.3f} chars per token")
+    print(f"calibrated:       {result.chars_per_token:.3f} chars per token, recorded in the index")
+    return _EXIT_OK
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -595,6 +658,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "index": _cmd_index,
         "search": _cmd_search,
         "map": _cmd_map,
+        "calibrate": _cmd_calibrate,
         "serve": _cmd_serve,
         "verify-oracle": _cmd_verify_oracle,
         "compare": _cmd_compare,
