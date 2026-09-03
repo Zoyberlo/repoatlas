@@ -135,6 +135,30 @@ on transitive type-hierarchy questions ([type-resolved reachability study]).
 Those are the numbers to beat and to be honest about: the goal is to clear
 grep decisively, not to pretend to match a compiler.
 
+### Ranking, and what has not been measured about it
+
+Ranking is where this project currently asserts more than it has shown. The
+mechanism is settled: personalised PageRank over the symbol graph, edges
+weighted by kind and by resolution confidence, containment reversed so a
+member lends rank to its type. Three choices in it are judgement, and each
+is written down as such rather than dressed up:
+
+- **The kind prior.** A class earns more restart mass than a field, because
+  a map is read to find where behaviour lives. Stated as a bias, and
+  switchable off.
+- **Containment direction.** Reversing it changed the map of this project
+  from one led by `Position` and `_symbol_from` to one led by `Symbol`,
+  `IndexStore` and `Comparison`. That is one repository and a reading, not
+  a measurement.
+- **The edge weights.** Ordered from the finding that call edges predict
+  relevance about twice as well as containment, but the exact numbers are
+  guesses.
+
+What would settle them is tier three below: run the map as the context for
+a localisation benchmark and see which weighting puts the right file in
+front of the agent more often. Until then the numbers are defaults, and the
+honest description of the ranking is "plausible and untested".
+
 ## Tier 3: localisation metrics
 
 Scope: given an issue, does the index put the right code in front of the

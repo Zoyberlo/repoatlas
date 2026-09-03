@@ -21,6 +21,12 @@ Three commands, matching the three things you do with an oracle:
 ``search``
     Look a symbol up in a stored index, by substring.
 
+``map``
+    Render the most important symbols of a repository within a token
+    budget. With ``--focus`` the ranking is steered toward the files
+    being worked on, which turns a map of the repository into a map of
+    the task.
+
 ``compare``
     Score one index against another and write the report. Either side may
     be a repository directory, which is parsed on the spot, so scoring the
@@ -114,6 +120,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="restrict to a symbol kind; repeatable",
     )
     search.add_argument("--format", choices=("text", "json"), default="text")
+
+    repo_map = subcommands.add_parser(
+        "map", help="render a ranked, budgeted map of a repository"
+    )
+    repo_map.add_argument(
+        "source", type=Path, help="a repository to parse, or a stored index"
+    )
+    repo_map.add_argument(
+        "--budget", type=int, default=2000, help="target size in tokens"
+    )
+    repo_map.add_argument(
+        "--focus",
+        action="append",
+        default=[],
+        help="a file to rank around; repeatable",
+    )
+    repo_map.add_argument(
+        "--max-files", type=int, default=0, help="list at most this many files"
+    )
+    repo_map.add_argument(
+        "--show-scores", action="store_true", help="append each entry's rank"
+    )
+    repo_map.add_argument(
+        "--chars-per-token",
+        type=float,
+        help="calibrate the token estimate for a particular model",
+    )
+    repo_map.add_argument("--out", type=Path, help="write the map here")
+    repo_map.add_argument(
+        "--no-git",
+        action="store_true",
+        help="walk the filesystem instead of asking git",
+    )
+    repo_map.add_argument("--format", choices=("text", "json"), default="text")
 
     compare = subcommands.add_parser("compare", help="score a candidate index against an oracle")
     compare.add_argument(
@@ -363,6 +403,74 @@ def _cmd_search(args: argparse.Namespace) -> int:
     return _EXIT_OK
 
 
+def _cmd_map(args: argparse.Namespace) -> int:
+    """Render a ranked map of a repository, within a token budget."""
+    from .rank import MapOptions, RankOptions, make_estimator, rank_symbols, render_map
+
+    if args.source.is_dir():
+        snapshot = _build(args.source, use_git=not args.no_git).snapshot
+    else:
+        from .store import IndexStore, StoreError
+
+        if not args.source.exists():
+            raise SystemExit(f"repoatlas: no such repository or index: {args.source}")
+        try:
+            with IndexStore(args.source) as store:
+                snapshot = store.snapshot()
+        except StoreError as exc:
+            raise SystemExit(f"repoatlas: {exc}") from None
+
+    focus_paths = {_normalise_focus(item) for item in args.focus}
+    ranked = rank_symbols(
+        snapshot, focus_paths=focus_paths, options=RankOptions()
+    )
+    estimator = (
+        make_estimator(args.chars_per_token) if args.chars_per_token else None
+    )
+    rendered = render_map(
+        ranked,
+        MapOptions(
+            budget=args.budget,
+            max_files=args.max_files,
+            show_scores=args.show_scores,
+        ),
+        estimator=estimator,
+    )
+
+    if args.format == "json":
+        payload = rendered.as_dict()
+        payload["text"] = rendered.text
+        output = json.dumps(payload, indent=2)
+    else:
+        output = rendered.text
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(output, encoding="utf-8")
+        print(f"wrote {args.out}")
+    else:
+        print(output, end="" if output.endswith("\n") else "\n")
+    if args.format == "text":
+        print(
+            f"\n{rendered.tokens} tokens, {rendered.included} of "
+            f"{rendered.total} symbols, {rendered.files} files",
+            file=sys.stderr,
+        )
+    return _EXIT_OK
+
+
+def _normalise_focus(value: str) -> str:
+    """Accept a focus path however the shell spelled it.
+
+    Symbols carry repository-relative POSIX paths, so a Windows
+    separator or a leading `./` from tab completion would otherwise
+    match nothing and silently produce an unfocused map.
+    """
+    cleaned = value.replace("\\", "/").strip()
+    while cleaned.startswith("./"):
+        cleaned = cleaned[2:]
+    return cleaned.lstrip("/")
+
+
 def _cmd_inspect(args: argparse.Namespace) -> int:
     snapshot = _load(args.index)
     print(f"producer: {snapshot.producer or 'unknown'}")
@@ -441,6 +549,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "inspect": _cmd_inspect,
         "index": _cmd_index,
         "search": _cmd_search,
+        "map": _cmd_map,
         "verify-oracle": _cmd_verify_oracle,
         "compare": _cmd_compare,
     }

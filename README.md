@@ -99,6 +99,44 @@ nothing moved. Editing a tag query or upgrading tree-sitter changes what
 extraction would produce, so both are hashed into the store and a mismatch
 rebuilds rather than trusting stale symbols.
 
+Ask what the repository is built around, in three hundred tokens:
+
+```bash
+repoatlas map . --budget 300
+```
+
+```
+src/repoatlas/model.py:
+⋮...
+│class SymbolKind(enum.Enum):
+⋮...
+│class Position:
+⋮...
+│class SourceRange:
+  │def of(cls, start_line: int, start_char: int, end_line: int, end_char: int) -> SourceRange:
+⋮...
+│class Symbol:
+⋮...
+
+src/repoatlas/store/database.py:
+⋮...
+│class IndexStore:
+⋮...
+```
+
+Importance is personalised PageRank over the symbol graph, so a symbol
+matters when the things that refer to it matter. Pointing it at what you
+are working on changes the answer:
+
+```bash
+repoatlas map . --budget 300 --focus src/repoatlas/store/database.py
+```
+
+That returns the structure of the store and the one file it leans on,
+rather than an overview of the project. It is the same mechanism aider
+uses, moved from files to symbols so a large class does not have to be
+included whole.
+
 Parse without storing, to see what came out:
 
 ```bash
@@ -197,7 +235,8 @@ runs wherever Python does, on Linux, macOS, Windows and WSL.
    calibration error on the TypeScript fixture
 4. ~~SQLite storage with content-hash incremental updates~~ done: one file,
    trigram symbol search, and a re-index that parses only what changed
-5. Ranking: personalised PageRank over the symbol graph, budgeted output
+5. ~~Ranking: personalised PageRank over the symbol graph, budgeted output~~
+   done: rank, focus, and a binary search that fits a map to a token budget
 6. MCP server, a small number of tools, every output under a token budget
 7. Framework plugins for the string-keyed edges no generic parser can see:
    Laravel views and routes, Vue single-file components, Blade includes
@@ -209,7 +248,7 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
-pytest                 # 451 tests
+pytest                 # 502 tests
 ruff check .
 mypy
 ```

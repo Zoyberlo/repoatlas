@@ -102,6 +102,10 @@ _TYPE_CONTAINERS = frozenset(
 # and PHP both spell a constructor as an ordinary function definition.
 _CONSTRUCTOR_NAMES = frozenset({"__init__", "__construct", "constructor", "new"})
 
+# A declaration line longer than this is wrapping or generated. Truncating
+# keeps one map entry to roughly one line of a terminal.
+_MAX_SIGNATURE = 120
+
 # A definition inside one of these is scope-local: a variable in a function
 # body, a nested helper closure. Real definitions, but not ones anybody
 # navigates to, and listing them buries the symbols that matter.
@@ -245,6 +249,7 @@ class _RawDefinition:
     kind: SymbolKind
     name_span: SourceRange
     full_span: SourceRange
+    signature: str = ""
 
 
 @functools.cache
@@ -261,8 +266,23 @@ def _compiled_query(language: str) -> Query:
     return Query(get_language(language), query_source(language))
 
 
+def _declaration_line(lines: list[str], span: SourceRange) -> str:
+    """The source line a definition is declared on, trimmed.
+
+    Stored so a map can be rendered from the index alone, without opening
+    the file. One line rather than the whole signature: a multi-line
+    parameter list adds bulk without telling a reader anything the name and
+    the first line do not, and the map is spent in tokens.
+    """
+    index = span.start.line
+    if index >= len(lines):
+        return ""
+    text = lines[index].strip()
+    return text if len(text) <= _MAX_SIGNATURE else text[: _MAX_SIGNATURE - 1] + "…"
+
+
 def _collect(
-    tree: Tree, spec: LanguageSpec
+    tree: Tree, spec: LanguageSpec, lines: list[str]
 ) -> tuple[list[_RawDefinition], list[tuple[str, str, SourceRange]]]:
     """Run the tag query and split its captures into definitions and uses."""
     from tree_sitter import QueryCursor
@@ -311,7 +331,13 @@ def _collect(
                 if existing is None or _KIND_PRECEDENCE[kind] > _KIND_PRECEDENCE[
                     existing.kind
                 ]:
-                    definitions[key] = _RawDefinition(name, kind, name_span, full_span)
+                    definitions[key] = _RawDefinition(
+                        name,
+                        kind,
+                        name_span,
+                        full_span,
+                        _declaration_line(lines, full_span),
+                    )
             elif capture_name.startswith(_REFERENCE_PREFIX):
                 # Several patterns may capture one token. `user.greet()`
                 # matches both the call pattern and the member-read pattern,
@@ -380,6 +406,7 @@ def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
             full_range=definition.full_span,
             container_id=container.id if container is not None else None,
             qualified_name=qualified,
+            signature=definition.signature or None,
             local=is_local,
         )
         symbols.append(symbol)
@@ -393,7 +420,8 @@ def extract_source(
     """Extract from source already in memory."""
     parser = get_parser(spec.name)
     tree = parser.parse(source)
-    raw_definitions, raw_references = _collect(tree, spec)
+    lines = source.decode("utf-8", errors="replace").splitlines()
+    raw_definitions, raw_references = _collect(tree, spec, lines)
     symbols = _assign_ids(path, raw_definitions)
 
     scopes: ScopeIndex[int] = ScopeIndex(
