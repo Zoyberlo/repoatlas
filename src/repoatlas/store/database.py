@@ -231,6 +231,32 @@ class IndexStore:
         constant = self.chars_per_token()
         return make_estimator(constant) if constant else estimate_tokens
 
+    def generation(self) -> str:
+        """A value that changes whenever the resolved index does.
+
+        Bumped by every resolution and every reset. Anything derived from
+        the whole index, a graph, a ranking, can be kept until this moves.
+        """
+        return self.get_meta("generation") or "0"
+
+    def bump_generation(self) -> None:
+        self.set_meta("generation", str(int(self.generation()) + 1))
+
+    def replace_ranks(self, ranked: Iterable[tuple[str, float, int]]) -> None:
+        """Swap the stored global ranking for a fresh one."""
+        self._connection.execute("DELETE FROM ranks")
+        self._connection.executemany(
+            "INSERT INTO ranks(symbol_id, score, in_degree) VALUES(?, ?, ?)",
+            list(ranked),
+        )
+
+    def ranks(self) -> dict[str, tuple[float, int]]:
+        """The stored global ranking, empty if none was recorded."""
+        rows = self._connection.execute(
+            "SELECT symbol_id, score, in_degree FROM ranks"
+        ).fetchall()
+        return {row[0]: (float(row[1]), int(row[2])) for row in rows}
+
     def most_referenced(self, *, limit: int = 1) -> list[str]:
         """Ids of the symbols with the most distinct users, most first."""
         rows = self._connection.execute(
@@ -259,14 +285,19 @@ class IndexStore:
                 "imports",
                 "refs",
                 "edges",
+                "ranks",
                 "symbols",
                 "files",
             ):
                 self._connection.execute(f"DELETE FROM {table}")
             self._connection.execute("DELETE FROM symbol_search")
+            # The generation survives a reset, and moves, so a cache keyed
+            # on it notices that everything it held is gone.
+            generation = self.generation()
             self._connection.execute(
                 "DELETE FROM meta WHERE key != 'schema_version'"
             )
+            self.set_meta("generation", str(int(generation) + 1))
 
     # --- writing -----------------------------------------------------------
 

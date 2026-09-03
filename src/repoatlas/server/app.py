@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .. import __version__
+from ..rank.cache import RankCache
 from ..store import IndexStore, update_store
 from . import tools
 
@@ -72,6 +73,10 @@ def build_server(store: IndexStore, *, name: str = "repoatlas") -> Any:
         version=__version__,
         instructions=_INSTRUCTIONS,
     )
+    # One graph per process. The map would otherwise reload and re-rank
+    # the whole index on every call, measured at six seconds for a hundred
+    # thousand symbols.
+    cache = RankCache()
     # Every tool here only reads. Saying so lets a client skip the
     # confirmation it would otherwise ask for before each call.
     read_only = ToolAnnotations(
@@ -104,7 +109,9 @@ def build_server(store: IndexStore, *, name: str = "repoatlas") -> Any:
         budget: target size in tokens; the map is trimmed to fit.
         """
         return _answer(
-            lambda: tools.repo_map(store, focus=tuple(focus or ()), budget=budget)
+            lambda: tools.repo_map(
+                store, focus=tuple(focus or ()), budget=budget, cache=cache
+            )
         )
 
     @server.tool(annotations=read_only)

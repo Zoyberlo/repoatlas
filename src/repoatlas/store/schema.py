@@ -151,6 +151,15 @@ CREATE INDEX IF NOT EXISTS bindings_by_import ON import_bindings(import_id);
 -- `detail` stays at its default. Setting it to 'none' halves the index but
 -- makes FTS5 reject a quoted phrase, and quoting is what stops a symbol
 -- name containing a hyphen or a colon being read as query syntax.
+-- The global ranking, written when resolution runs so the first map after
+-- a restart costs no power iteration. Additive: an older store simply has
+-- an empty table and the ranking is computed on demand.
+CREATE TABLE IF NOT EXISTS ranks (
+    symbol_id TEXT PRIMARY KEY,
+    score     REAL NOT NULL,
+    in_degree INTEGER NOT NULL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS symbol_search USING fts5(
     name,
     qualified_name,

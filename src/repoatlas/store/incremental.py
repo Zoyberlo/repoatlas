@@ -34,6 +34,7 @@ from ..parse.extract import extract_source
 from ..parse.languages import SUPPORTED, LanguageUnavailable, query_source
 from ..parse.walk import SourceFile, WalkStats, iter_source_files
 from ..plugins import frameworks_source
+from ..rank.pagerank import rank_symbols
 from ..resolve.cascade import ResolutionStats
 from .database import FileRecord, IndexStore, content_digest, toolchain_version
 
@@ -320,5 +321,13 @@ def _resolve_into(
         resolution=result.resolution,
     )
     _resolve_references(build, root, files)
+    # Rank here, once per change, rather than on every map call. The
+    # global ranking depends on nothing but the graph, and the graph is
+    # settled the moment the edges are.
+    ranked = rank_symbols(build.snapshot)
     with store.transaction():
         store.replace_edges(build.snapshot.edges)
+        store.replace_ranks(
+            (item.symbol.id, item.score, item.in_degree) for item in ranked
+        )
+        store.bump_generation()

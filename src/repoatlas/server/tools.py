@@ -31,7 +31,8 @@ from pathlib import Path
 from typing import Literal
 
 from ..model import Edge, EdgeKind, Symbol
-from ..rank import MapOptions, RankOptions, rank_symbols, render_map
+from ..rank import MapOptions, render_map
+from ..rank.cache import RankCache
 from ..rank.tokens import TokenEstimator
 from ..store import IndexStore
 
@@ -482,19 +483,24 @@ def repo_map(
     focus: tuple[str, ...] = (),
     budget: int = MAP_BUDGET,
     estimator: TokenEstimator | None = None,
+    cache: RankCache | None = None,
 ) -> str:
     """Sketch what the repository is built around, within a token budget.
 
     Start here when the task names no file. With ``focus`` set to the files
     being worked on, the same budget is spent on what those files reach
     instead of on what is globally central.
+
+    ``cache`` keeps the graph between calls. Without one, every call loads
+    and ranks the whole index; a server passes the one it holds.
     """
-    snapshot = store.snapshot()
+    cache = cache or RankCache()
+    snapshot = cache.snapshot(store)
     if not snapshot.symbols:
         return "the index is empty; run an index first\n"
     focus_paths = {item.replace("\\", "/").lstrip("./") for item in focus}
     unknown = focus_paths - set(store.languages())
-    ranked = rank_symbols(snapshot, focus_paths=focus_paths, options=RankOptions())
+    ranked = cache.ranking(store, focus_paths=focus_paths)
     rendered = render_map(
         ranked, MapOptions(budget=budget), estimator=estimator or store.estimator()
     )

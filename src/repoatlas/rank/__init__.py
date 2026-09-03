@@ -9,6 +9,7 @@ of the repository into a map of the task.
 
 from __future__ import annotations
 
+from .cache import RankCache
 from .pagerank import RankedSymbol, RankOptions, SymbolGraph, rank_symbols
 from .render import MapOptions, RepoMap, render_map
 from .tokens import (
@@ -23,6 +24,7 @@ from .tokens import (
 __all__ = [
     "CHARS_PER_TOKEN",
     "MapOptions",
+    "RankCache",
     "RankOptions",
     "RankedSymbol",
     "RepoMap",
