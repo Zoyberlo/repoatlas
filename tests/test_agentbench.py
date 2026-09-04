@@ -100,12 +100,13 @@ class TestCommandLine:
         command = claude_command("claude", task_prompt("fix invoice totals", arm), arm,
                                  mcp_config_path=tmp_path / "mcp.json", model=None, max_turns=12)
         assert command[:3] == ["claude", "-p", task_prompt("fix invoice totals", arm)]
-        for flag in ("--bare", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk", "--mcp-config"):
+        for flag in ("--strict-mcp-config", "--no-session-persistence", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk", "--mcp-config"):
             assert flag in command
         assert command[command.index("--max-turns") + 1] == "12"
         assert "mcp__repoatlas__*" in command[command.index("--allowedTools") + 1]
         grep = claude_command("claude", "x", ARMS["grep"], mcp_config_path=None, model="m", max_turns=3)
         assert "--mcp-config" not in grep and "--model" in grep
+        assert "--bare" not in grep
 
     def test_the_prompt_asks_for_locations_not_edits(self) -> None:
         text = task_prompt("Fix the invoice PDF total", ARMS["grep"])

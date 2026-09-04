@@ -117,12 +117,19 @@ def claude_command(
     model: str | None,
     max_turns: int,
 ) -> list[str]:
-    """The headless Claude Code invocation for one run, as the tier-4 plan specifies."""
+    """The headless Claude Code invocation for one run.
+
+    Not `--bare`, though the tier-4 plan said so: bare mode skips keychain
+    reads, which logs an OAuth account out of every run. Reproducibility
+    comes from `--strict-mcp-config`, so no server but the one under test
+    attaches to either arm, and from not persisting the sessions.
+    """
     command = [
         claude,
         "-p",
         prompt,
-        "--bare",
+        "--strict-mcp-config",
+        "--no-session-persistence",
         "--output-format",
         "stream-json",
         "--verbose",

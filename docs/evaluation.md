@@ -430,7 +430,10 @@ claude -p "$ISSUE" --bare --mcp-config mcp.json \
   --output-format stream-json --permission-mode dontAsk
 ```
 
-`--bare` disables hooks, skills and project config so runs are reproducible.
+`--bare` disables hooks, skills and project config so runs are reproducible;
+it also skips keychain reads, which logs an OAuth account out of every
+run, so the harness uses `--strict-mcp-config` and
+`--no-session-persistence` instead and keeps the login.
 The `system/init` event lists loaded MCP servers, so a run where the index
 failed to attach can be discarded rather than silently counted as a loss.
 The final result line carries token usage and cost.
