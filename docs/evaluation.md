@@ -420,8 +420,24 @@ The scratch clone is checked out at each task's parent commit and indexed
 there, so the server describes exactly the tree the agent works in. What
 it needs and this project cannot supply is a logged-in Claude Code: the
 harness shells out to the executable given by `--claude`, and the
-measurement costs one short agent session per task and arm. It has not
-been run yet; the numbers below this line are the plan.
+measurement costs one short agent session per task and arm.
+
+*First pilot, 2026-09-05, twelve commits of the private Laravel + Quasar
+application, one repeat, Opus 5 under a Max login.* Five commits changed
+symbols the index holds; four were scored in both arms. Symbol recall
+0.223 with the index against 0.208 without, file recall 0.70 against
+0.625, cost 0.78 against 0.60 dollars a task, 25.6 against 20 turns;
+the paired deltas were +0.008 and +0.000 with intervals wider than the
+means. That is no result, and it was not run to be one. What it found
+was the harness: the grep arm had `Bash` refused and spent eleven to
+fifteen calls a task asking for `rg` and `ls`, one run into the turn
+limit; the index arm called the MCP tools seven times a task and then
+grepped and read as much as the other arm did; both padded their answer
+to the fifteen entries allowed, so precision said nothing. Read-only
+shell commands are now allowed to both arms, refusals are counted,
+recall is also reported at five entries, and the number of entries with
+a line is kept. Roughly two commits in five are scoreable, so a run
+worth reading needs sixty or so, about a hundred and twenty sessions.
 
 Claude Code headless supplies what is needed:
 

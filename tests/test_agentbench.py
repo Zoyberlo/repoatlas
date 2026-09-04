@@ -92,6 +92,10 @@ class TestScore:
         assert (recall, files, precision) == (1.0, 1.0, 0.5)
         recall, files, precision = score_locations([("a.php", 2)], {"a.php#A.run"}, {"a.php"}, locator)
         assert (recall, files, precision) == (0.0, 1.0, 1.0)
+        # Padding: the right answer in sixth place counts at 15, not at 5.
+        padded = [(f"x{i}.php", None) for i in range(5)] + [("a.php", 15)]
+        assert score_locations(padded, {"a.php#A.run"}, {"a.php"}, locator)[0] == 1.0
+        assert score_locations(padded, {"a.php#A.run"}, {"a.php"}, locator, top=5)[0] == 0.0
 
 
 class TestCommandLine:
@@ -103,7 +107,11 @@ class TestCommandLine:
         for flag in ("--strict-mcp-config", "--no-session-persistence", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk", "--mcp-config"):
             assert flag in command
         assert command[command.index("--max-turns") + 1] == "12"
-        assert "mcp__repoatlas__*" in command[command.index("--allowedTools") + 1]
+        allowed = command[command.index("--allowedTools") + 1]
+        assert "mcp__repoatlas__*" in allowed
+        # Read-only shell commands, or the agent spends its turns being refused.
+        assert "Bash(rg *)" in allowed and "Bash(git log *)" in allowed
+        assert "Bash(git commit" not in allowed and "Edit" not in allowed
         grep = claude_command("claude", "x", ARMS["grep"], mcp_config_path=None, model="m", max_turns=3)
         assert "--mcp-config" not in grep and "--model" in grep
         assert "--bare" not in grep
@@ -144,3 +152,8 @@ class TestResult:
                                      result="Not logged in · Please run /login", num_turns=1)])
         assert not trace.ok
         assert trace.reason.startswith("Not logged in")
+
+    def test_denials_are_counted(self) -> None:
+        trace = parse_stream([_event(type="result", subtype="success", result="[]",
+                                     permission_denials=[{"tool_name": "Bash"}, {"tool_name": "Bash"}])])
+        assert trace.denials == 2

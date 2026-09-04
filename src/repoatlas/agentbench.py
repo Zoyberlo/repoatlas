@@ -71,17 +71,41 @@ class Arm:
     hint: str
 
 
+# What an agent without an index uses, and what it reaches for anyway: the
+# first pilot denied Bash and watched the grep arm spend half its turns
+# asking for `rg` and `ls`. Read-only shell commands are allowed to both
+# arms; nothing that writes.
+_READ_ONLY_TOOLS = (
+    "Read",
+    "Grep",
+    "Glob",
+    "LS",
+    "Bash(rg *)",
+    "Bash(grep *)",
+    "Bash(ls *)",
+    "Bash(find *)",
+    "Bash(cat *)",
+    "Bash(head *)",
+    "Bash(tail *)",
+    "Bash(sed -n *)",
+    "Bash(wc *)",
+    "Bash(git log *)",
+    "Bash(git grep *)",
+    "Bash(git show *)",
+    "Bash(git ls-files *)",
+)
+
 ARMS: dict[str, Arm] = {
     "grep": Arm(
         name="grep",
         mcp=False,
-        allowed_tools=("Read", "Grep", "Glob", "LS"),
+        allowed_tools=_READ_ONLY_TOOLS,
         hint="Use Grep, Glob and Read to find them.",
     ),
     "repoatlas": Arm(
         name="repoatlas",
         mcp=True,
-        allowed_tools=("Read", "Grep", "Glob", "LS", "mcp__repoatlas__*"),
+        allowed_tools=(*_READ_ONLY_TOOLS, "mcp__repoatlas__*"),
         hint=(
             "An MCP server called repoatlas is attached, with an index of this "
             "repository. Start with its repo_map tool, passing the task's words as "
@@ -184,6 +208,8 @@ class RunTrace:
     cost_usd: float = 0.0
     turns: int = 0
     duration_ms: int = 0
+    denials: int = 0
+    """Tool calls the permission mode refused: turns spent asking for what was not allowed."""
 
     @property
     def mcp_calls(self) -> int:
@@ -246,6 +272,8 @@ def parse_stream(lines: Iterable[str]) -> RunTrace:
             trace.cost_usd = float(event.get("total_cost_usd") or event.get("cost_usd") or 0.0)
             trace.turns = int(event.get("num_turns") or 0)
             trace.duration_ms = int(event.get("duration_ms") or 0)
+            denials = event.get("permission_denials")
+            trace.denials = len(denials) if isinstance(denials, list) else 0
     if not trace.result_text and not trace.reason:
         trace.reason = "no result event"
     return trace
@@ -294,13 +322,21 @@ def score_locations(
     wanted_ids: set[str],
     wanted_files: set[str],
     locator: _Locator,
+    *,
+    top: int | None = None,
 ) -> tuple[float, float, float]:
-    """Symbol recall, file recall and file precision of an answer."""
+    """Symbol recall, file recall and file precision of an answer.
+
+    ``top`` scores only the first that many entries: an answer padded to
+    the allowed length is a different thing from a confident one, and
+    recall at five says which it was.
+    """
     if not wanted_ids:
         return 0.0, 0.0, 0.0
-    points = [(path, line) for path, line in locations if line is not None]
+    chosen = list(locations[:top]) if top else list(locations)
+    points = [(path, line) for path, line in chosen if line is not None]
     credited = locator.credit(points) & wanted_ids
-    named_files = {path for path, _line in locations}
+    named_files = {path for path, _line in chosen}
     symbol_recall = len(credited) / len(wanted_ids)
     file_recall = len(named_files & wanted_files) / len(wanted_files) if wanted_files else 0.0
     precision = len(named_files & wanted_files) / len(named_files) if named_files else 0.0
@@ -319,7 +355,11 @@ class AgentRun:
     symbol_recall: float = 0.0
     file_recall: float = 0.0
     file_precision: float = 0.0
+    symbol_recall_top5: float = 0.0
+    file_recall_top5: float = 0.0
     named: int = 0
+    with_lines: int = 0
+    denials: int = 0
     tokens: int = 0
     cost_usd: float = 0.0
     turns: int = 0
@@ -337,7 +377,11 @@ class AgentRun:
             "symbol_recall": round(self.symbol_recall, 3),
             "file_recall": round(self.file_recall, 3),
             "file_precision": round(self.file_precision, 3),
+            "symbol_recall_top5": round(self.symbol_recall_top5, 3),
+            "file_recall_top5": round(self.file_recall_top5, 3),
             "named": self.named,
+            "with_lines": self.with_lines,
+            "denials": self.denials,
             "tokens": self.tokens,
             "cost_usd": round(self.cost_usd, 4),
             "turns": self.turns,
@@ -408,6 +452,11 @@ class AgentBenchResult:
                     "symbol_recall": round(self._mean(arm, "symbol_recall"), 4),
                     "file_recall": round(self._mean(arm, "file_recall"), 4),
                     "file_precision": round(self._mean(arm, "file_precision"), 4),
+                    "symbol_recall_top5": round(self._mean(arm, "symbol_recall_top5"), 4),
+                    "file_recall_top5": round(self._mean(arm, "file_recall_top5"), 4),
+                    "named": round(self._mean(arm, "named"), 1),
+                    "with_lines": round(self._mean(arm, "with_lines"), 1),
+                    "denials": round(self._mean(arm, "denials"), 1),
                     "tokens": round(self._mean(arm, "tokens")),
                     "cost_usd": round(self._mean(arm, "cost_usd"), 4),
                     "turns": round(self._mean(arm, "turns"), 1),
@@ -445,6 +494,11 @@ class AgentBenchResult:
             ("symbol recall", "symbol_recall", ".3f"),
             ("file recall", "file_recall", ".3f"),
             ("file precision", "file_precision", ".3f"),
+            ("symbol recall@5", "symbol_recall_top5", ".3f"),
+            ("file recall@5", "file_recall_top5", ".3f"),
+            ("named", "named", ".1f"),
+            ("with lines", "with_lines", ".1f"),
+            ("denials", "denials", ".1f"),
             ("tokens", "tokens", ",.0f"),
             ("cost usd", "cost_usd", ".3f"),
             ("turns", "turns", ".1f"),
@@ -610,6 +664,9 @@ def _run_once(
     symbol_recall, file_recall, precision = score_locations(
         locations, wanted_ids, wanted_files, locator
     )
+    symbol_top5, file_top5, _ = score_locations(
+        locations, wanted_ids, wanted_files, locator, top=5
+    )
     return AgentRun(
         sha=commit.sha[:12],
         arm=arm.name,
@@ -618,7 +675,11 @@ def _run_once(
         symbol_recall=symbol_recall,
         file_recall=file_recall,
         file_precision=precision,
+        symbol_recall_top5=symbol_top5,
+        file_recall_top5=file_top5,
         named=len(locations),
+        with_lines=sum(1 for _path, line in locations if line is not None),
+        denials=trace.denials,
         tokens=trace.tokens,
         cost_usd=trace.cost_usd,
         turns=trace.turns,
