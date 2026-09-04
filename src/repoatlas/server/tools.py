@@ -327,6 +327,19 @@ def _read_body(store: IndexStore, symbol: Symbol, max_lines: int) -> str:
     return body
 
 
+def _namesake_note(store: IndexStore, symbol: Symbol) -> str:
+    """`; 14 other symbols are also called client`, or nothing.
+
+    Said only when it changes what the reader should do: one namesake is
+    a coincidence, several mean a name search cannot answer this question.
+    """
+    others = store.namesakes(symbol.name)
+    if others < 1:
+        return ""
+    thing = "symbol is" if others == 1 else "symbols are"
+    return f"; {others} other {thing} also called {symbol.name}"
+
+
 def find_references(
     store: IndexStore,
     symbol_id: str,
@@ -342,6 +355,10 @@ def find_references(
     Every reference carries the confidence with which it was resolved.
     Without a compiler some of them are inference, and an agent weighing
     whether to open a file deserves to know which.
+
+    The header says how many other symbols answer to the same name, which
+    is the one thing a search for that name cannot tell you about itself,
+    and the reason this list is not the same as its output.
     """
     symbol = store.symbol(symbol_id)
     if symbol is None:
@@ -363,7 +380,10 @@ def find_references(
     offset = _decode_cursor(cursor)
     window = edges[offset : offset + limit]
     budgeted = _Budget(budget, estimator or store.estimator())
-    budgeted.add(f"{len(edges)} use(s) of {symbol.qualified_name or symbol.name}:")
+    budgeted.add(
+        f"{len(edges)} use(s) of {symbol.qualified_name or symbol.name}"
+        f"{_namesake_note(store, symbol)}:"
+    )
 
     shown = 0
     current_file = ""

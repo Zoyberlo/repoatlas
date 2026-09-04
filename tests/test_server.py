@@ -421,3 +421,33 @@ class TestContainmentIsNotUse:
             assert "Greeter\n" not in listing.split("used by")[-1].split("\n")[1]
             found = tools.search_symbols(store, "greet")
             assert "Greeter.greet  (1 use)" in found
+
+
+class TestNamesakes:
+    def test_find_references_says_when_the_name_means_more_than_one_thing(
+        self, tmp_path: Path
+    ) -> None:
+        from repoatlas.server import tools
+        from repoatlas.store import IndexStore, update_store
+
+        project = tmp_path / "p"
+        project.mkdir()
+        (project / "a.php").write_text(
+            "<?php\nclass A { public function client() {} }\n"
+            "class B { public function client() {} }\n"
+            "class C { public function only() {} }\n",
+            encoding="utf-8",
+        )
+        (project / "use.php").write_text(
+            "<?php\nfunction go(A $a, C $c) { $a->client(); $c->only(); }\n",
+            encoding="utf-8",
+        )
+        with IndexStore(tmp_path / "i.db") as store:
+            update_store(project, store, use_git=False)
+            # The one thing a search for the name cannot know about itself.
+            shared = tools.find_references(store, "a.php#A.client")
+            assert "1 other symbol is also called client" in shared
+            alone = tools.find_references(store, "a.php#C.only")
+            assert "also called" not in alone
+            assert store.namesakes("client") == 1
+            assert store.namesakes("only") == 0

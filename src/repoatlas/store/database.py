@@ -708,6 +708,19 @@ class IndexStore:
         parameters = [*parameters, cleaned, cleaned, cleaned, limit]
         return [_symbol_from(row) for row in self._connection.execute(sql, parameters)]
 
+    def namesakes(self, name: str) -> int:
+        """How many other navigable symbols answer to this name.
+
+        The one number a name search cannot know about itself. On a real
+        Laravel and Quasar application 65% of symbols share their name
+        with another, and `client` is fifteen different things.
+        """
+        row = self._connection.execute(
+            "SELECT count(*) FROM symbols WHERE name = ? AND is_synthetic = 0 AND is_local = 0",
+            (name,),
+        ).fetchone()
+        return max(0, int(row[0]) - 1) if row else 0
+
     def search_count(self, query: str, *, kinds: Sequence[str] = ()) -> int:
         """How many symbols :meth:`search` would match without a limit.
 
