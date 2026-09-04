@@ -225,29 +225,43 @@ it is still in force. That test cannot catch the crash; nothing can, because
 a segfault takes the runner with it. It can only stop a future bump from
 reintroducing it silently.
 
-### Ranking, and what has not been measured about it
+### Ranking, measured at last
 
-Ranking is where this project currently asserts more than it has shown. The
-mechanism is settled: personalised PageRank over the symbol graph, edges
-weighted by kind and by resolution confidence, containment reversed so a
-member lends rank to its type. Three choices in it are judgement, and each
-is written down as such rather than dressed up:
+For its first week this section said ranking asserted more than it had
+shown: the kind prior, the containment direction and the edge weights were
+judgements, and settling them needed a localisation benchmark that did not
+exist. It exists now, and `docs/benchmarks/weights.md` has the run.
 
-- **The kind prior.** A class earns more restart mass than a field, because
-  a map is read to find where behaviour lives. Stated as a bias, and
-  switchable off.
-- **Containment direction.** Reversing it changed the map of this project
-  from one led by `Position` and `_symbol_from` to one led by `Symbol`,
-  `IndexStore` and `Comparison`. That is one repository and a reading, not
-  a measurement.
-- **The edge weights.** Ordered from the finding that call edges predict
-  relevance about twice as well as containment, but the exact numbers are
-  guesses.
+The short version, from 283 scoreable commits of a real Laravel and Quasar
+application, paired and split into halves so the numbers are checked
+against commits the sweep never saw:
 
-What would settle them is tier three below: run the map as the context for
-a localisation benchmark and see which weighting puts the right file in
-front of the agent more often. Until then the numbers are defaults, and the
-honest description of the ranking is "plausible and untested".
+- **Two settings are measurably wrong**, and neither is one this project
+  uses: running containment in both directions costs a tenth of the score,
+  and taking the top of the ranking without spreading it across files costs
+  three points.
+- **The kind prior, the edge weights, the damping, the focus weight and the
+  private penalty are indistinguishable from doing nothing.** Not wrong;
+  not load-bearing. The ranking is robust to all five on this repository,
+  which is worth knowing mostly as a statement about where effort should
+  not go next.
+- **The map's spread stays at 0.5.** Below it is worse; above it buys no
+  symbols while emptying the map of them.
+
+What the benchmark did settle is not a weight at all. Steering the map by
+the words of the task nearly doubles the changed symbols it names, 0.136 to
+0.264, and how those words are matched to names moves the score by more
+than every weight in `pagerank.py` together. The lesson is about where the
+leverage in a ranking sits: not in the constants, in what the walk is
+pointed at.
+
+Building the benchmark took two corrections, both recorded in
+`docs/benchmarks/weights.md`. Scoring how many of a commit's *files* the
+map listed rewarded a map that lists paths and says nothing, because file
+recall rises monotonically as symbols are traded for filenames; the score
+is symbols now. And scoring against today's index counted a renamed file as
+a miss and put symbols on the map that did not exist when the work started;
+history is walked in a scratch clone with each parent tree indexed instead.
 
 ## Tier 3: localisation metrics
 

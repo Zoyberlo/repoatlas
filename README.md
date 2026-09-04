@@ -329,27 +329,40 @@ checks whether the files the commit touched are on it. This is the
 number every ranking judgement in `pagerank.py` was waiting for, and it
 is specific to whatever repository it is run on.
 
-It has been run on one: a private Laravel 10 and Quasar application,
-1,568 commits over three years, indexed as 363 files and 4,340 symbols.
-Over its 200 most recent qualifying commits at 2,000 tokens:
+For each commit it checks out the **parent** tree in a scratch clone,
+indexes it, draws a map at the usual budget around the words of the commit
+subject, and asks how many of the symbols that commit went on to change the
+map names. The repository being read is never touched.
 
-| map | recall of touched files | first file listed was touched |
+It has been run on one: a private Laravel 10 and Quasar application, 1,568
+commits over three years, indexed as 363 files and 4,340 symbols. Of its
+400 most recent qualifying commits, 283 changed a symbol the index holds:
+
+| map | recall of changed symbols | recall of changed files |
 | --- | ---: | ---: |
-| plain | 0.37 | 0.19 |
-| steered by the message's words | 0.48 | 0.14 |
+| plain | 0.14 | 0.52 |
+| steered by the subject's words | **0.26** | 0.60 |
 
-That measurement changed the code. Steering originally matched a word only
-against a *whole* symbol name, and scored 0.36, below not steering at all:
-"clients report fix" found a local variable spelled `client` and dragged
-the map away from `ClientsReportExport`. Matching a word against the
-*parts* of a name lifted recall to 0.48, better on 50 commits and worse on
-12. The cost is stated too: naming the right file first got worse, 0.19 to
-0.14. [docs/benchmarks/steering.md](docs/benchmarks/steering.md) has the
-five variants that were tried and what each scored.
+That measurement has changed the code twice. Steering originally matched a
+word only against a *whole* symbol name and scored *below* not steering at
+all: "clients report fix" found a local variable spelled `client` and
+dragged the map away from `ClientsReportExport`. Matching a word against
+the *parts* of a name fixed it —
+[docs/benchmarks/steering.md](docs/benchmarks/steering.md) has the nine
+variants tried.
 
-Two caveats: the index is of the current tree, so a file since renamed
-counts as a miss, and a commit message written after the fact says more
-than a task written before it.
+Then the same benchmark was turned on the ranking weights themselves.
+Every constant in `rank/pagerank.py` was a judgement; a paired sweep over
+those 283 commits, split so the winner is checked on commits it never saw,
+found that only two settings are measurably wrong and neither is one this
+project uses, and that the kind prior, edge weights, damping, focus weight
+and private penalty are all indistinguishable from doing nothing. The
+weights did not change; they stopped being guesses.
+[docs/benchmarks/weights.md](docs/benchmarks/weights.md) has the run, and
+the two corrections the benchmark itself needed first.
+
+One caveat that cannot be engineered away: a commit message is a generous
+proxy for a task, written afterwards by the person who did the work.
 
 ## Serving it to an agent
 
@@ -545,11 +558,10 @@ the name cascade would match any function called `nope` and label the result
 - [ ] **Documentation layer**: per-file summaries anchored to symbol ranges,
       cached by content hash and measured against the same harness
 
-Known gaps, stated rather than buried: most ranking weights are judgement
-calls no benchmark has yet settled — the one that has been measured, how a
-task's words steer the map, turned out to be wrong and was changed — Laravel
-route and config names need tables nothing yet reads, and Kotlin is not
-supported.
+Known gaps, stated rather than buried: the ranking weights are now
+measured but on one repository only, and a codebase shaped differently
+would exercise them differently; Laravel route and config names need tables
+nothing yet reads; and Kotlin is not supported.
 
 The full plan, including how tiers 3 and 4 of evaluation work and which
 benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md).

@@ -365,6 +365,13 @@ this is used on, and it is what would finally settle the weights in
 
 ## 4. The list, in order
 
+*Status 2026-09-04, evening:* item 14 is done and went further than
+planned. The benchmark it produced was turned on the ranking weights, which
+settled every open judgement in `rank/pagerank.py`; see
+`docs/benchmarks/weights.md`. Building it required replacing the benchmark's
+own metric, which had been rewarding a map that lists filenames and says
+nothing.
+
 *Status 2026-09-04, end of day:* every item below is done except 12, which
 needs `scip-python` and `scip-php` installed, and 15, which waits on a
 measurement from 14 on a real repository. Item 14's tool exists and has

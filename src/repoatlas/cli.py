@@ -39,8 +39,10 @@ Three commands, matching the three things you do with an oracle:
 
 ``localize``
     Score the map against the repository's own history: for each recent
-    commit, does a map drawn around the words of its message list the
-    files it touched. The number the ranking weights are tuned against.
+    commit, does a map of the tree *before* it, drawn around the words of
+    its message, name the symbols the commit went on to change. Walks a
+    scratch clone so the repository it reads is never touched. The number
+    the ranking weights are settled against.
 
 ``serve``
     Run the MCP server over stdio, so an agent can query the index
@@ -220,10 +222,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="score the map against the repository's own commit history",
     )
     localize.add_argument("root", type=Path, help="a git repository")
-    localize.add_argument("--store", type=Path, help="an existing index; built if absent")
-    localize.add_argument("--commits", type=int, default=50, help="how many recent commits")
+    localize.add_argument(
+        "--work",
+        type=Path,
+        help="where to keep the scratch clone; defaults beside the index",
+    )
+    localize.add_argument("--commits", type=int, default=200, help="how many commits to walk")
     localize.add_argument("--budget", type=int, default=2000, help="map budget in tokens")
+    localize.add_argument(
+        "--max-files",
+        type=int,
+        default=8,
+        help="skip commits touching more files than this; they are refactors",
+    )
+    localize.add_argument(
+        "--spread",
+        type=float,
+        default=None,
+        help="override the map's per-file spread, to measure it",
+    )
     localize.add_argument("--out", type=Path, help="write the JSON result here")
+    localize.add_argument(
+        "--with-cases",
+        action="store_true",
+        help="include per-commit subjects in the JSON; off because they are "
+        "the repository's own content",
+    )
     localize.add_argument("--format", choices=("text", "json"), default="text")
 
     serve = subcommands.add_parser("serve", help="run the MCP server over stdio")
@@ -638,31 +662,49 @@ def _cmd_bench(args: argparse.Namespace) -> int:
 
 
 def _cmd_localize(args: argparse.Namespace) -> int:
-    """Measure whether the map finds the files recent commits touched."""
-    from .localize import run_localize
-    from .store import IndexStore, StoreError, update_store
+    """Measure whether the map names the code recent commits changed."""
+    import tempfile
 
-    root: Path = args.root
+    from .localize import HistoryError, LocalizeResult, to_json, walk
+    from .rank import MapOptions
+
+    root: Path = args.root.resolve()
     if not (root / ".git").exists():
         raise SystemExit(f"repoatlas: not a git repository: {root}")
-    store_path = args.store or root / ".repoatlas" / "index.db"
-    store_path.parent.mkdir(parents=True, exist_ok=True)
+    work = args.work or Path(tempfile.gettempdir()) / f"repoatlas-localize-{root.name}"
+    map_options = MapOptions(budget=args.budget)
+    if args.spread is not None:
+        map_options = MapOptions(budget=args.budget, spread=args.spread)
+
+    result = LocalizeResult(budget=args.budget)
     try:
-        with IndexStore(store_path) as store:
-            update_store(root, store)
-            result = run_localize(store, root, commits=args.commits, budget=args.budget)
-    except StoreError as exc:
+        for _commit, case in walk(
+            root,
+            work=work,
+            commits=args.commits,
+            budget=args.budget,
+            max_files=args.max_files,
+            map_options=map_options,
+        ):
+            result.walked += 1
+            if case.symbols:
+                result.cases.append(case)
+            if result.walked % 25 == 0:
+                print(
+                    f"walked {result.walked}, scored {len(result.cases)}",
+                    file=sys.stderr,
+                )
+    except HistoryError as exc:
         raise SystemExit(f"repoatlas: {exc}") from None
-    except RuntimeError as exc:
-        raise SystemExit(f"repoatlas: {exc}") from None
+
     if args.format == "json" or args.out:
-        payload = json.dumps(result.as_dict(), indent=2)
+        payload = to_json(result, include_cases=args.with_cases)
         if args.out:
             args.out.parent.mkdir(parents=True, exist_ok=True)
-            args.out.write_text(payload + "\n", encoding="utf-8")
+            args.out.write_text(payload, encoding="utf-8")
             print(f"wrote {args.out}", file=sys.stderr)
         else:
-            print(payload)
+            print(payload, end="")
     if args.format == "text":
         print(result.as_text(), end="")
     return _EXIT_OK
