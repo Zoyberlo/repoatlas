@@ -25,6 +25,7 @@ what matters.
 
 from __future__ import annotations
 
+import re
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,8 +44,10 @@ __all__ = [
     "find_references",
     "get_symbol",
     "index_status",
+    "name_path",
     "neighbours",
     "repo_map",
+    "resolve_symbol",
     "search_symbols",
 ]
 
@@ -119,12 +122,14 @@ def _location(symbol: Symbol) -> str:
 
 
 def _describe(symbol: Symbol, *, detail: Detail = "concise", suffix: str = "") -> str:
+    # The name is printed as a name path rather than a dotted qualified
+    # name because every tool here accepts a name path back. Printing the
+    # form that can be pasted is the cheapest way to teach it.
+    headline = f"{_location(symbol)}  {symbol.kind.value} {name_path(symbol)}{suffix}"
     if detail == "concise":
-        return f"{_location(symbol)}  {symbol.kind.value} {symbol.qualified_name or symbol.name}{suffix}"
+        return headline
     signature = symbol.signature or ""
-    parts = [
-        f"{_location(symbol)}  {symbol.kind.value} {symbol.qualified_name or symbol.name}{suffix}",
-    ]
+    parts = [headline]
     if signature:
         parts.append(f"    {signature}")
     if symbol.documentation:
@@ -145,6 +150,235 @@ def _decode_cursor(cursor: str | None) -> int:
     if offset < 0:
         raise ToolError("cursor must not be negative")
     return offset
+
+
+_SEPARATORS = re.compile(r"::|[./\\]")
+"""What separates one segment of a name path from the next.
+
+Four spellings of the same thing, because an agent will paste whichever
+its language uses or whichever an earlier answer printed: `Ad.save` from
+an outline, `Ad::save` from PHP, `Ad/save` from habit.
+"""
+
+_INDEXED = re.compile(r"^(?P<body>.+?)\[(?P<index>\d+)\]$")
+_CANDIDATE_LIMIT = 10
+
+
+def _split_scope(text: str) -> tuple[str, str]:
+    """Separate a leading file or directory from the rest, `app:Ad/save`.
+
+    The colon has to be told apart from PHP's `::`, which is a segment
+    separator and not a scope.
+    """
+    for index, character in enumerate(text):
+        if character != ":":
+            continue
+        if text[index + 1 : index + 2] == ":" or text[index - 1 : index] == ":":
+            continue
+        return text[:index], text[index + 1 :]
+    return "", text
+
+
+def _segments(text: str) -> list[str]:
+    return [part for part in _SEPARATORS.split(text) if part]
+
+
+def name_path(symbol: Symbol) -> str:
+    """The containers a symbol sits in and its own name, `Ad/save`.
+
+    Serena's spelling, and the one printed in the ambiguity messages,
+    because slashes read as a path and dots read as an expression.
+    """
+    return "/".join(_chain(symbol))
+
+
+def _chain(symbol: Symbol) -> list[str]:
+    """A symbol's containers and its own name, outermost first."""
+    qualified = symbol.qualified_name or symbol.name
+    if qualified == symbol.name:
+        return [symbol.name]
+    if qualified.endswith(symbol.name):
+        prefix = qualified[: -len(symbol.name)]
+        if prefix.endswith("."):
+            # The name itself may hold a separator; only what precedes it
+            # is a chain of containers.
+            return [*_segments(prefix[:-1]), symbol.name]
+    return _segments(qualified) or [symbol.name]
+
+
+def _matches(symbol: Symbol, wanted: list[str], *, absolute: bool) -> bool:
+    chain = _chain(symbol)
+    if absolute:
+        return chain == wanted
+    return len(wanted) <= len(chain) and chain[len(chain) - len(wanted) :] == wanted
+
+
+def _within(symbol: Symbol, scope: str) -> bool:
+    cleaned = scope.strip("/")
+    return symbol.path == cleaned or f"/{symbol.path}/".find(f"/{cleaned}/") >= 0
+
+
+def _members_of(store: IndexStore, container: Symbol) -> list[Symbol]:
+    """What a container declares directly, in source order."""
+    return sorted(
+        (
+            candidate
+            for candidate in store.symbols(path=container.path)
+            if candidate.container_id == container.id and not candidate.synthetic
+        ),
+        key=lambda item: item.name_range,
+    )
+
+
+def _no_such_member(
+    store: IndexStore, reference: str, wanted: list[str], scope: str
+) -> ToolError:
+    """`AdController has no store; it has storeData, storeOriginalFile, ...`
+
+    The useful answer to a near miss. An agent that guessed a member name
+    wrong wants that container's members, not a search of the whole
+    repository, which was what a first version gave it: asking for
+    `AdController/store` returned `LeadController/store`, a different
+    class, ranked first.
+    """
+    containers = [
+        symbol
+        for symbol in store.symbols_named(wanted[-2], path_scope=scope or None, limit=4)
+        if symbol.kind.is_type_like
+    ]
+    lines = [f"{'/'.join(wanted)} does not exist."]
+    for container in containers[:2]:
+        members = [member.name for member in _members_of(store, container)]
+        shown = ", ".join(members[:12]) or "nothing"
+        more = f", and {len(members) - 12} more" if len(members) > 12 else ""
+        lines.append(f"  {name_path(container)} ({container.path}) declares: {shown}{more}")
+    if not containers:
+        lines.append(
+            f"  nothing named {wanted[-2]!r} contains anything; "
+            f"search_symbols({wanted[-1]!r}) lists what does"
+        )
+    return ToolError("\n".join(lines))
+
+
+def _ambiguous(
+    store: IndexStore, reference: str, found: list[Symbol], *, verb: str = "matches"
+) -> ToolError:
+    """The candidates, addressable, instead of an instruction to go search.
+
+    Sixty-five percent of the symbols in a real application share a name
+    with another, so this is the common case rather than the awkward one.
+    Refusing it costs a turn; answering it costs a few lines.
+    """
+    counts = store.reference_counts([symbol.id for symbol in found[:_CANDIDATE_LIMIT]])
+    lines = [f"{reference!r} {verb} {len(found)} symbols; pass one of:"]
+    for position, symbol in enumerate(found[:_CANDIDATE_LIMIT], start=1):
+        uses = counts.get(symbol.id, 0)
+        tail = f"  ({uses} use{'s' if uses != 1 else ''})" if uses else ""
+        lines.append(
+            f"  [{position}] {_location(symbol)}  {symbol.kind.value} "
+            f"{name_path(symbol)}{tail}"
+        )
+    if len(found) > _CANDIDATE_LIMIT:
+        lines.append(f"  ... {len(found) - _CANDIDATE_LIMIT} more")
+    lines.append(
+        f"Address one by position, {reference}[1], by path, "
+        f"{found[0].path}:{name_path(found[0])}, or by adding a container."
+    )
+    return ToolError("\n".join(lines))
+
+
+def resolve_symbol(store: IndexStore, reference: str) -> Symbol:
+    """Turn whatever the agent is holding into one symbol.
+
+    Four forms resolve, so that nothing printed by an earlier answer has to
+    be converted before it can be used again:
+
+    - an id as the index stores it, ``app/Models/Ad.php#Ad.save``;
+    - a name path, ``Ad/save``, or the ``Ad.save`` an outline prints, or
+      PHP's ``Ad::save``, matched as a suffix of the containers a symbol
+      sits in unless it starts with a slash, which anchors it to the top
+      level of its file;
+    - a location, ``app/Models/Ad.php:42``, which every answer prints, and
+      which addresses the innermost thing declared around that line;
+    - either of those narrowed by a file or directory,
+      ``app/Models:Ad/save``.
+
+    An ambiguous name is answered with its candidates rather than refused,
+    each addressable by position. That is the whole point: a measured run
+    spent four and a half calls per session turning a name it already knew
+    into an id it could pass, because the id was the only thing accepted
+    and nothing printed it.
+    """
+    text = reference.strip()
+    if not text:
+        raise ToolError("give a symbol: an id, a name path like Ad/save, or path:line")
+
+    # An id is unambiguous and cheap to check, so it goes first and a name
+    # that happens to look like one cannot shadow it.
+    exact = store.symbol(text)
+    if exact is not None:
+        return exact
+
+    position: int | None = None
+    indexed = _INDEXED.match(text)
+    if indexed is not None:
+        text = indexed.group("body")
+        position = int(indexed.group("index"))
+        exact = store.symbol(text)
+        if exact is not None and position == 1:
+            return exact
+
+    scope, rest = _split_scope(text)
+    if scope and rest.isdigit():
+        located = store.symbol_at(scope, int(rest))
+        if located is None:
+            raise ToolError(
+                f"nothing is declared around {scope}:{rest}; "
+                "file_outline lists what that file defines"
+            )
+        return located
+
+    absolute = rest.startswith(("/", "\\"))
+    wanted = _segments(rest)
+    if not wanted:
+        raise ToolError(f"{reference!r} names nothing; try a name path like Ad/save")
+
+    found = [
+        symbol
+        for symbol in store.symbols_named(wanted[-1], path_scope=scope or None)
+        if _matches(symbol, wanted, absolute=absolute)
+    ]
+    if not found and len(wanted) > 1:
+        # A named container and a member it does not have. Searching for
+        # the member alone would answer with a different container's, which
+        # is worse than saying no.
+        raise _no_such_member(store, reference, wanted, scope)
+    if not found and not absolute:
+        # One segment, and nothing is named that exactly. The agent may be
+        # holding part of a name, which is what search is for; a single hit
+        # needs no narration, since every answer prints where it landed.
+        hits = [
+            symbol
+            for symbol in store.search(wanted[0], limit=_CANDIDATE_LIMIT + 1)
+            if not scope or _within(symbol, scope)
+        ]
+        if len(hits) == 1:
+            return hits[0]
+        if hits:
+            raise _ambiguous(store, reference, hits, verb="is part of the name of")
+    if not found:
+        where = f" under {scope}" if scope else ""
+        raise ToolError(
+            f"no symbol{where} has the name path {rest!r}; "
+            f"search_symbols({wanted[-1]!r}) lists what there is"
+        )
+    if len(found) == 1:
+        return found[0]
+    if position is not None:
+        if not 1 <= position <= len(found):
+            raise _ambiguous(store, reference, found)
+        return found[position - 1]
+    raise _ambiguous(store, reference, found)
 
 
 def search_symbols(
@@ -197,7 +431,7 @@ def search_symbols(
 
 def get_symbol(
     store: IndexStore,
-    symbol_id: str,
+    symbol: str,
     *,
     detail: Detail = "detailed",
     include_body: bool = False,
@@ -215,43 +449,42 @@ def get_symbol(
     source from disk, and is off by default because a body is the most
     expensive thing this index can hand over and the skeleton usually says
     which lines of it to read.
+
+    ``symbol`` is anything :func:`resolve_symbol` understands: an id, a
+    name path, or a location.
     """
-    symbol = store.symbol(symbol_id)
-    if symbol is None:
-        raise ToolError(
-            f"no symbol with id {symbol_id!r}; use search_symbols to find its id"
-        )
-    lines = [_describe(symbol, detail="detailed" if detail == "skeleton" else detail)]
-    if symbol.container_id:
-        container = store.symbol(symbol.container_id)
+    found = resolve_symbol(store, symbol)
+    lines = [_describe(found, detail="detailed" if detail == "skeleton" else detail)]
+    if found.container_id:
+        container = store.symbol(found.container_id)
         if container is not None:
-            lines.append(f"  in: {container.kind.value} {container.qualified_name or container.name}")
-    if symbol.full_range is not None and symbol.full_range != symbol.name_range:
-        span = symbol.full_range
+            lines.append(f"  in: {container.kind.value} {name_path(container)}")
+    if found.full_range is not None and found.full_range != found.name_range:
+        span = found.full_range
         lines.append(f"  lines: {span.start.line + 1}-{span.end.line + 1}")
 
-    outgoing = store.out_degree(symbol.id)
+    outgoing = store.out_degree(found.id)
     if outgoing:
         lines.append(f"  uses: {outgoing}")
     # One symbol may reach another by several edges at once, an import and
     # a call among them. The count is of callers, not edges, so five lines
     # are five different places rather than one place repeated, and the
     # store answers it without loading every edge.
-    total_callers, sample = store.callers(symbol.id, limit=5)
+    total_callers, sample = store.callers(found.id, limit=5)
     if total_callers:
         lines.append(f"  used by: {total_callers}")
         for source in sample:
-            lines.append(f"    {_location(source)}  {source.qualified_name or source.name}")
+            lines.append(f"    {_location(source)}  {name_path(source)}")
         if total_callers > len(sample):
             lines.append(
                 f"    ... {total_callers - len(sample)} more; find_references gives all of them"
             )
 
     if detail == "skeleton":
-        lines.extend(_skeleton(store, symbol, budget, estimator or store.estimator()))
+        lines.extend(_skeleton(store, found, budget, estimator or store.estimator()))
 
     if include_body:
-        body = _read_body(store, symbol, max_body_lines)
+        body = _read_body(store, found, max_body_lines)
         if body:
             lines.append("")
             lines.append(body)
@@ -342,7 +575,7 @@ def _namesake_note(store: IndexStore, symbol: Symbol) -> str:
 
 def find_references(
     store: IndexStore,
-    symbol_id: str,
+    symbol: str,
     *,
     min_confidence: float = 0.0,
     limit: int = 50,
@@ -359,30 +592,28 @@ def find_references(
     The header says how many other symbols answer to the same name, which
     is the one thing a search for that name cannot tell you about itself,
     and the reason this list is not the same as its output.
+
+    ``symbol`` is anything :func:`resolve_symbol` understands: an id, a
+    name path, or a location.
     """
-    symbol = store.symbol(symbol_id)
-    if symbol is None:
-        raise ToolError(
-            f"no symbol with id {symbol_id!r}; use search_symbols to find its id"
-        )
+    found = resolve_symbol(store, symbol)
     # Containment is structure, not use; the class holding a method is
     # not one of its callers.
     edges = [
         edge
-        for edge in store.edges_to(symbol_id)
+        for edge in store.edges_to(found.id)
         if edge.score >= min_confidence and edge.kind is not EdgeKind.CONTAINS
     ]
     if not edges:
         threshold = f" above confidence {min_confidence}" if min_confidence else ""
-        return f"nothing uses {symbol.qualified_name or symbol.name}{threshold}\n"
+        return f"nothing uses {name_path(found)}{threshold}\n"
 
-    edges.sort(key=lambda edge: (edge.site_path or "", edge.site_range or symbol.name_range))
+    edges.sort(key=lambda edge: (edge.site_path or "", edge.site_range or found.name_range))
     offset = _decode_cursor(cursor)
     window = edges[offset : offset + limit]
     budgeted = _Budget(budget, estimator or store.estimator())
     budgeted.add(
-        f"{len(edges)} use(s) of {symbol.qualified_name or symbol.name}"
-        f"{_namesake_note(store, symbol)}:"
+        f"{len(edges)} use(s) of {name_path(found)}{_namesake_note(store, found)}:"
     )
 
     shown = 0
@@ -396,7 +627,7 @@ def find_references(
             current_file = path
         line = (edge.site_range.start.line + 1) if edge.site_range else 0
         source = sources.get(edge.src_id)
-        origin = source.qualified_name or source.name if source else "?"
+        origin = name_path(source) if source else "?"
         marker = "" if edge.score >= 0.9 else f"  [{edge.tier.label} {edge.score:.2f}]"
         if not budgeted.add(f"  {line}  {edge.kind.value} from {origin}{marker}"):
             break
@@ -408,7 +639,7 @@ def find_references(
 
 def neighbours(
     store: IndexStore,
-    symbol_id: str,
+    symbol: str,
     *,
     direction: Literal["out", "in", "both"] = "out",
     depth: int = 1,
@@ -424,21 +655,21 @@ def neighbours(
     second hop *lowers* localisation accuracy unless it is summarised
     first. Use this for the question grep cannot answer: what breaks if
     this changes, and what does this depend on.
+
+    ``symbol`` is anything :func:`resolve_symbol` understands: an id, a
+    name path, or a location.
     """
     if depth < 1:
         raise ToolError("depth must be at least 1")
     if depth > 3:
         raise ToolError("depth above 3 returns more than an agent can read; use 1 or 2")
-    root = store.symbol(symbol_id)
-    if root is None:
-        raise ToolError(
-            f"no symbol with id {symbol_id!r}; use search_symbols to find its id"
-        )
+    root = resolve_symbol(store, symbol)
+    symbol_id = root.id
     wanted = _edge_kinds(kinds)
 
     budgeted = _Budget(budget, estimator or store.estimator())
     arrow = {"out": "uses", "in": "used by", "both": "connected to"}[direction]
-    budgeted.add(f"{arrow}, from {root.qualified_name or root.name} ({_location(root)}):")
+    budgeted.add(f"{arrow}, from {name_path(root)} ({_location(root)}):")
 
     seen = {symbol_id}
     queue: deque[tuple[str, int]] = deque([(symbol_id, 0)])
@@ -464,7 +695,7 @@ def neighbours(
             seen.add(other_id)
             marker = "" if edge.score >= 0.9 else f"  [{edge.tier.label} {edge.score:.2f}]"
             entry = (
-                f"{'  ' * (level + 1)}{edge.kind.value} {other.qualified_name or other.name}"
+                f"{'  ' * (level + 1)}{edge.kind.value} {name_path(other)}"
                 f"  {_location(other)}{marker}"
             )
             if not budgeted.add(entry):
@@ -475,7 +706,7 @@ def neighbours(
         # `arrow` reads correctly in the header but not in a negation:
         # "nothing uses X" answers the opposite question from the one
         # asked when the direction is `out`.
-        subject = root.qualified_name or root.name
+        subject = name_path(root)
         return {
             "out": f"{subject} uses nothing the index resolved\n",
             "in": f"nothing uses {subject}\n",

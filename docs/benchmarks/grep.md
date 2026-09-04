@@ -131,20 +131,20 @@ about it.
 oracle rather than against this index. That is where the ceiling says
 the difference lives. It does not.
 
-| fourteen symbols, one repeat | grep | with the index |
-| --- | ---: | ---: |
-| precision | 1.000 | 1.000 |
-| recall | 1.000 | 1.000 |
-| F1 | **1.000** | **1.000** |
-| turns | 6.3 | 20.4 |
-| tokens | 91,947 | 328,278 |
-| cost | $0.19 | $0.40 |
+| fourteen symbols, one repeat | grep | with the index | with Serena |
+| --- | ---: | ---: | ---: |
+| precision | 1.000 | 1.000 | 1.000 |
+| recall | 1.000 | 1.000 | 1.000 |
+| F1 | **1.000** | **1.000** | **1.000** |
+| turns | 5.6 | 19.6 | 6.3 |
+| server calls | 0 | 14.6 | 1.4 |
+| tokens | 84,523 | 341,961 | 94,510 |
+| cost | $0.14 | $0.38 | $0.18 |
 
-Fourteen out of fourteen, both arms, every symbol. The tool is right
+Fourteen out of fourteen, all three arms, every symbol. The tool is right
 where a name search is four-fifths right, and it does not matter: the
 agent with grep reads the eight or twenty-two lines the search returned,
-throws away the namesakes itself, and arrives at the same answer in a
-third of the turns.
+throws away the namesakes itself, and arrives at the same answer.
 
 Two things are worth separating in that. The first is the measurement's
 own limit: these fourteen are the symbols `scip-php` can ground-truth,
@@ -153,15 +153,38 @@ lines is nothing. The symbols where a name search really fails, `client`
 at 1,121 lines, are the ones with no compiler-backed truth, so the
 experiment that would show a difference cannot be run on this stack.
 
-The second is that the cost is ours. The index arm spent 20.4 turns
-because it was told to: the prompt hint that suits localisation, "start
-with repo_map, then search_symbols, then find_references", is exactly
-wrong for a question one `find_references` answers, and the agent
-followed it, calling `get_symbol` 4.6 times and `search_symbols` 3.1
-times per run before getting there. It also has to hunt for a symbol id,
-because no tool output prints one. Neither of those would change the
-F1 column, both would change the cost column, and both are the index's
-fault rather than the agent's.
+The second is that the cost is ours, and Serena is the control that says
+so. Serena is an LSP under an MCP server: no map, no ranking, no budget,
+and on this question it needs **1.4 calls** and 6.3 turns, within a turn
+of grep. This index needs **14.6 calls** and 19.6 turns for the same
+answer. Both arms are correct fourteen times out of fourteen; one of them
+takes ten times as many calls to get there.
+
+Where those calls go is not a mystery:
+
+| per run | this index | Serena |
+| --- | ---: | ---: |
+| the call that answers the question | `find_references` 4.7 | `find_referencing_symbols` 1.0 |
+| spent finding what to pass it | `get_symbol` 4.6, `search_symbols` 2.5 | `find_symbol` 0.3 |
+| orientation | `repo_map` 0.9, `index_status` 0.7, `file_outline` 1.0 | `get_symbols_overview` 0.1 |
+
+An earlier run of this benchmark blamed the prompt, which told the index
+arm to start with `repo_map` for a question one `find_references`
+answers. The hint was removed, and turns moved from 20.4 to 19.6. So it
+was not the hint. It is that a symbol had to be addressed by an id in the
+form `path#Qualified.Name` that **no tool printed**, so every question
+began by converting a name the agent already knew into an id it could
+pass, and `find_references` itself ran nearly five times per task because
+the first four went to the wrong symbol.
+
+Serena addresses symbols by name path, `Ad/save`, relative or absolute.
+That is the whole difference in the table. This index now does the same:
+every answer prints a name path, every tool accepts one, together with a
+location (`app/Models/Ad.php:42`), a scope (`app/Models:Ad/save`), and the
+id for anything that still holds one. An ambiguous name comes back with
+its candidates, addressable by position, instead of an error — on this
+application 65% of symbols share a name, so that is the common path, not
+the awkward one. Whether it closes the gap is a re-run, not a claim.
 
 ## Against the closest relative
 

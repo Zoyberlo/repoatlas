@@ -47,6 +47,12 @@ Reach for it when a plain text search would be slow or ambiguous:
 Grep is still better for text that is not a symbol: a log message, a
 configuration value, a comment. Use both.
 
+Symbols are addressed by name path, the form every answer here prints:
+`Ad` for a class, `Ad/save` for a method on it, `Invoice/save` to tell it
+from another `save`. A location, `app/Models/Ad.php:42`, works too. There
+is no id to look up first, and an ambiguous name comes back with its
+candidates rather than an error.
+
 Every location is `path:line`, ready to pass to a file reader. Edges
 resolved without a compiler carry a confidence, shown when it is below
 0.9; treat those as leads rather than facts."""
@@ -156,27 +162,32 @@ def build_server(store: IndexStore, *, name: str = "repoatlas") -> Any:
 
     @server.tool(annotations=read_only)
     def get_symbol(
-        symbol_id: str,
+        symbol: str,
         detail: Literal["concise", "detailed", "skeleton"] = "detailed",
         include_body: bool = False,
     ) -> str:
         """Describe one symbol: location, container, and what uses it.
 
-        Use the id from `search_symbols`. `detail="skeleton"` adds every
-        definition nested inside it with its line, which for a class is its
-        whole shape in a dozen lines and usually says which lines to read.
-        Leave `include_body` off unless you actually need the source; the
-        body is the most expensive thing this index can return.
+        `detail="skeleton"` adds every definition nested inside it with its
+        line, which for a class is its whole shape in a dozen lines and
+        usually says which lines to read. Leave `include_body` off unless
+        you actually need the source; the body is the most expensive thing
+        this index can return.
+
+        symbol: a name path as printed by any answer here, "Ad/save" or
+        just "Ad"; or a location, "app/Models/Ad.php:42"; or an exact id.
+        Narrow an ambiguous name with a container, "Invoice/save", a
+        directory, "app/Models:save", or a position, "save[2]".
         """
         return _answer(
             lambda: tools.get_symbol(
-                store, symbol_id, detail=detail, include_body=include_body
+                store, symbol, detail=detail, include_body=include_body
             )
         )
 
     @server.tool(annotations=read_only)
     def find_references(
-        symbol_id: str,
+        symbol: str,
         min_confidence: float = 0.0,
         limit: int = 50,
         cursor: str | None = None,
@@ -187,13 +198,15 @@ def build_server(store: IndexStore, *, name: str = "repoatlas") -> Any:
         with every string that merely looks similar; this answers with
         resolved references, each carrying how confidently it was resolved.
 
+        symbol: a name path like "Ad/save", a location like
+        "app/Models/Ad.php:42", or an id. No lookup call first.
         min_confidence: raise to 0.9 to see only edges resolved from an
         import or from the same file, dropping the inferred ones.
         """
         return _answer(
             lambda: tools.find_references(
                 store,
-                symbol_id,
+                symbol,
                 min_confidence=min_confidence,
                 limit=limit,
                 cursor=cursor,
@@ -202,7 +215,7 @@ def build_server(store: IndexStore, *, name: str = "repoatlas") -> Any:
 
     @server.tool(annotations=read_only)
     def neighbours(
-        symbol_id: str,
+        symbol: str,
         direction: Literal["out", "in", "both"] = "out",
         depth: int = 1,
         kinds: list[str] | None = None,
@@ -215,12 +228,13 @@ def build_server(store: IndexStore, *, name: str = "repoatlas") -> Any:
         readable and has been measured to *lower* accuracy rather than
         raise it.
 
+        symbol: a name path like "Ad/save", a location, or an id.
         kinds: restrict to e.g. ["calls", "imports", "inherits"].
         """
         return _answer(
             lambda: tools.neighbours(
                 store,
-                symbol_id,
+                symbol,
                 direction=direction,
                 depth=depth,
                 kinds=tuple(kinds or ()),

@@ -725,6 +725,64 @@ class IndexStore:
         ).fetchone()
         return max(0, int(row[0]) - 1) if row else 0
 
+    def symbols_named(
+        self, name: str, *, path_scope: str | None = None, limit: int = 50
+    ) -> list[Symbol]:
+        """Every navigable symbol with exactly this name, best first.
+
+        Distinct from :meth:`search`, which matches substrings and is what
+        an agent wants when it is guessing. This is what a name path needs:
+        the last segment is known exactly, and the segments before it do
+        the narrowing. Ordered so that the most used one comes first, and
+        deterministically after that, because a caller may address a
+        candidate by its position in this list.
+
+        ``path_scope`` is a path fragment rather than strictly a prefix. In
+        a monorepo the agent knows `app/Models` long before it knows the
+        index calls it `backend/app/Models`, and refusing the shorter form
+        buys nothing.
+        """
+        where = "s.name = ? AND s.is_synthetic = 0 AND s.is_local = 0"
+        parameters: list[Any] = [name]
+        if path_scope:
+            cleaned = path_scope.strip("/")
+            where += (
+                " AND (s.path = ? OR s.path LIKE ? || '/%'"
+                " OR s.path LIKE '%/' || ? OR s.path LIKE '%/' || ? || '/%')"
+            )
+            parameters.extend([cleaned] * 4)
+        rows = self._connection.execute(
+            f"SELECT {_SYMBOL_COLUMNS} FROM symbols s "
+            "LEFT JOIN ranks r ON r.symbol_id = s.id "
+            f"WHERE {where} "
+            "ORDER BY coalesce(r.score, 0) DESC, s.path ASC, s.name_start_line ASC, s.id ASC "
+            "LIMIT ?",
+            [*parameters, limit],
+        )
+        return [_symbol_from(row) for row in rows]
+
+    def symbol_at(self, path: str, line: int) -> Symbol | None:
+        """The innermost symbol whose declaration covers a one-based line.
+
+        What `path:line` means when an agent pastes a location back: a line
+        inside a method addresses the method, not the file, and not the
+        class around it.
+        """
+        zero = max(0, line - 1)
+        row = self._connection.execute(
+            f"SELECT {_SYMBOL_COLUMNS} FROM symbols s "
+            "WHERE s.path = ? AND s.is_synthetic = 0 "
+            "AND ((s.name_start_line = ?) OR ("
+            "  s.full_start_line IS NOT NULL AND s.full_start_line <= ?"
+            "  AND s.full_end_line >= ?))"
+            # An exact hit on the declaration line wins over merely being
+            # inside something, then the innermost span wins.
+            " ORDER BY (s.name_start_line = ?) DESC,"
+            " coalesce(s.full_end_line - s.full_start_line, 0) ASC, s.id ASC LIMIT 1",
+            (path, zero, zero, zero, zero),
+        ).fetchone()
+        return _symbol_from(row) if row else None
+
     def search_count(self, query: str, *, kinds: Sequence[str] = ()) -> int:
         """How many symbols :meth:`search` would match without a limit.
 

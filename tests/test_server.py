@@ -133,8 +133,8 @@ class TestGetSymbol:
         result = tools.get_symbol(store, GREET, include_body=True)
         assert "greet(name: string): string {" in result
 
-    def test_an_unknown_id_is_refused_with_a_next_step(self, store: IndexStore) -> None:
-        with pytest.raises(tools.ToolError, match="use search_symbols"):
+    def test_an_unknown_name_is_refused_with_a_next_step(self, store: IndexStore) -> None:
+        with pytest.raises(tools.ToolError, match="search_symbols"):
             tools.get_symbol(store, "no/such#thing")
 
     def test_a_moved_file_costs_the_body_not_the_answer(
@@ -177,6 +177,160 @@ class TestGetSymbol:
         assert "more; file_outline" in result
 
 
+class TestNamePaths:
+    """Addressing a symbol by what it is called rather than by an id.
+
+    The measured reason this exists: a benchmarked session called
+    get_symbol 4.6 times and search_symbols 3.1 times per task, most of it
+    spent turning a name it already knew into the id that was the only
+    thing accepted. Nothing printed that id, so the conversion was a
+    search every time.
+    """
+
+    def test_a_name_path_reaches_a_method(self, store: IndexStore) -> None:
+        assert tools.resolve_symbol(store, "User/greet").id == GREET
+
+    def test_the_dotted_form_an_outline_prints_also_resolves(
+        self, store: IndexStore
+    ) -> None:
+        assert tools.resolve_symbol(store, "User.greet").id == GREET
+
+    def test_so_does_the_double_colon_a_php_developer_would_type(
+        self, store: IndexStore
+    ) -> None:
+        assert tools.resolve_symbol(store, "User::greet").id == GREET
+
+    def test_an_id_still_wins_over_anything_that_looks_like_one(
+        self, store: IndexStore
+    ) -> None:
+        assert tools.resolve_symbol(store, GREET).id == GREET
+
+    def test_a_bare_name_that_is_unique_needs_no_container(
+        self, store: IndexStore
+    ) -> None:
+        assert tools.resolve_symbol(store, "makeUser").name == "makeUser"
+
+    def test_an_ambiguous_name_answers_with_its_candidates(
+        self, store: IndexStore
+    ) -> None:
+        # `greet` is the interface method and the class method. Refusing
+        # this costs a turn; listing them costs four lines, and each line
+        # is addressable.
+        with pytest.raises(tools.ToolError) as raised:
+            tools.resolve_symbol(store, "greet")
+        message = str(raised.value)
+        assert "[1]" in message and "[2]" in message
+        assert "User/greet" in message and "Greets/greet" in message
+
+    def test_a_candidate_can_be_taken_by_position(self, store: IndexStore) -> None:
+        with pytest.raises(tools.ToolError) as raised:
+            tools.resolve_symbol(store, "greet")
+        listed = [
+            line for line in str(raised.value).splitlines() if line.strip().startswith("[")
+        ]
+        first = tools.resolve_symbol(store, "greet[1]")
+        assert tools.name_path(first) in listed[0]
+
+    def test_a_position_out_of_range_lists_them_again(
+        self, store: IndexStore
+    ) -> None:
+        with pytest.raises(tools.ToolError, match="matches 2 symbols"):
+            tools.resolve_symbol(store, "greet[9]")
+
+    def test_a_directory_narrows_an_ambiguous_name(self, store: IndexStore) -> None:
+        assert tools.resolve_symbol(store, "src/user.ts:User/greet").id == GREET
+
+    def test_an_absolute_path_anchors_to_the_top_of_a_file(
+        self, store: IndexStore
+    ) -> None:
+        # `/greet` is nothing: greet is never a top-level definition.
+        with pytest.raises(tools.ToolError, match="name path"):
+            tools.resolve_symbol(store, "/greet")
+        assert tools.resolve_symbol(store, "/User/greet").id == GREET
+
+    def test_a_location_addresses_the_innermost_thing_around_it(
+        self, store: IndexStore
+    ) -> None:
+        # Line 15 is inside the body of greet, not on its declaration.
+        assert tools.resolve_symbol(store, "src/user.ts:15").id == GREET
+
+    def test_a_location_on_a_declaration_takes_that_declaration(
+        self, store: IndexStore
+    ) -> None:
+        assert tools.resolve_symbol(store, "src/user.ts:7").id == USER_CLASS
+
+    def test_a_location_in_no_mans_land_says_so(self, store: IndexStore) -> None:
+        with pytest.raises(tools.ToolError, match="file_outline"):
+            tools.resolve_symbol(store, "src/user.ts:9000")
+
+    def test_a_substring_resolves_when_it_can_only_mean_one_thing(
+        self, store: IndexStore
+    ) -> None:
+        # An agent holding half a name should not pay a search for it.
+        # Every answer prints where it landed, so a unique hit needs no
+        # narration.
+        assert tools.resolve_symbol(store, "makeUse").name == "makeUser"
+
+    def test_an_empty_reference_says_what_the_forms_are(
+        self, store: IndexStore
+    ) -> None:
+        with pytest.raises(tools.ToolError, match="name path"):
+            tools.resolve_symbol(store, "   ")
+
+    def test_the_tools_take_the_same_forms(self, store: IndexStore) -> None:
+        for reference in ("User/greet", "User.greet", GREET, "src/user.ts:15"):
+            assert "greet" in tools.get_symbol(store, reference)
+            assert "use(s)" in tools.find_references(store, reference)
+            assert "greet" in tools.neighbours(store, reference, direction="in")
+
+    def test_a_container_that_lacks_the_member_lists_what_it_has(
+        self, store: IndexStore
+    ) -> None:
+        # The first version searched for the member alone here, and
+        # answering `AdController/store` with `LeadController/store` is
+        # worse than answering with nothing: it is a different class,
+        # ranked first, and nothing in the reply says so.
+        with pytest.raises(tools.ToolError) as raised:
+            tools.resolve_symbol(store, "User/frobnicate")
+        message = str(raised.value)
+        assert "does not exist" in message
+        assert "greet" in message and "shout" in message
+        assert "Greets" not in message
+
+    def test_a_path_fragment_narrows_as_well_as_a_prefix(
+        self, tmp_path: Path
+    ) -> None:
+        # A monorepo puts the application under a directory the agent has
+        # not seen yet: it knows `models`, the index calls it
+        # `backend/app/models`. Refusing the shorter form buys nothing.
+        from repoatlas.store import update_store
+
+        project = tmp_path / "mono"
+        (project / "backend" / "app" / "models").mkdir(parents=True)
+        (project / "frontend").mkdir()
+        (project / "backend" / "app" / "models" / "ad.py").write_text(
+            "class Ad:\n    def save(self):\n        pass\n", encoding="utf-8"
+        )
+        (project / "frontend" / "form.py").write_text(
+            "class Form:\n    def save(self):\n        pass\n", encoding="utf-8"
+        )
+        with IndexStore(tmp_path / "mono.db") as opened:
+            update_store(project, opened, use_git=False)
+            for scope in ("models", "app/models", "backend/app/models"):
+                found = tools.resolve_symbol(opened, f"{scope}:Ad/save")
+                assert found.path == "backend/app/models/ad.py"
+            assert tools.resolve_symbol(opened, "frontend:save").path == (
+                "frontend/form.py"
+            )
+
+    def test_answers_print_the_form_they_accept(self, store: IndexStore) -> None:
+        # The loop has to close: what is printed must be what can be
+        # pasted back, or the agent is guessing again.
+        printed = tools.search_symbols(store, "greet")
+        assert "User/greet" in printed
+        assert tools.resolve_symbol(store, "User/greet").id == GREET
+
+
 class TestFindReferences:
     def test_groups_uses_by_file(self, store: IndexStore) -> None:
         result = tools.find_references(store, USER_CLASS)
@@ -196,8 +350,8 @@ class TestFindReferences:
         result = tools.find_references(store, "src/app.ts#Formatter")
         assert "nothing uses" in result or "use(s) of" in result
 
-    def test_an_unknown_id_is_refused(self, store: IndexStore) -> None:
-        with pytest.raises(tools.ToolError, match="use search_symbols"):
+    def test_an_unknown_name_is_refused(self, store: IndexStore) -> None:
+        with pytest.raises(tools.ToolError, match="search_symbols"):
             tools.find_references(store, "no/such#thing")
 
     def test_the_result_stays_within_its_budget(self, store: IndexStore) -> None:
@@ -371,8 +525,8 @@ class TestMcpAdapter:
         # every next step written into these errors is lost.
         from mcp.server.mcpserver.exceptions import ToolError as SdkToolError
 
-        with pytest.raises(SdkToolError, match="use search_symbols to find its id"):
-            asyncio.run(server.call_tool("get_symbol", {"symbol_id": "nope"}))
+        with pytest.raises(SdkToolError, match="search_symbols"):
+            asyncio.run(server.call_tool("get_symbol", {"symbol": "no/such#thing"}))
 
     def test_the_store_is_usable_from_a_worker_thread(self, server) -> None:
         # The SDK runs synchronous tools off the event loop, and a SQLite
@@ -420,7 +574,7 @@ class TestContainmentIsNotUse:
             assert "used by: 1" in listing
             assert "Greeter\n" not in listing.split("used by")[-1].split("\n")[1]
             found = tools.search_symbols(store, "greet")
-            assert "Greeter.greet  (1 use)" in found
+            assert "Greeter/greet  (1 use)" in found
 
 
 class TestNamesakes:
