@@ -36,6 +36,13 @@
   (const_element
     (name) @name)) @definition.constant
 
+; PHP 8 promotes a constructor parameter to a property in one stroke:
+; `__construct(private string $prefix)`. It is a field of the class, and
+; the extractor hoists it there.
+(property_promotion_parameter
+  name: (variable_name
+    (name) @name)) @definition.attribute
+
 (namespace_definition
   name: (namespace_name) @name) @definition.module
 
@@ -101,6 +108,96 @@
 ; A property read that is not a call: `$this->email`.
 (member_access_expression
   name: (name) @name) @reference.member
+
+; --- receivers -----------------------------------------------------------
+
+; The variable a member is reached through. `$this` the resolver already
+; knows; for any other variable the declared parameter type, or the class
+; it was constructed from, says which class holds the member.
+(member_call_expression
+  object: (variable_name
+    (name) @receiver)
+  name: (name) @name) @reference.call
+
+(member_access_expression
+  object: (variable_name
+    (name) @receiver)
+  name: (name) @name) @reference.member
+
+; A static call names its class outright, and that is the receiver.
+(scoped_call_expression
+  scope: (name) @receiver
+  name: (name) @name) @reference.call
+
+(simple_parameter
+  type: (named_type
+    (name) @vtype)
+  name: (variable_name
+    (name) @var)) @binding
+
+(simple_parameter
+  type: (optional_type
+    (named_type
+      (name) @vtype))
+  name: (variable_name
+    (name) @var)) @binding
+
+(property_promotion_parameter
+  type: (named_type
+    (name) @vtype)
+  name: (variable_name
+    (name) @var)) @binding
+
+(assignment_expression
+  left: (variable_name
+    (name) @var)
+  right: (object_creation_expression
+    (name) @vtype)) @binding
+
+; --- scoped access -------------------------------------------------------
+
+; `Greeter::DEFAULT_PREFIX`, `Util::helper()`, `Config::$instance`: the
+; scope is a class reference and the name after `::` is a member of it.
+; The grammar gives the constant form no field names, so anchors pick the
+; first and last children apart.
+(class_constant_access_expression
+  . (name) @name) @reference.class
+
+(class_constant_access_expression
+  (name) @name .) @reference.member
+
+(scoped_call_expression
+  scope: (name) @name) @reference.class
+
+(scoped_call_expression
+  scope: (qualified_name
+    (name) @name)) @reference.class
+
+(scoped_property_access_expression
+  scope: (name) @name) @reference.class
+
+; `self::`, `static::` and `parent::` name the enclosing class or its base
+; without spelling either. The resolver knows which class it is in; the
+; query only has to say that a scope was written.
+(class_constant_access_expression
+  (relative_scope) @name) @reference.scope
+
+(scoped_call_expression
+  scope: (relative_scope) @name) @reference.scope
+
+(scoped_property_access_expression
+  scope: (relative_scope) @name) @reference.scope
+
+; --- types ---------------------------------------------------------------
+
+; A declared type, wherever it stands: a parameter, a return, a property,
+; a catch. Primitives are a different node and are not references.
+(named_type
+  (name) @name) @reference.type
+
+(named_type
+  (qualified_name
+    (name) @name)) @reference.type
 
 ; A constant used by name inside a call.
 (arguments

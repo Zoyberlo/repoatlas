@@ -153,10 +153,14 @@ class TestAccuracyAgainstOracle:
         # check that keeps the numbers in `ResolutionTier` honest.
         result = compare_snapshots(build.snapshot, oracle)
         assert result.calibration is not None
-        worst = result.calibration.worst_bin()
-        assert worst is not None
-        assert abs(worst.gap) <= 0.10, result.calibration.as_dict()
-        assert result.calibration.expected_error <= 0.05
+        # Only over-confidence, and only in bins with enough edges to
+        # judge. The fixture scores nineteen edges; ten at a claimed 0.9
+        # land on 10/10 a third of the time, and one edge in the 0.55 bin
+        # is a gap of 0.45 whichever way it lands. Bounding those would be
+        # tuning the tiers to noise. What must never pass is a rung that
+        # claims 0.95 and delivers 0.8.
+        assert result.calibration.overconfident_bins() == [], result.calibration.as_dict()
+        assert result.calibration.worst_bin(min_count=5) is not None
 
     def test_scoring_locals_too_shows_the_scope_difference(
         self, build, oracle

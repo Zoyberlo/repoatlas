@@ -372,7 +372,8 @@ class IndexStore:
         if references:
             self._connection.executemany(
                 "INSERT INTO refs(path, name, kind, container_id, start_line, "
-                "start_char, end_line, end_char) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                "start_char, end_line, end_char, receiver, receiver_type) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         record.path,
@@ -380,6 +381,8 @@ class IndexStore:
                         reference.kind,
                         reference.container_id,
                         *_range_columns(reference.span),
+                        reference.receiver,
+                        reference.receiver_type,
                     )
                     for reference in references
                 ],
@@ -413,6 +416,16 @@ class IndexStore:
                             for binding in statement.bindings
                         ],
                     )
+
+    def inheritance_edges(self) -> list[Edge]:
+        """Every resolved `extends` and `implements` edge, sites included."""
+        return self._edges_where("kind IN ('inherits', 'implements')")
+
+    def delete_derived_edges(self) -> None:
+        """Drop the edges derived from inheritance, ahead of re-deriving them."""
+        self._connection.execute(
+            "DELETE FROM edges WHERE kind = 'implements' AND site_path IS NULL"
+        )
 
     def delete_edges_in(self, paths: Iterable[str]) -> None:
         """Drop every edge whose site is in one of these files."""
@@ -573,7 +586,8 @@ class IndexStore:
         file.
         """
         columns = (
-            "path, name, kind, container_id, start_line, start_char, end_line, end_char"
+            "path, name, kind, container_id, start_line, start_char, end_line, end_char, "
+            "receiver, receiver_type"
         )
         if paths is None and names is None and kinds is None:
             rows = self._connection.execute(f"SELECT {columns} FROM refs").fetchall()
@@ -601,6 +615,8 @@ class IndexStore:
                     kind=row[2],
                     span=SourceRange.of(row[4], row[5], row[6], row[7]),
                     container_id=row[3],
+                    receiver=row[8],
+                    receiver_type=row[9],
                 ),
             )
             for row in rows

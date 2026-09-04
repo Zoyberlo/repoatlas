@@ -21,7 +21,7 @@ from __future__ import annotations
 
 __all__ = ["PRAGMAS", "SCHEMA", "SCHEMA_VERSION"]
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 """Bumped whenever the shape below changes.
 
 A mismatch discards the store and rebuilds rather than migrating. Early
@@ -110,14 +110,19 @@ CREATE INDEX IF NOT EXISTS edges_by_site_position
 -- Names a file uses that resolution has yet to place. Kept so one changed
 -- file can be re-resolved against the repository without re-parsing it all.
 CREATE TABLE IF NOT EXISTS refs (
-    path         TEXT NOT NULL REFERENCES files(path) ON DELETE CASCADE,
-    name         TEXT NOT NULL,
-    kind         TEXT NOT NULL,
-    container_id TEXT,
-    start_line   INTEGER NOT NULL,
-    start_char   INTEGER NOT NULL,
-    end_line     INTEGER NOT NULL,
-    end_char     INTEGER NOT NULL
+    path          TEXT NOT NULL REFERENCES files(path) ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    container_id  TEXT,
+    start_line    INTEGER NOT NULL,
+    start_char    INTEGER NOT NULL,
+    end_line      INTEGER NOT NULL,
+    end_char      INTEGER NOT NULL,
+    -- The plain name a member was read through, and the type the
+    -- extractor could put on it. Both are what makes `x.greet()` resolve to
+    -- the class of `x` rather than to any `greet` in the repository.
+    receiver      TEXT,
+    receiver_type TEXT
 );
 
 CREATE INDEX IF NOT EXISTS refs_by_path ON refs(path);

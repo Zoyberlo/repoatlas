@@ -104,8 +104,8 @@ def to_markdown(comparison: Comparison, *, samples: int = 5) -> str:
         f"{len(comparison.dangling_edges)} ({comparison.dangling_rate:.1%})"
     )
     lines.append(
-        f"- Edges with no evidence site, scored against the declaring symbol: "
-        f"{len(comparison.unsited_edges)}"
+        f"- Edges with no evidence site and no declaring symbol to anchor on, "
+        f"not scored: {len(comparison.unsited_edges)}"
     )
     lines.append(
         f"- Matches that needed column tolerance: "

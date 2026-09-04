@@ -20,6 +20,7 @@ from .. import __version__
 from ..model import Edge, EdgeKind, IndexSnapshot, ResolutionTier, SymbolKind
 from ..plugins import active_plugins
 from ..resolve.cascade import ResolutionStats, Resolver, SymbolIndex
+from ..resolve.derived import derive_inheritance
 from ..resolve.modules import ModuleResolver, resolver_for
 from .extract import FileExtraction, Reference, extract_source
 from .imports import FileImports
@@ -213,9 +214,21 @@ def build_snapshot(
 
 
 def _resolve_references(
-    result: BuildResult, root: Path, files: list[SourceFile]
+    result: BuildResult,
+    root: Path,
+    files: list[SourceFile],
+    *,
+    base_sources: dict[str, list[Reference]] | None = None,
+    derive: bool = True,
 ) -> None:
-    """Turn the collected references into edges."""
+    """Turn the collected references into edges.
+
+    ``base_sources`` is every file's references when only some are being
+    resolved: the inheritance chains have to be learned from all of them.
+    ``derive`` adds the override and transitive-implements edges that
+    follow; an incremental update derives them itself, over the whole
+    store, after patching.
+    """
     started = time.perf_counter()
     known = frozenset(source.path for source in files)
     languages = {source.path: source.language.name for source in files}
@@ -243,8 +256,15 @@ def _resolve_references(
     by_file: dict[str, list[Reference]] = {}
     for path, reference in result.references:
         by_file.setdefault(path, []).append(reference)
+    # Inheritance first, everywhere, so that a member looked up through a
+    # typed receiver can walk a chain that crosses files.
+    for path, references in (base_sources or by_file).items():
+        resolver_state.learn_bases(path, references)
     for path, references in by_file.items():
         for edge in resolver_state.resolve_file(path, references):
+            result.snapshot.add_edge(edge)
+    if derive:
+        for edge in derive_inheritance(result.snapshot.symbols, result.snapshot.edges):
             result.snapshot.add_edge(edge)
     result.resolve_seconds = time.perf_counter() - started
 

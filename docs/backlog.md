@@ -377,6 +377,22 @@ needs `scip-python` and `scip-php` installed, and 15, which waits on a
 measurement from 14 on a real repository. Item 14's tool exists and has
 run on this repository; its real number needs a Laravel or Vue history.
 
+*Status 2026-09-04, later:* 12 is done, and the three oracles then drove
+a round of resolver work that the TypeScript fixture alone had never
+asked for. Reference recall went from 0.78 / 0.69 / 0.46 (TS / Python /
+PHP) to 1.00 / 1.00 / 1.00, precision to 1.00 / 1.00 / 0.93, the PHP
+false positive being an edge `scip-php` cannot produce rather than a
+wrong one. What it took, in the order it was found: type references,
+default-argument values and `self.x` fields in Python; scoped access,
+`self::`/`static::`/`parent::` and promoted constructor parameters in
+PHP; then, across all three, dropping uses of parameters and locals that
+shadow a symbol's name, resolving a member through the declared type of
+its receiver (annotation or `new`), and deriving the override and
+transitive-implements edges a compiler records. Locals and receiver
+types live in the store now (schema 2). Only 15 remains open, and the
+fixtures are small: the next accuracy number worth having is a real
+Laravel backend under `scip-php`.
+
 | # | Item | Why first | Size |
 | ---: | --- | --- | --- |
 | 1 | Calibrate tokens per model, thread the estimator through the tools (1.1) | The budget is wrong by a third | half a day |

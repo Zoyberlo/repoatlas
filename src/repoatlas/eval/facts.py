@@ -87,6 +87,15 @@ class RefFact:
     target_path: str
     target_span: SourceRange
     kind: str = ""
+    alternate_span: SourceRange | None = None
+    """A second target position this fact also answers to.
+
+    `new User()` names the class and invokes its constructor, and indexers
+    split on which to record: scip-typescript points at the constructor
+    when there is one, scip-php at the class. Neither is wrong, so a fact
+    whose target is a constructor also answers to the class that holds it,
+    and a fact whose target is a class also answers to its constructor.
+    """
 
     @property
     def line(self) -> int:
@@ -244,6 +253,23 @@ def reference_facts(
         if target.local and not include_local_targets:
             continue
         anchor_on_source = edge.kind in _ANCHOR_ON_SOURCE
+        if anchor_on_source and edge.site_path is not None and edge.site_range is not None:
+            # An `extends` clause is two facts in an oracle: the mention of
+            # the base, an occurrence like any other, and the relationship,
+            # which has no position. One sited edge here carries both, so
+            # it is projected as both, or the mention would score as missed
+            # by an index that plainly recorded it.
+            mention_path = normalise_path(edge.site_path, case_fold=case_fold)
+            if paths is None or mention_path in paths:
+                facts.append(
+                    RefFact(
+                        site_path=mention_path,
+                        site_span=edge.site_range,
+                        target_path=normalise_path(target.path, case_fold=case_fold),
+                        target_span=target.name_range,
+                        kind=_edge_group(EdgeKind.REFERENCES, collapse_kinds),
+                    )
+                )
         if not anchor_on_source and edge.site_path is not None and edge.site_range is not None:
             site_path = normalise_path(edge.site_path, case_fold=case_fold)
             site_span = edge.site_range
@@ -265,9 +291,25 @@ def reference_facts(
                 target_path=normalise_path(target.path, case_fold=case_fold),
                 target_span=target.name_range,
                 kind=_edge_group(edge.kind, collapse_kinds),
+                alternate_span=_construction_alternate(snapshot, target),
             )
         )
     return facts, unprojectable
+
+
+def _construction_alternate(snapshot: IndexSnapshot, target: Symbol) -> SourceRange | None:
+    """The other half of a `new X()` target: the class for a constructor.
+
+    Only the constructor-to-class direction is offered. A fact pointing at
+    a class does not gain its constructor, because an index that pointed
+    at the class when a constructor exists should be told so.
+    """
+    if target.kind is not SymbolKind.CONSTRUCTOR or not target.container_id:
+        return None
+    owner = snapshot.symbols.get(target.container_id)
+    if owner is None or owner.path != target.path:
+        return None
+    return owner.name_range
 
 
 @dataclass(slots=True)
@@ -357,13 +399,31 @@ def _ref_compatible(left: RefFact, right: RefFact, policy: MatchPolicy) -> bool:
         return False
     if left.target_path != right.target_path:
         return False
-    if policy == "line":
-        return left.target_span.start.line == right.target_span.start.line
-    if policy == "exact":
-        return left.site_span == right.site_span and left.target_span == right.target_span
-    return left.site_span.overlaps(right.site_span) and left.target_span.overlaps(
-        right.target_span
+    return any(
+        _targets_agree(left_span, right_span, left.site_span, right.site_span, policy)
+        for left_span in _target_spans(left)
+        for right_span in _target_spans(right)
     )
+
+
+def _target_spans(fact: RefFact) -> tuple[SourceRange, ...]:
+    if fact.alternate_span is None:
+        return (fact.target_span,)
+    return (fact.target_span, fact.alternate_span)
+
+
+def _targets_agree(
+    left_target: SourceRange,
+    right_target: SourceRange,
+    left_site: SourceRange,
+    right_site: SourceRange,
+    policy: MatchPolicy,
+) -> bool:
+    if policy == "line":
+        return left_target.start.line == right_target.start.line
+    if policy == "exact":
+        return left_site == right_site and left_target == right_target
+    return left_site.overlaps(right_site) and left_target.overlaps(right_target)
 
 
 def _compatible(left: Fact, right: Fact, policy: MatchPolicy) -> bool:

@@ -52,17 +52,17 @@ ORACLES = (
         paths=frozenset({"src/app.ts", "src/user.ts"}),
         definition_precision=1.0,
         definition_recall=1.0,
-        reference_precision=0.85,
-        reference_recall=0.75,
+        reference_precision=0.95,
+        reference_recall=0.95,
     ),
     Oracle(
         name="pydemo",
         producer="scip-python 0.6.6",
         paths=frozenset({"src/app.py", "src/models.py", "src/__init__.py"}),
         definition_precision=1.0,
-        definition_recall=0.85,
-        reference_precision=0.95,
-        reference_recall=0.65,
+        definition_recall=1.0,
+        reference_precision=1.0,
+        reference_recall=0.90,
     ),
     Oracle(
         name="phpdemo",
@@ -70,8 +70,8 @@ ORACLES = (
         paths=frozenset({"src/App.php", "src/Greeter.php", "src/LoudGreeter.php"}),
         definition_precision=1.0,
         definition_recall=1.0,
-        reference_precision=0.70,
-        reference_recall=0.40,
+        reference_precision=0.90,
+        reference_recall=0.95,
     ),
 )
 

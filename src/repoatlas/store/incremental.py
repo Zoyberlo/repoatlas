@@ -41,12 +41,13 @@ from ..model import (
     SymbolKind,
 )
 from ..parse.build import LanguageStats, _resolve_references
-from ..parse.extract import extract_source
+from ..parse.extract import Reference, extract_source
 from ..parse.languages import SUPPORTED, LanguageUnavailable, query_source
 from ..parse.walk import SourceFile, WalkStats, iter_source_files
 from ..plugins import active_plugins, frameworks_source
 from ..rank.pagerank import SymbolGraph, rank_symbols
 from ..resolve.cascade import ResolutionStats
+from ..resolve.derived import derive_inheritance
 from .database import FileRecord, IndexStore, content_digest, toolchain_version
 
 __all__ = ["ChangeSet", "UpdateResult", "detect_changes", "update_store"]
@@ -381,7 +382,12 @@ def _resolve_scoped(
         imports=store.imports(paths={path for path, _ in affected}),
         resolution=result.resolution,
     )
-    _resolve_references(build, root, files)
+    # Every base clause in the store, so a typed receiver's member lookup
+    # can walk a chain through files this change never touched.
+    base_sources: dict[str, list[Reference]] = {}
+    for base_path, base_reference in store.references(kinds=["class"]):
+        base_sources.setdefault(base_path, []).append(base_reference)
+    _resolve_references(build, root, files, base_sources=base_sources, derive=False)
 
     # Containment for the re-parsed files is rebuilt from their symbols,
     # exactly as the full path does for every file.
@@ -406,6 +412,10 @@ def _resolve_scoped(
             if path not in stale
         )
         store.add_edges(build.snapshot.edges)
+        # Derived edges are recomputed whole: the set is small, and which
+        # derivations a change invalidates is harder to know than to redo.
+        store.delete_derived_edges()
+        store.add_edges(derive_inheritance(snapshot.symbols, store.inheritance_edges()))
         graph = SymbolGraph.from_rows(snapshot.symbols, store.edge_rows())
         ranked = rank_symbols(snapshot, graph=graph)
         store.replace_ranks(

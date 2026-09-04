@@ -116,15 +116,42 @@ the calibration table.
 | Rung | Evidence | Claimed | Observed on the TypeScript fixture |
 | --- | --- | ---: | ---: |
 | `import_map` | The name was imported, and the import names a file this index covers | 0.95 | 1.000 |
-| `same_module` | A member of the type the reference sits in, or a definition in the same file | 0.90 | 0.889 |
+| `same_module` | A member of the type the reference sits in, or a definition in the same file | 0.90 | 1.000 |
 | `unique_name` | Exactly one definition of the name in the repository | 0.75 | not exercised |
-| `suffix` | Several definitions share the name; one was chosen | 0.55 | 0.500 |
+| `suffix` | Several definitions share the name; one was chosen | 0.55 | 1.000, on one edge |
 | `fuzzy` | Nothing better | 0.35 | not exercised |
 
 The fixture is two files, so treat these as a smoke test of the method
 rather than as tuned values. The method is the point: when a rung's observed
 precision drifts from its claim, the report says which rung and by how much,
-and the number moves rather than the argument.
+and the number moves rather than the argument. What the tests enforce is
+over-confidence only, in bins with at least five edges: a rung that
+undersells itself costs a weaker rank, a rung that oversells itself costs
+the agent a wrong answer it was told to trust.
+
+Three things sit before the ladder and are not rungs, because they carry
+no confidence of their own:
+
+- **Shadowing.** A bare name used inside a function is checked against
+  the function's parameters and locals (and those of the functions around
+  it) before it can reach any symbol. `return new User(label)` in
+  `makeUser(label)` is a use of the parameter, not of the field
+  `User.label`, and an index that says otherwise is confidently wrong.
+- **Receiver typing.** `user.greet()` where `user: Greets`, or where
+  `user = new Admin()`, is a member of that type or of what it extends. The
+  type name is resolved like any other reference and the member is looked
+  up in it and up its chain; the edge takes the tier the type resolved
+  at. This is what tells one `greet` from another when a repository has
+  several, which the bottom rungs cannot, and it is where a Laravel
+  controller's `$this->service->handle()` will be decided.
+- **Derived inheritance.** A method that overrides one declared up the
+  chain, and a class that implements an interface through its base, are
+  facts a compiler records and nobody writes. They are derived from the
+  resolved `extends` and `implements` edges after resolution, carry no
+  site, and take the weakest tier on the chain they came through.
+
+Each of those was found by an oracle fixture, not by reading: the three
+fixtures under `tests/fixtures/` each caught a different one.
 
 ### Targets
 

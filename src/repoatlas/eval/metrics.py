@@ -317,9 +317,24 @@ class CalibrationReport:
             "bins": [b.as_dict() for b in self.bins],
         }
 
-    def worst_bin(self) -> ConfidenceBin | None:
-        populated = [b for b in self.bins if b.count]
+    def worst_bin(self, *, min_count: int = 1) -> ConfidenceBin | None:
+        """The bin whose claim is furthest from what was observed.
+
+        ``min_count`` leaves out bins too thin to judge: one edge in a
+        bin claiming 0.55 is a gap of 0.45 whichever way it lands.
+        """
+        populated = [b for b in self.bins if b.count >= max(min_count, 1)]
         return max(populated, key=lambda b: abs(b.gap)) if populated else None
+
+    def overconfident_bins(self, *, min_count: int = 5, tolerance: float = 0.10) -> list[ConfidenceBin]:
+        """Bins that claim more than they deliver, by more than ``tolerance``.
+
+        This is the direction that hurts an agent: a rung claiming 0.95
+        that is right half the time will be trusted and be wrong. The
+        other direction, a rung that undersells itself, costs at most a
+        weaker rank, so it is not a failure here.
+        """
+        return [b for b in self.bins if b.count >= min_count and b.gap > tolerance]
 
 
 def calibrate(

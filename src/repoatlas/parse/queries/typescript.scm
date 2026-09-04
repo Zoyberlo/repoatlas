@@ -105,6 +105,55 @@
 (member_expression
   property: (property_identifier) @name) @reference.member
 
+; --- receivers -----------------------------------------------------------
+
+; The object a member is read from, when it is a plain name. The local's
+; declared type, or the class it was constructed from, says which class the
+; member belongs to.
+(member_expression
+  object: (identifier) @receiver
+  property: (property_identifier) @name) @reference.member
+
+(call_expression
+  function: (member_expression
+    object: (identifier) @receiver
+    property: (property_identifier) @name)) @reference.call
+
+; --- locals --------------------------------------------------------------
+
+; Names bound inside a function. A bare use of one is a use of the local,
+; never of a repository symbol sharing the name.
+(required_parameter
+  pattern: (identifier) @local)
+
+(optional_parameter
+  pattern: (identifier) @local)
+
+(variable_declarator
+  name: (identifier) @local)
+
+; What a local's type is: an annotation on the parameter or declarator, or
+; the class a `new` expression constructed.
+(required_parameter
+  pattern: (identifier) @var
+  type: (type_annotation
+    (type_identifier) @vtype)) @binding
+
+(optional_parameter
+  pattern: (identifier) @var
+  type: (type_annotation
+    (type_identifier) @vtype)) @binding
+
+(variable_declarator
+  name: (identifier) @var
+  type: (type_annotation
+    (type_identifier) @vtype)) @binding
+
+(variable_declarator
+  name: (identifier) @var
+  value: (new_expression
+    constructor: (identifier) @vtype)) @binding
+
 ; A value used by name: an argument, a returned name, an initialiser. These
 ; are the uses of a constant or a function that is passed rather than
 ; called, which no call or member pattern sees.

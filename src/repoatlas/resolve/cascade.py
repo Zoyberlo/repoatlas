@@ -46,7 +46,15 @@ _EDGE_KIND_BY_REFERENCE = {
     "include": EdgeKind.IMPORTS,
     "component": EdgeKind.IMPORTS,
     "route": EdgeKind.REFERENCES,
+    # `self::`, `static::`, `parent::`: a class named without being spelled.
+    "scope": EdgeKind.REFERENCES,
 }
+
+# What each spelling of a relative scope means, per language. `static` is
+# late-bound in PHP, but statically it can only be read as the class in
+# which it was written.
+_SCOPE_SELF = frozenset({"self", "static"})
+_SCOPE_PARENT = frozenset({"parent"})
 
 # Reference kinds whose name is a framework convention rather than an
 # identifier. `view('users.index')` names a template; letting it fall
@@ -67,6 +75,10 @@ _MEMBER_REFERENCE_KINDS = frozenset({"call", "member"})
 
 # What each language calls the method `new` invokes.
 _CONSTRUCTOR_NAMES = ("constructor", "__init__", "__construct")
+
+# Receivers that mean the enclosing class, which the member rung already
+# handles without any type being declared.
+_SELF_RECEIVERS = frozenset({"this", "self", "cls", "static"})
 
 # A member access resolves to a method or field, never to a free function;
 # an inheritance clause names a type. Filtering by kind removes a whole
@@ -279,6 +291,14 @@ class Resolver:
     _choices: dict[tuple[str, str], Symbol | None] = field(
         default_factory=dict, repr=False
     )
+
+    _bases: dict[str, Symbol] = field(default_factory=dict, repr=False)
+    """Each type's resolved base, recorded as its `extends` clause resolves.
+
+    What `parent::` means. A base clause is written before the methods that
+    say `parent::`, so within a file the answer is always already known
+    when it is needed.
+    """
     """The bottom rung's pick, per name and reference kind.
 
     Choosing among every `run` in the repository depends on nothing but
@@ -287,6 +307,23 @@ class Resolver:
     thousands of candidates, and was made again for every one of thousands
     of references to the same name.
     """
+
+    def learn_bases(self, path: str, references: list[Reference]) -> None:
+        """Record what every type in ``references`` extends, before resolving.
+
+        Run over every file first. A receiver typed as `Admin` may call a
+        method `Admin` inherits from `User` in another file, and finding it
+        means walking the chain, which has to be complete before the walk.
+        """
+        for reference in references:
+            if reference.kind != "class":
+                continue
+            owner = self.index.enclosing_type(reference.container_id)
+            if owner is None or owner.id in self._bases:
+                continue
+            target, _tier = self._target(path, reference)
+            if target is not None and target.kind.is_type_like and target.id != owner.id:
+                self._bases[owner.id] = target
 
     def resolve_file(self, path: str, references: list[Reference]) -> list[Edge]:
         """Resolve every reference in one file."""
@@ -304,6 +341,12 @@ class Resolver:
         source_id = reference.container_id or self.module_symbols.get(path)
         if source_id is None or source_id == target.id:
             return None
+        if reference.kind == "class" and target.kind.is_type_like:
+            # A base clause resolved. Remember it for `parent::`, and for
+            # anything else that wants to know what this type extends.
+            owner = self.index.enclosing_type(reference.container_id)
+            if owner is not None and owner.id not in self._bases:
+                self._bases[owner.id] = target
         self.stats.by_tier[tier.label] += 1
         return Edge(
             src_id=source_id,
@@ -335,6 +378,20 @@ class Resolver:
 
     def _target(self, path: str, reference: Reference) -> tuple[Symbol | None, ResolutionTier]:
         name = reference.name
+
+        if reference.kind == "scope":
+            # `self`, `static` and `parent` are not names to look up: they
+            # are positions. Never let them reach the identifier cascade,
+            # where a function called `parent` would happily answer.
+            owner = self.index.enclosing_type(reference.container_id)
+            if owner is not None and name in _SCOPE_SELF:
+                return owner, ResolutionTier.SAME_MODULE
+            if owner is not None and name in _SCOPE_PARENT:
+                base = self._bases.get(owner.id)
+                if base is not None:
+                    return base, ResolutionTier.SAME_MODULE
+            self.stats.unresolved += 1
+            return None, ResolutionTier.FUZZY
 
         # Rung zero: a framework convention. Either the file the
         # convention names is in the repository or it is not, so a hit is
@@ -393,6 +450,17 @@ class Resolver:
                     self.stats.external += 1
                     return None, ResolutionTier.FUZZY
 
+        # Rung two, first half: a member of the receiver's declared type.
+        # `greeter.greet()` where `greeter: Greeter`, or `Util::helper()`,
+        # says which class holds the member; the class is resolved like any
+        # type name and the member looked up in it and in what it extends.
+        # This is the rung that tells one `greet` from another when the
+        # repository has several, which the bottom rungs cannot.
+        if reference.kind in _MEMBER_REFERENCE_KINDS:
+            typed = self._through_receiver(path, reference)
+            if typed is not None:
+                return typed
+
         # Rung two: a member of the type the reference is written in.
         # `this.greet()` inside `User.shout` means `User.greet`, and no
         # type inference is needed to know it: the receiver is the
@@ -431,6 +499,38 @@ class Resolver:
 
         self.stats.unresolved += 1
         return None, ResolutionTier.FUZZY
+
+    def _through_receiver(
+        self, path: str, reference: Reference
+    ) -> tuple[Symbol, ResolutionTier] | None:
+        """Resolve a member through what its receiver is known to be."""
+        type_name = reference.receiver_type
+        if type_name is None:
+            receiver = reference.receiver
+            if not receiver or receiver in _SELF_RECEIVERS or not receiver[:1].isupper():
+                return None
+            # `Util::helper()` or `Config.get()`: the receiver is the type.
+            type_name = receiver
+        owner, tier = self._target(
+            path,
+            Reference(
+                name=type_name,
+                kind="type",
+                span=reference.span,
+                container_id=reference.container_id,
+            ),
+        )
+        if owner is None or not owner.kind.is_type_like:
+            return None
+        current: Symbol | None = owner
+        seen: set[str] = set()
+        while current is not None and current.id not in seen:
+            seen.add(current.id)
+            member = _prefer(self.index.members(current.id, reference.name), reference)
+            if member is not None:
+                return member, tier
+            current = self._bases.get(current.id)
+        return None
 
     def _import_resolves(self, path: str, name: str) -> bool:
         """Whether ``name`` was imported from a file this index covers.

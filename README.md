@@ -81,25 +81,28 @@ TypeScript fixture it says:
 > Compared 2 files. Symbol kinds in scope: class, constant, constructor,
 > enum, field, function, interface, macro, method, property, trait,
 > type_alias, variable. Not scored, because the oracle emits no such edge:
-> 8 edges of kind `contains`.
+> 6 edges of kind `contains`.
 
 | kind | precision | recall | F1 | tp | fp | fn |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | definitions | 1.000 | 1.000 | 1.000 | 13 | 0 | 0 |
-| references | 0.900 | 0.783 | 0.837 | 18 | 2 | 5 |
+| references | 1.000 | 1.000 | 1.000 | 23 | 0 | 0 |
 
-Expected calibration error 0.031, worst bin 0.050, over 18 edges:
+Expected calibration error 0.097, worst bin 0.450, over 19 edges:
 
 | confidence bin | edges | claimed | observed | gap |
 | --- | ---: | ---: | ---: | ---: |
-| 0.45 to 0.65 | 2 | 0.550 | 0.500 | +0.050 |
-| 0.88 to 0.93 | 9 | 0.900 | 0.889 | +0.011 |
-| 0.93 to 0.97 | 7 | 0.950 | 1.000 | -0.050 |
+| 0.45 to 0.65 | 1 | 0.550 | 1.000 | -0.450 |
+| 0.88 to 0.93 | 10 | 0.900 | 1.000 | -0.100 |
+| 0.93 to 0.97 | 8 | 0.950 | 1.000 | -0.050 |
 
 **That calibration table is the part to read.** Resolving a name without a
 compiler is guesswork, and guesswork is fine as long as the guess says how
-sure it is. An edge claiming 0.95 is right every time here; one claiming 0.55
-is right about half the time. Both are honest, and an agent can weigh them.
+sure it is. Every rung is right on this fixture, which says more about the
+fixture than the rungs: nineteen edges cannot tell 0.9 from 1.0, and one
+edge in the 0.55 bin cannot tell it from anything. What the tests hold the
+tiers to is the direction that would hurt an agent: no rung with enough
+edges to judge may claim more than it delivers by over a tenth.
 
 The `index.scip` in that fixture is genuine `scip-typescript` output,
 committed so CI re-checks these numbers on every platform without a Node
@@ -107,16 +110,20 @@ toolchain. Two more fixtures do the same for the rest of the stack:
 
 | oracle | definitions P / R | references P / R |
 | --- | ---: | ---: |
-| `scip-typescript` 0.4.0 | 1.00 / 1.00 | 0.90 / 0.78 |
-| `scip-python` 0.6.6 | 1.00 / 0.90 | 1.00 / 0.69 |
-| `scip-php` 0.0.1 | 1.00 / 1.00 | 0.75 / 0.46 |
+| `scip-typescript` 0.4.0 | 1.00 / 1.00 | 1.00 / 1.00 |
+| `scip-python` 0.6.6 | 1.00 / 1.00 | 1.00 / 1.00 |
+| `scip-php` 0.0.1 | 1.00 / 1.00 | 0.93 / 1.00 |
 
-Definitions are solid everywhere; references are where the languages
-differ, and PHP is the weakest of the three. That is a fact about the
-resolver rather than about the fixture, and it is now visible instead of
-hidden behind a TypeScript average. `tests/test_oracles.py` holds each
-language to its floor, so a tag query that starts missing definitions
-cannot pass CI quietly.
+The one PHP false positive is a call through an untyped parameter that
+`scip-php` declines to resolve and this index resolves by name; the edge is
+right, the oracle is incomplete. Getting here took what a tag query alone
+cannot do: dropping uses of parameters and locals that shadow a symbol's
+name, typing a receiver from its annotation or its `new` so `user.greet()`
+goes to the class `user` was declared as, and deriving the override and
+transitive-interface edges a compiler records but nobody writes down.
+Three small fixtures are where those were found, not where they are
+proven; `tests/test_oracles.py` holds each language to its floor so none
+of it can regress quietly.
 
 The report also carries a per-edge-kind table, a dangling-edge count, and
 bootstrap confidence intervals resampled over files. Before trusting the

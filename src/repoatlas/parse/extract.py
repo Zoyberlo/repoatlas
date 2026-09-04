@@ -13,6 +13,7 @@ crosses between them.
 from __future__ import annotations
 
 import functools
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -49,6 +50,7 @@ _REFERENCE_PRECEDENCE = {
     "component": 7,
     "route": 7,
     "class": 6,
+    "scope": 6,
     "import": 5,
     "construct": 4,
     "call": 3,
@@ -67,6 +69,10 @@ _KIND_BY_CAPTURE = {
     "method": SymbolKind.METHOD,
     "constructor": SymbolKind.CONSTRUCTOR,
     "field": SymbolKind.FIELD,
+    # A field defined by assignment inside a method, `self.x = ...`, or by
+    # a promoted constructor parameter. Same kind as a field; what differs
+    # is where it belongs, and `_assign_ids` hoists it to the class.
+    "attribute": SymbolKind.FIELD,
     "property": SymbolKind.PROPERTY,
     "constant": SymbolKind.CONSTANT,
     "variable": SymbolKind.VARIABLE,
@@ -186,6 +192,16 @@ class Reference:
     kind: ReferenceKind
     span: SourceRange
     container_id: str | None = None
+    receiver: str | None = None
+    """The plain name a member was read through: `greeter` in `greeter.greet`."""
+
+    receiver_type: str | None = None
+    """What the extractor could tell about the receiver's type, by name.
+
+    Filled from an annotation or a `new` on the same local within the
+    enclosing function. It is a name, not a symbol: the resolver still has
+    to find which `Greeter` is meant.
+    """
 
     def __str__(self) -> str:
         return f"{self.name} [{self.kind}] at {self.span}"
@@ -277,12 +293,46 @@ def _qualified_name(name: str, container: Symbol | None) -> str:
 
 
 @dataclass(slots=True)
+class _RawReference:
+    name: str
+    kind: str
+    span: SourceRange
+    receiver: str | None = None
+
+
+@dataclass(slots=True)
+class _Collected:
+    """Everything one tag query found in one tree."""
+
+    definitions: list[_RawDefinition]
+    references: list[_RawReference]
+    locals: list[tuple[str, SourceRange]]
+    """Names bound inside a function body, with where they were bound."""
+
+    bindings: list[tuple[str, str, SourceRange]]
+    """``(variable, type name, where)`` for every annotated or constructed local."""
+
+    def shifted(self, adjust: Callable[[SourceRange], SourceRange]) -> _Collected:
+        """The same findings with every span mapped through ``adjust``."""
+        for definition in self.definitions:
+            definition.name_span = adjust(definition.name_span)
+            definition.full_span = adjust(definition.full_span)
+        for reference in self.references:
+            reference.span = adjust(reference.span)
+        self.locals = [(name, adjust(span)) for name, span in self.locals]
+        self.bindings = [(var, kind, adjust(span)) for var, kind, span in self.bindings]
+        return self
+
+
+@dataclass(slots=True)
 class _RawDefinition:
     name: str
     kind: SymbolKind
     name_span: SourceRange
     full_span: SourceRange
     signature: str = ""
+    hoist: bool = False
+    """Belongs to the nearest enclosing type, not the nearest enclosing body."""
 
 
 @functools.cache
@@ -314,10 +364,8 @@ def _declaration_line(lines: list[str], span: SourceRange) -> str:
     return text if len(text) <= _MAX_SIGNATURE else text[: _MAX_SIGNATURE - 1] + "…"
 
 
-def _collect(
-    tree: Tree, language: str, lines: list[str]
-) -> tuple[list[_RawDefinition], list[tuple[str, str, SourceRange]]]:
-    """Run the tag query and split its captures into definitions and uses."""
+def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
+    """Run the tag query and sort its captures into what they say."""
     from tree_sitter import QueryCursor
 
     cursor = QueryCursor(_compiled_query(language))
@@ -327,8 +375,30 @@ def _collect(
     # references are keyed by span and the strongest kind wins.
     reference_kinds: dict[SourceRange, str] = {}
     reference_names: dict[SourceRange, str] = {}
+    receivers: dict[SourceRange, str] = {}
+    found_locals: list[tuple[str, SourceRange]] = []
+    bindings: list[tuple[str, str, SourceRange]] = []
 
     for _pattern_index, captures in cursor.matches(tree.root_node):
+        local_nodes = captures.get("local")
+        if local_nodes and "name" not in captures:
+            node = local_nodes[0]
+            if node.text is not None:
+                found_locals.append(
+                    (node.text.decode("utf-8", errors="replace").lstrip("$"), to_range(node))
+                )
+            continue
+        if "binding" in captures:
+            var_nodes, type_nodes = captures.get("var"), captures.get("vtype")
+            if var_nodes and type_nodes and var_nodes[0].text and type_nodes[0].text:
+                bindings.append(
+                    (
+                        var_nodes[0].text.decode("utf-8", errors="replace").lstrip("$"),
+                        type_nodes[0].text.decode("utf-8", errors="replace"),
+                        to_range(captures["binding"][0]),
+                    )
+                )
+            continue
         name_nodes = captures.get("name")
         if not name_nodes:
             continue
@@ -373,6 +443,7 @@ def _collect(
                         name_span,
                         full_span,
                         _declaration_line(lines, full_span),
+                        hoist=capture_name == "definition.attribute",
                     )
             elif capture_name.startswith(_REFERENCE_PREFIX):
                 # Several patterns may capture one token. `user.greet()`
@@ -386,14 +457,20 @@ def _collect(
                 ) > _REFERENCE_PRECEDENCE.get(previous, 0):
                     reference_kinds[name_span] = reference_kind
                     reference_names[name_span] = name
+                receiver_nodes = captures.get("receiver")
+                if receiver_nodes and receiver_nodes[0].text is not None:
+                    receivers[name_span] = (
+                        receiver_nodes[0].text.decode("utf-8", errors="replace").lstrip("$")
+                    )
 
     ordered = sorted(
         definitions.values(), key=lambda d: (d.name_span.start, d.name_span.end)
     )
     references = [
-        (reference_names[span], kind, span) for span, kind in reference_kinds.items()
+        _RawReference(reference_names[span], kind, span, receivers.get(span))
+        for span, kind in reference_kinds.items()
     ]
-    return ordered, references
+    return _Collected(ordered, references, found_locals, bindings)
 
 
 def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
@@ -411,6 +488,9 @@ def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
     # precedes its members. A stack of open bodies therefore finds each
     # definition's container in amortised constant time.
     open_bodies: list[tuple[SourceRange, int]] = []
+    # Fields already defined per type, so `self.x = ...` in a second method
+    # is a use of the field rather than a second field.
+    fields_seen: set[tuple[str, str]] = set()
 
     for definition in raw:
         while open_bodies and (
@@ -422,6 +502,40 @@ def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
             open_bodies.pop()
         container_index = open_bodies[-1][1] if open_bodies else None
         container = symbols[container_index] if container_index is not None else None
+
+        if definition.hoist:
+            # `self.x = ...` sits inside a method; the field it defines
+            # belongs to the class around it. Outside any class it defines
+            # nothing an index should hold.
+            owner_index = next(
+                (
+                    index
+                    for _span, index in reversed(open_bodies)
+                    if symbols[index].kind in _TYPE_CONTAINERS
+                ),
+                None,
+            )
+            if owner_index is None:
+                continue
+            container = symbols[owner_index]
+            if (container.id, definition.name) in fields_seen:
+                continue
+            fields_seen.add((container.id, definition.name))
+            qualified = _qualified_name(definition.name, container)
+            symbols.append(
+                Symbol(
+                    id=f"{path}#{qualified}",
+                    name=definition.name,
+                    kind=SymbolKind.FIELD,
+                    path=path,
+                    name_range=definition.name_span,
+                    full_range=definition.full_span,
+                    container_id=container.id,
+                    qualified_name=qualified,
+                    signature=definition.signature or None,
+                )
+            )
+            continue
         qualified = _qualified_name(definition.name, container)
         base_id = f"{path}#{qualified}"
         seen = used.get(base_id, 0) + 1
@@ -446,8 +560,86 @@ def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
             local=is_local,
         )
         symbols.append(symbol)
+        if symbol.kind is SymbolKind.FIELD and container is not None:
+            fields_seen.add((container.id, symbol.name))
         open_bodies.append((definition.full_span, len(symbols) - 1))
     return symbols
+
+
+def _merge(into: _Collected, extra: _Collected) -> None:
+    into.definitions.extend(extra.definitions)
+    into.references.extend(extra.references)
+    into.locals.extend(extra.locals)
+    into.bindings.extend(extra.bindings)
+
+
+class _Scoping:
+    """Which names are local to which function, and what type each has.
+
+    Built once per file from the `@local` and `@binding` captures. A local
+    is visible in the function that binds it and in every closure nested
+    inside that function, and stops being visible at a class or the
+    module: that is the scoping rule shared by every language here, near
+    enough that the differences do not reach a reference's resolution.
+
+    Scopes are the callable and type symbols. A `const` inside a function
+    may be a symbol of its own, and a binding written on it belongs to the
+    function around it, not to the variable.
+    """
+
+    __slots__ = ("_by_id", "_names", "_symbols", "_types")
+
+    def __init__(
+        self,
+        symbols: list[Symbol],
+        scopes: ScopeIndex[int],
+        found_locals: list[tuple[str, SourceRange]],
+        bindings: list[tuple[str, str, SourceRange]],
+    ) -> None:
+        self._symbols = symbols
+        self._by_id = {symbol.id: index for index, symbol in enumerate(symbols)}
+        self._names: dict[int, set[str]] = {}
+        self._types: dict[tuple[int | None, str], str] = {}
+        for name, span in found_locals:
+            owner = self._owner(scopes.innermost(span))
+            # A name bound at module or class level is a symbol, not a
+            # local; only a function's own bindings shadow anything.
+            if owner is not None and symbols[owner].kind.is_callable:
+                self._names.setdefault(owner, set()).add(name)
+        for var, type_name, span in bindings:
+            self._types.setdefault((self._owner(scopes.innermost(span)), var), type_name)
+
+    def _owner(self, index: int | None) -> int | None:
+        """The nearest enclosing function or type, or the module."""
+        while index is not None:
+            symbol = self._symbols[index]
+            if symbol.kind.is_callable or symbol.kind.is_type_like:
+                return index
+            index = self._by_id.get(symbol.container_id or "")
+        return None
+
+    def _scopes_up(self, index: int | None) -> Iterator[int | None]:
+        """Every scope around a position, innermost first, ending at the module."""
+        current = self._owner(index)
+        while current is not None:
+            yield current
+            current = self._owner(self._by_id.get(self._symbols[current].container_id or ""))
+        yield None
+
+    def is_local(self, name: str, index: int | None) -> bool:
+        return any(
+            scope is not None and name in self._names.get(scope, ())
+            for scope in self._scopes_up(index)
+        )
+
+    def type_of(self, receiver: str | None, index: int | None) -> str | None:
+        if not receiver:
+            return None
+        for scope in self._scopes_up(index):
+            found = self._types.get((scope, receiver))
+            if found is not None:
+                return found
+        return None
 
 
 def extract_source(
@@ -457,7 +649,7 @@ def extract_source(
     parser = get_parser(spec.name)
     tree = parser.parse(source)
     lines = source.decode("utf-8", errors="replace").splitlines()
-    raw_definitions, raw_references = _collect(tree, spec.name, lines)
+    collected = _collect(tree, spec.name, lines)
 
     # A Vue component's definitions live in its script block, which is
     # another language. Parsing it here rather than in a second pass keeps
@@ -465,8 +657,8 @@ def extract_source(
     # delete-and-insert still covers all of them.
     embedded_imports: list[FileImports] = []
     for region in embedded_regions(tree, spec.name):
-        inner = parse_embedded(source, region)
-        if inner is None:
+        inner_tree = parse_embedded(source, region)
+        if inner_tree is None:
             continue
         if region.is_prefixed:
             # The island was parsed with a prefix in front, so its tree's
@@ -474,56 +666,52 @@ def extract_source(
             # and move every span back onto the host file.
             island = region.prefix + source[region.node.start_byte : region.node.end_byte]
             island_lines = island.decode("utf-8", errors="replace").splitlines()
-            inner_definitions, inner_references = _collect(
-                inner, region.language, island_lines
-            )
+            inner = _collect(inner_tree, region.language, island_lines)
             prefix_text = region.prefix.decode("utf-8", errors="replace")
-            for definition in inner_definitions:
+            for definition in inner.definitions:
                 if definition.name_span.start.line == 0 and definition.signature.startswith(
                     prefix_text
                 ):
                     definition.signature = definition.signature[len(prefix_text) :]
-                definition.name_span = region.adjust(definition.name_span)
-                definition.full_span = region.adjust(definition.full_span)
-            raw_definitions.extend(inner_definitions)
-            raw_references.extend(
-                (name, kind, region.adjust(span)) for name, kind, span in inner_references
-            )
+            _merge(collected, inner.shifted(region.adjust))
             continue
-        inner_definitions, inner_references = _collect(
-            inner, region.language, lines
-        )
-        raw_definitions.extend(inner_definitions)
-        raw_references.extend(inner_references)
-        embedded_imports.append(extract_imports(inner, region.language))
-    raw_definitions.sort(key=lambda d: (d.name_span.start, d.name_span.end))
+        _merge(collected, _collect(inner_tree, region.language, lines))
+        embedded_imports.append(extract_imports(inner_tree, region.language))
+    collected.definitions.sort(key=lambda d: (d.name_span.start, d.name_span.end))
 
-    symbols = _assign_ids(path, raw_definitions)
+    symbols = _assign_ids(path, collected.definitions)
 
     scopes: ScopeIndex[int] = ScopeIndex(
         (symbol.full_range or symbol.name_range, index)
         for index, symbol in enumerate(symbols)
     )
     definition_spans = {symbol.name_range for symbol in symbols}
+    scoping = _Scoping(symbols, scopes, collected.locals, collected.bindings)
 
     references: list[Reference] = []
-    for name, kind, span in raw_references:
-        if kind == "component" and not _is_component_name(name):
+    for raw in collected.references:
+        if raw.kind == "component" and not _is_component_name(raw.name):
             continue
-        if span in definition_spans:
+        if raw.span in definition_spans:
             # The identifier in `class A(B)` is a definition of A and a
             # reference to B; a name that is its own definition site is not
             # a reference to anything.
             continue
-        container_index = scopes.innermost(span)
+        container_index = scopes.innermost(raw.span)
+        if raw.kind == "value" and scoping.is_local(raw.name, container_index):
+            # A bare use of a parameter or a local: the function's own
+            # business, and not a use of any symbol this index defines.
+            continue
         references.append(
             Reference(
-                name=name,
-                kind=kind,
-                span=span,
+                name=raw.name,
+                kind=raw.kind,
+                span=raw.span,
                 container_id=(
                     symbols[container_index].id if container_index is not None else None
                 ),
+                receiver=raw.receiver,
+                receiver_type=scoping.type_of(raw.receiver, container_index),
             )
         )
     references.sort(key=lambda reference: (reference.span.start, reference.name))

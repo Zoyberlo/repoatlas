@@ -188,6 +188,9 @@ class TestPython:
             "Greeter",
             "Greeter.field",
             "Greeter.__init__",
+            # `self.value = 1` inside __init__ defines a field of the class,
+            # hoisted out of the method it was written in.
+            "Greeter.value",
             "Greeter.greet",
             "main",
         ]
@@ -433,3 +436,96 @@ class TestExtractFile:
         source = tmp_path / "notes.md"
         source.write_text("# hello", encoding="utf-8")
         assert extract_file("notes.md", str(source)) is None
+
+
+class TestLocalsAndReceivers:
+    """What stage two of the accuracy work added, each with its reason."""
+
+    def test_a_parameter_name_does_not_reach_a_field_of_the_same_name(self) -> None:
+        # `return new User(label)` inside makeUser(label): `label` is the
+        # parameter, and the oracle says so. Resolving it to the field
+        # `User.label` was a confident wrong edge.
+        result = extract(
+            "a.ts",
+            b"class User { label: string; constructor(label: string) { this.label = label; } }\n"
+            b"export function makeUser(label: string): User { return new User(label); }\n",
+        )
+        values = [r for r in result.references if r.kind == "value"]
+        assert values == []
+
+    def test_a_local_is_shadowed_in_nested_closures_too(self) -> None:
+        result = extract(
+            "a.py",
+            b"def outer(count):\n"
+            b"    def inner():\n"
+            b"        return count\n"
+            b"    return inner\n",
+        )
+        assert not [r for r in result.references if r.kind == "value" and r.name == "count"]
+
+    def test_a_module_level_name_is_not_shadowed_by_an_unrelated_function(self) -> None:
+        result = extract(
+            "a.py",
+            b"LIMIT = 3\n\n\ndef f(limit):\n    return limit\n\n\ndef g():\n    return LIMIT\n",
+        )
+        assert [r.name for r in result.references if r.kind == "value"] == ["LIMIT"]
+
+    def test_a_member_read_records_its_receiver(self) -> None:
+        result = extract("a.py", b"def f(greeter):\n    return greeter.greet()\n")
+        call = next(r for r in result.references if r.name == "greet")
+        assert call.receiver == "greeter"
+        assert call.receiver_type is None
+
+    def test_an_annotated_parameter_types_its_receiver(self) -> None:
+        result = extract("a.py", b"def f(greeter: Greeter):\n    return greeter.greet()\n")
+        call = next(r for r in result.references if r.name == "greet")
+        assert call.receiver_type == "Greeter"
+
+    def test_a_typescript_declarator_types_its_receiver(self) -> None:
+        result = extract(
+            "a.ts",
+            b"function run() { const user: Greets = make(); return user.greet(); }\n",
+        )
+        call = next(r for r in result.references if r.name == "greet")
+        assert call.receiver_type == "Greets"
+
+    def test_a_typescript_new_types_its_receiver(self) -> None:
+        result = extract(
+            "a.ts", b"function run() { let admin = new Admin(); return admin.audit(); }\n"
+        )
+        call = next(r for r in result.references if r.name == "audit")
+        assert call.receiver_type == "Admin"
+
+    def test_a_php_parameter_and_new_type_their_receivers(self) -> None:
+        result = extract(
+            "a.php",
+            b"<?php\nfunction run(Greeter $g) { $l = new LoudGreeter(); return $g->greet() . $l->greet(); }\n",
+        )
+        calls = {r.receiver: r.receiver_type for r in result.references if r.name == "greet"}
+        assert calls == {"g": "Greeter", "l": "LoudGreeter"}
+
+    def test_a_php_static_call_names_its_class_as_receiver(self) -> None:
+        result = extract("a.php", b"<?php\nfunction run() { return Util::helper(); }\n")
+        call = next(r for r in result.references if r.name == "helper")
+        assert call.receiver == "Util"
+
+    def test_a_php_promoted_parameter_is_a_field_of_the_class(self) -> None:
+        result = extract(
+            "a.php",
+            b"<?php\nclass A { public function __construct(private string $prefix) {} }\n",
+        )
+        names = {s.qualified_name: s.kind.value for s in result.symbols}
+        assert names.get("A.prefix") == "field"
+
+    def test_a_second_self_assignment_is_a_use_not_a_second_field(self) -> None:
+        result = extract(
+            "a.py",
+            b"class A:\n"
+            b"    def __init__(self):\n"
+            b"        self.x = 1\n"
+            b"    def reset(self):\n"
+            b"        self.x = 0\n",
+        )
+        fields = [s for s in result.symbols if s.kind.value == "field"]
+        assert [s.qualified_name for s in fields] == ["A.x"]
+        assert any(r.name == "x" and r.kind == "member" for r in result.references)

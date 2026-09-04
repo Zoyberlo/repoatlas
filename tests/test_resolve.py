@@ -470,3 +470,119 @@ class TestEndToEnd:
             )
 
         assert key(first) == key(second)
+
+
+class TestTypedReceivers:
+    """A member reached through a typed receiver goes to that type's member."""
+
+    def project(self, root: Path) -> None:
+        (root / "greeter.py").write_text(
+            "class Greeter:\n"
+            "    def greet(self, name):\n"
+            "        return name\n"
+            "\n\n"
+            "class Other:\n"
+            "    def greet(self, name):\n"
+            "        return name\n",
+            encoding="utf-8",
+        )
+        (root / "loud.py").write_text(
+            "from greeter import Greeter\n\n\n"
+            "class LoudGreeter(Greeter):\n"
+            "    pass\n",
+            encoding="utf-8",
+        )
+        (root / "app.py").write_text(
+            "from greeter import Greeter\n"
+            "from loud import LoudGreeter\n\n\n"
+            "def run(g: Greeter, loud: LoudGreeter):\n"
+            "    return g.greet('a'), loud.greet('b')\n",
+            encoding="utf-8",
+        )
+
+    def edges_from(self, root: Path) -> dict[int, str]:
+        result = build_snapshot(root, use_git=False)
+        return {
+            e.site_range.start.character: e.dst_id
+            for e in result.snapshot.edges
+            if e.site_path == "app.py" and e.site_range and e.site_range.start.line == 5
+        }
+
+    def test_the_declared_type_decides_between_two_greets(self, tmp_path: Path) -> None:
+        # Two classes define `greet`; without the type of `g` the bottom
+        # rung would pick one by position. The annotation says which.
+        self.project(tmp_path)
+        edges = self.edges_from(tmp_path)
+        assert edges[13] == "greeter.py#Greeter.greet"
+
+    def test_an_inherited_member_is_found_up_the_chain_across_files(self, tmp_path: Path) -> None:
+        # `loud: LoudGreeter` has no `greet` of its own; it inherits one from
+        # a class in a third file. The chain has to be learned before any
+        # lookup walks it.
+        self.project(tmp_path)
+        edges = self.edges_from(tmp_path)
+        assert edges[30] == "greeter.py#Greeter.greet"
+
+    def test_a_typed_receiver_carries_the_tier_of_its_type(self, tmp_path: Path) -> None:
+        self.project(tmp_path)
+        result = build_snapshot(tmp_path, use_git=False)
+        edge = next(
+            e for e in result.snapshot.edges
+            if e.site_path == "app.py" and e.site_range and e.site_range.start.character == 13
+        )
+        assert edge.tier.label == "import_map"
+
+
+class TestDerivedInheritance:
+    def project(self, root: Path) -> None:
+        (root / "base.ts").write_text(
+            "export interface Greets { greet(): string; }\n"
+            "export class User implements Greets { greet(): string { return 'u'; } }\n",
+            encoding="utf-8",
+        )
+        (root / "admin.ts").write_text(
+            "import { User } from './base';\n"
+            "export class Admin extends User { greet(): string { return 'a'; } }\n",
+            encoding="utf-8",
+        )
+
+    def test_an_override_is_an_edge_to_what_it_overrides(self, tmp_path: Path) -> None:
+        self.project(tmp_path)
+        result = build_snapshot(tmp_path, use_git=False)
+        pairs = {(e.src_id, e.dst_id) for e in result.snapshot.edges if e.kind.value == "implements"}
+        assert ("admin.ts#Admin.greet", "base.ts#User.greet") in pairs
+        assert ("base.ts#User.greet", "base.ts#Greets.greet") in pairs
+
+    def test_an_interface_is_implemented_transitively(self, tmp_path: Path) -> None:
+        self.project(tmp_path)
+        result = build_snapshot(tmp_path, use_git=False)
+        pairs = {(e.src_id, e.dst_id) for e in result.snapshot.edges if e.kind.value == "implements"}
+        assert ("admin.ts#Admin", "base.ts#Greets") in pairs
+        # Two levels up, the override reaches the interface method too.
+        assert ("admin.ts#Admin.greet", "base.ts#Greets.greet") in pairs
+
+    def test_derived_edges_carry_no_site_and_are_deterministic(self, tmp_path: Path) -> None:
+        from repoatlas.resolve.derived import derive_inheritance, is_derived
+
+        self.project(tmp_path)
+        result = build_snapshot(tmp_path, use_git=False)
+        derived = [e for e in result.snapshot.edges if is_derived(e)]
+        assert derived and all(e.site_path is None for e in derived)
+        again = derive_inheritance(result.snapshot.symbols, result.snapshot.edges)
+        assert [(e.src_id, e.dst_id) for e in again] == [(e.src_id, e.dst_id) for e in derived]
+
+    def test_the_store_derives_the_same_edges(self, tmp_path: Path) -> None:
+        from repoatlas.store import IndexStore, update_store
+
+        project = tmp_path / "p"
+        project.mkdir()
+        self.project(project)
+        with IndexStore(tmp_path / "i.db") as store:
+            update_store(project, store, use_git=False)
+            stored = {(e.src_id, e.dst_id) for e in store.edges() if e.kind.value == "implements"}
+        direct = {
+            (e.src_id, e.dst_id)
+            for e in build_snapshot(project, use_git=False).snapshot.edges
+            if e.kind.value == "implements"
+        }
+        assert stored == direct

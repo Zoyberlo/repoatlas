@@ -163,7 +163,13 @@ class TestReferenceFacts:
         )
         facts, unprojectable = reference_facts(snapshot, require_site=True)
         assert not unprojectable
-        assert facts[0].site_span.to_scip() == [1, 0, 5]
+        # One sited edge is two facts: the mention of the base, an
+        # occurrence like any other, and the relationship, which an oracle
+        # records without a position and which anchors on the declaring
+        # symbol.
+        assert [f.site_span.to_scip() for f in facts] == [[1, 30, 34], [1, 0, 5]]
+        assert facts[0].kind == "reference-like"
+        assert facts[1].kind == "inheritance-like"
 
     def test_collapses_reference_like_kinds_by_default(self) -> None:
         snapshot = snapshot_with(make_symbol("f"), make_symbol("g", line=5))
