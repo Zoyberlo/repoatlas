@@ -1,0 +1,101 @@
+
+P
+scip-php0.0.17file:///mnt/a/Projects/repoatlas/tests/fixtures/phpdemo â"19
+src/App.phpq
+$escip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/App#build().($loud)(d
+/6Zscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#(h
+
+
+&^scip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/LoudGreeter#(d
+
+'
+.Zscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#(s
+
+0
+>iscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#DEFAULT_PREFIX.(	d
+
+F
+MZscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#(j
+^scip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/App#build().(o
+$cscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/App#run().($name)(h
+^scip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/App#build().(h
+\scip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/App#run().(b
+	Vscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/App#(†
+escip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/App#build().($loud)```php
+bool $loud = false
+```¥
+^scip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/App#build().C```php
+public function build(bool $loud = false): \Demo\Greeter
+```~
+cscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/App#run().($name)```php
+string $name
+```”
+\scip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/App#run().4```php
+public function run(string $name): string
+```n
+Vscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/App#```php
+class App
+```Ñ"19
+src/Greeter.phpu
+iscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#DEFAULT_PREFIX.(	n
+
+
+bscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#$prefix.(d
+15Zscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#(s
+7Eiscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#DEFAULT_PREFIX.(	}
+'.qscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#__construct().($prefix)(l
+bscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#$prefix.(t
+hscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#__construct().(u
+!&iscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#greet().($name)(l
+bscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#$prefix.(n
+bscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#greet().(u
+$)iscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#shout().($name)(4
+*scip-php composer php 8.4.24 strtoupper().(l
+!&bscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#greet().(n
+bscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#shout().(f
+Zscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#(—
+iscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#DEFAULT_PREFIX.*```php
+public DEFAULT_PREFIX = 'hello'
+```‡
+bscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#$prefix.!```php
+private string $prefix
+```¥
+qscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#__construct().($prefix)0```php
+string $prefix = self::DEFAULT_PREFIX
+```¹
+hscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#__construct().M```php
+public function __construct(string $prefix = self::DEFAULT_PREFIX)
+```„
+iscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#greet().($name)```php
+string $name
+```œ
+bscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#greet().6```php
+public function greet(string $name): string
+```„
+iscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#shout().($name)```php
+string $name
+```Ÿ
+bscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#shout().9```php
+protected function shout(string $name): string
+```v
+Zscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#```php
+class Greeter
+```Œ"19
+src/LoudGreeter.phpd
+!Zscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#(y
+!&mscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/LoudGreeter#greet().($name)(l
+
+
+bscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/Greeter#shout().(r
+fscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/LoudGreeter#greet().(j
+^scip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/LoudGreeter#(ˆ
+mscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/LoudGreeter#greet().($name)```php
+string $name
+``` 
+fscip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/LoudGreeter#greet().6```php
+public function greet(string $name): string
+```“
+^scip-php composer repoatlas/phpdemo 22ee336be4aac0d132bc4539156a1a77658aa6b6 Demo/LoudGreeter#1```php
+class LoudGreeter extends Demo\Greeter
+```X
+*scip-php composer php 8.4.24 strtoupper().*scip-php composer php 8.4.24 strtoupper().

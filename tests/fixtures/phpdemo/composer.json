@@ -1,0 +1,22 @@
+{
+    "name": "repoatlas/phpdemo",
+    "description": "A tiny PHP project and a real scip-php index of it.",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": "^8.2"
+    },
+    "require-dev": {
+        "davidrjenni/scip-php": "^0.0.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "Demo\\": "src/"
+        }
+    },
+    "config": {
+        "audit": {
+            "block-insecure": false
+        }
+    }
+}

@@ -13,11 +13,12 @@ uses it, and what the project is built around, without grepping its way
 there. Every answer fits a token budget, and every edge says how confidently
 it was resolved.
 
-> **Measured, not claimed.** Against a real `scip-typescript` index the
-> extractor scores **1.00** on definitions and **0.84** on resolved
-> references, and every confidence rung is calibrated to within five points
-> of what it claims. The oracle harness was written before the extractor it
-> judges, and [the next section](#why-this-exists-and-why-it-starts-with-tests)
+> **Measured, not claimed.** Against real `scip-typescript`, `scip-python`
+> and `scip-php` indexes the extractor finds definitions at **1.00**
+> precision in all three languages, and resolves references at 0.90, 1.00
+> and 0.75 precision. Every number below is checked by CI on every
+> platform. The oracle harness was written before the extractor it judges,
+> and [the next section](#why-this-exists-and-why-it-starts-with-tests)
 > explains why.
 
 ```bash
@@ -102,7 +103,20 @@ is right about half the time. Both are honest, and an agent can weigh them.
 
 The `index.scip` in that fixture is genuine `scip-typescript` output,
 committed so CI re-checks these numbers on every platform without a Node
-toolchain.
+toolchain. Two more fixtures do the same for the rest of the stack:
+
+| oracle | definitions P / R | references P / R |
+| --- | ---: | ---: |
+| `scip-typescript` 0.4.0 | 1.00 / 1.00 | 0.90 / 0.78 |
+| `scip-python` 0.6.6 | 1.00 / 0.90 | 1.00 / 0.69 |
+| `scip-php` 0.0.1 | 1.00 / 1.00 | 0.75 / 0.46 |
+
+Definitions are solid everywhere; references are where the languages
+differ, and PHP is the weakest of the three. That is a fact about the
+resolver rather than about the fixture, and it is now visible instead of
+hidden behind a TypeScript average. `tests/test_oracles.py` holds each
+language to its floor, so a tag query that starts missing definitions
+cannot pass CI quietly.
 
 The report also carries a per-edge-kind table, a dangling-edge count, and
 bootstrap confidence intervals resampled over files. Before trusting the
@@ -531,11 +545,11 @@ the name cascade would match any function called `nope` and label the result
 - [ ] **Documentation layer**: per-file summaries anchored to symbol ranges,
       cached by content hash and measured against the same harness
 
-Known gaps, stated rather than buried: the ranking weights are judgement
-calls that no benchmark has yet settled, Laravel route and config names need
-tables nothing yet reads, no measurement says how many `view()` calls in a
-real project use a literal string rather than a built one, and the only
-committed oracle fixture is TypeScript.
+Known gaps, stated rather than buried: most ranking weights are judgement
+calls no benchmark has yet settled — the one that has been measured, how a
+task's words steer the map, turned out to be wrong and was changed — Laravel
+route and config names need tables nothing yet reads, and Kotlin is not
+supported.
 
 The full plan, including how tiers 3 and 4 of evaluation work and which
 benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md).

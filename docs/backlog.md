@@ -187,7 +187,7 @@ Small, certain, and each about an hour. *The first five were fixed on 2026-09-04
   the `php` grammar after prefixing `<?php ` would work but reintroduces
   the offset arithmetic `included_ranges` was chosen to avoid. Worth doing
   carefully, with a test that a symbol at a known line lands on that line.
-- **Only one oracle fixture exists**, and it is TypeScript. Every accuracy
+- *Done 2026-09-04:* **Only one oracle fixture exists**, and it is TypeScript. Every accuracy
   number in the README is a TypeScript number. PHP and Python fixtures
   from `scip-php` and `scip-python` are the first step to any claim about
   the stack this is used on, and the `suffix` rung is already flagged
