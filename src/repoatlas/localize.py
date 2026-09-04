@@ -38,13 +38,16 @@ import json
 import re
 import statistics
 import subprocess
+from collections import defaultdict
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .model import IndexSnapshot, Symbol
 from .rank import MapOptions, RankOptions, rank_symbols, render_map
 from .rank.cache import mention_keys
+from .rank.tokens import estimate_tokens
 from .store import IndexStore, update_store
 
 __all__ = [
@@ -122,8 +125,12 @@ class CommitCase:
     matched_mentions: int = 0
     symbol_recall_plain: float = 0.0
     symbol_recall_steered: float = 0.0
+    symbol_recall_skeleton: float = 0.0
+    """The baseline: the whole repository's skeleton, files in path order, cut at the budget."""
+
     file_recall_plain: float = 0.0
     file_recall_steered: float = 0.0
+    file_recall_skeleton: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -133,8 +140,10 @@ class CommitCase:
             "matched_mentions": self.matched_mentions,
             "symbol_recall_plain": round(self.symbol_recall_plain, 3),
             "symbol_recall_steered": round(self.symbol_recall_steered, 3),
+            "symbol_recall_skeleton": round(self.symbol_recall_skeleton, 3),
             "file_recall_plain": round(self.file_recall_plain, 3),
             "file_recall_steered": round(self.file_recall_steered, 3),
+            "file_recall_skeleton": round(self.file_recall_skeleton, 3),
         }
 
 
@@ -159,8 +168,10 @@ class LocalizeResult:
             "scored": len(self.cases),
             "symbol_recall_plain": round(self._mean("symbol_recall_plain"), 4),
             "symbol_recall_steered": round(self._mean("symbol_recall_steered"), 4),
+            "symbol_recall_skeleton": round(self._mean("symbol_recall_skeleton"), 4),
             "file_recall_plain": round(self._mean("file_recall_plain"), 4),
             "file_recall_steered": round(self._mean("file_recall_steered"), 4),
+            "file_recall_skeleton": round(self._mean("file_recall_skeleton"), 4),
         }
         if include_cases:
             # Subjects and paths are the repository's own content, so they
@@ -175,11 +186,13 @@ class LocalizeResult:
                 f"commits:  {len(self.cases)} scored of {self.walked} walked "
                 f"(budget {self.budget})",
                 "",
-                f"{'':<22}{'plain':>8}{'steered':>10}",
+                f"{'':<22}{'plain':>8}{'steered':>10}{'skeleton':>10}",
                 f"{'symbol recall':<22}{self._mean('symbol_recall_plain'):>8.3f}"
-                f"{self._mean('symbol_recall_steered'):>10.3f}",
+                f"{self._mean('symbol_recall_steered'):>10.3f}"
+                f"{self._mean('symbol_recall_skeleton'):>10.3f}",
                 f"{'file recall':<22}{self._mean('file_recall_plain'):>8.3f}"
-                f"{self._mean('file_recall_steered'):>10.3f}",
+                f"{self._mean('file_recall_steered'):>10.3f}"
+                f"{self._mean('file_recall_skeleton'):>10.3f}",
             )
         ) + "\n"
 
@@ -410,9 +423,51 @@ def walk(
                         f"file_recall_{label}",
                         len(wanted_files & files) / len(wanted_files),
                     )
+                # The baseline any ranking has to beat: the skeleton of the
+                # whole repository, files in path order, cut at the same
+                # budget. It is what `repomix --compress` hands a model,
+                # and this project once lost to a baseline that naive.
+                points, files = _entries(skeleton_prefix(snapshot, map_options.budget))
+                case.symbol_recall_skeleton = len(wanted_points & points) / len(wanted_points)
+                case.file_recall_skeleton = len(wanted_files & files) / len(wanted_files)
                 yield commit, case
     finally:
         _git(root, "checkout", "--quiet", "--detach", head, check=False)
+
+
+def skeleton_prefix(snapshot: IndexSnapshot, budget: int) -> str:
+    """The repository's skeleton in path order, cut where ``budget`` runs out.
+
+    Rendered in the map's own format so the same scorer reads it: a
+    `path:` header, then one indented line per symbol in source order.
+    No ranking, no steering, no spread; this is the baseline.
+    """
+    by_path: dict[str, list[Symbol]] = defaultdict(list)
+    for symbol in snapshot.symbols.values():
+        if not symbol.synthetic and not symbol.local:
+            by_path[symbol.path].append(symbol)
+    lines: list[str] = []
+    spent = 0
+    for path in sorted(by_path):
+        symbols = sorted(by_path[path], key=lambda s: s.name_range)
+        block = [f"{path}:"]
+        by_id = {s.id: s for s in symbols}
+        for symbol in symbols:
+            depth = 0
+            container = symbol.container_id
+            while container in by_id:
+                depth += 1
+                container = by_id[container].container_id
+            body = symbol.signature or f"{symbol.kind.value} {symbol.name}"
+            block.append(f"{'  ' * depth}{symbol.name_range.start.line + 1:>5}  {body}")
+        block.append("")
+        for line in block:
+            cost = estimate_tokens(line + "\n")
+            if spent + cost > budget:
+                return "\n".join(lines) + "\n"
+            spent += cost
+            lines.append(line)
+    return "\n".join(lines) + "\n"
 
 
 def run_localize(

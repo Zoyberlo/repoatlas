@@ -143,3 +143,24 @@ benchmark measures the map on the subset of work it is meant to help with.
 Reproduce with:
 
     repoatlas localize <repo> --commits 400 --spread 0.5
+
+## Against no ranking at all
+
+*Added 2026-09-05.* Every number above compares one ranking with
+another. None compared ranking with its absence, and a project that once
+lost to a baseline of bare filenames should not leave that door open.
+`repoatlas localize` now scores a third map per commit: the repository's
+skeleton in path order, cut at the same 2,000 tokens, which is what
+`repomix --compress` gives a model.
+
+| map, 281 commits | symbol recall | file recall |
+| --- | ---: | ---: |
+| skeleton prefix (Repomix-shaped) | 0.028 | 0.032 |
+| ranked, plain | 0.221 | 0.554 |
+| ranked, steered by the subject's words | 0.309 | 0.579 |
+
+The prefix reaches the first thirty files alphabetically, which on this
+repository are `backend/app/Console` commands, and stops. PageRank is
+worth eight times that; the words of the task, eleven. The baseline is
+built with this index's own extractor rather than by running Repomix,
+so it measures the ordering and the budget, not two tokenisers.

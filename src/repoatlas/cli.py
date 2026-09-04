@@ -142,6 +142,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     search.add_argument("--format", choices=("text", "json"), default="text")
 
+    tokens = subcommands.add_parser(
+        "tokens", help="where an index's tokens go: the skeleton's cost by directory"
+    )
+    tokens.add_argument("store", type=Path, help="the SQLite index to read")
+    tokens.add_argument("--depth", type=int, default=2, help="directory levels to show")
+    tokens.add_argument("--top", type=int, default=25, help="entries per level")
+    tokens.add_argument(
+        "--max-total",
+        type=int,
+        help="exit 1 when the whole skeleton costs more tokens than this; a CI gate",
+    )
+    tokens.add_argument("--format", choices=("text", "json"), default="text")
+
     repo_map = subcommands.add_parser(
         "map", help="render a ranked, budgeted map of a repository"
     )
@@ -474,6 +487,32 @@ def _error_rate(result: object) -> float:
     files = sum(item.files for item in stats)
     failed = sum(item.files_with_errors for item in stats)
     return failed / files if files else 0.0
+
+
+def _cmd_tokens(args: argparse.Namespace) -> int:
+    """Print the skeleton's token cost per directory, and gate on the total."""
+    from .cost import token_tree
+    from .store import IndexStore, StoreError
+
+    if not args.store.exists():
+        raise SystemExit(f"repoatlas: no such index: {args.store}")
+    try:
+        store = IndexStore(args.store)
+    except StoreError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+    with store:
+        tree = token_tree(store, depth=max(1, args.depth))
+    if args.format == "json":
+        print(json.dumps(tree.as_dict(), indent=2))
+    else:
+        print(tree.as_text(top=max(1, args.top)), end="")
+    if args.max_total is not None and tree.total > args.max_total:
+        print(
+            f"skeleton costs {tree.total} tokens, above the {args.max_total} allowed",
+            file=sys.stderr,
+        )
+        return _EXIT_FAILED_CHECK
+    return _EXIT_OK
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
@@ -834,6 +873,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "index": _cmd_index,
         "search": _cmd_search,
         "map": _cmd_map,
+        "tokens": _cmd_tokens,
         "calibrate": _cmd_calibrate,
         "bench": _cmd_bench,
         "localize": _cmd_localize,

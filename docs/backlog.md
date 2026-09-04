@@ -438,6 +438,16 @@ copies hold; write-up at the end of `docs/benchmarks/oracles.md`. Open:
 Laravel named routes (`route('login')`), config keys, and Blade
 directive arguments as PHP islands.
 
+*Also 2026-09-05, from a look at Repomix:* two things worth taking and
+one measurement. `repoatlas tokens` prints the skeleton's cost per
+directory and, with `--max-total`, gates CI on it, the way
+`--token-count-tree` and `--token-budget` do there. And `localize`
+scores a Repomix-shaped baseline, the whole skeleton in path order cut
+at the budget: 0.028 symbol recall against 0.221 plain and 0.309
+steered, in `docs/benchmarks/weights.md`. Integrating Repomix itself
+was not worth it: a different data model, a Node dependency, and what it
+does this index already does for its own case.
+
 | # | Item | Why first | Size |
 | ---: | --- | --- | --- |
 | 1 | Calibrate tokens per model, thread the estimator through the tools (1.1) | The budget is wrong by a third | half a day |

@@ -213,6 +213,36 @@ number from it is believed.
 **Languages:** Python, TypeScript, TSX, JavaScript, PHP. Adding one is a query
 file and a registry line; the harness then says whether it worked.
 
+### Where the tokens go
+
+A map spends its budget; the skeleton it chooses from costs what it
+costs, and `tokens` says where:
+
+```bash
+repoatlas tokens .repoatlas/index.db --depth 2
+```
+
+```
+skeleton of 363 files, 3333 symbols: 59277 tokens (estimated)
+
+   31188  52.6%  backend/  (272 files, 1310 symbols)
+     24022  40.5%  app/  (153 files, 1083 symbols)
+        6518  11.0%  Http/  (33 files, 287 symbols)
+        5519   9.3%  Console/  (34 files, 211 symbols)
+        4201   7.1%  Services/  (24 files, 164 symbols)
+      5191   8.8%  database/  (64 files, 200 symbols)
+        4846   8.2%  migrations/  (59 files, 184 symbols)
+   ...
+```
+
+That is the real application: a twelfth of its skeleton is migrations,
+which no task ever asks for, and the tree is how one finds that out.
+
+Heaviest first, measured with the store's own estimator, so the numbers
+are the ones a budget is spent against. With `--max-total N` it is a CI
+gate that exits 1 when the skeleton has outgrown what an agent is expected
+to hold, the way `repomix --token-budget` does for a packed repository.
+
 ### Ten thousand files
 
 `repoatlas bench` indexes a repository cold, again untouched, again with one
@@ -398,6 +428,15 @@ the two corrections the benchmark itself needed first.
 
 One caveat that cannot be engineered away: a commit message is a generous
 proxy for a task, written afterwards by the person who did the work.
+
+A ranking has to beat not ranking at all, and this project once lost to
+a baseline that naive: file recall rewarded a map of bare filenames. So
+`localize` scores a third map beside the plain and the steered one: the
+skeleton of the whole repository, files in path order, cut at the same
+budget, which is what `repomix --compress` hands a model. On the same
+application it finds 0.028 of the changed symbols against 0.221 plain
+and 0.309 steered. The ranking is worth eight times the prefix; the
+words of the task, eleven.
 
 ## Serving it to an agent
 

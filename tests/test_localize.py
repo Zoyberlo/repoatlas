@@ -257,3 +257,35 @@ class TestCli:
 
         with pytest.raises(SystemExit, match="not a git repository"):
             main(["localize", str(tmp_path)])
+
+
+class TestSkeletonBaseline:
+    def test_the_skeleton_prefix_is_path_ordered_and_budgeted(self) -> None:
+        from repoatlas.localize import skeleton_prefix
+        from repoatlas.model import IndexSnapshot, SourceRange, Symbol, SymbolKind
+
+        snapshot = IndexSnapshot()
+        for index, path in enumerate(("z.py", "a.py", "m.py")):
+            snapshot.add_symbol(
+                Symbol(
+                    id=f"{path}#f{index}",
+                    name=f"f{index}",
+                    kind=SymbolKind.FUNCTION,
+                    path=path,
+                    name_range=SourceRange.of(index, 4, index, 6),
+                    signature=f"def f{index}():",
+                )
+            )
+        text = skeleton_prefix(snapshot, budget=100000)
+        assert text.index("a.py:") < text.index("m.py:") < text.index("z.py:")
+        cut = skeleton_prefix(snapshot, budget=12)
+        assert "a.py:" in cut and "z.py:" not in cut
+
+    def test_every_case_carries_the_baseline(self, repo: Path, work: Path) -> None:
+        cases = [case for _c, case in walk(repo, work=work, commits=10) if case.symbols]
+        assert cases
+        for case in cases:
+            assert 0.0 <= case.symbol_recall_skeleton <= 1.0
+        result = run_localize(repo, work=work, commits=10)
+        assert "skeleton" in result.as_text()
+        assert "symbol_recall_skeleton" in result.as_dict()
