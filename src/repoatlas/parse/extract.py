@@ -13,7 +13,7 @@ crosses between them.
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -58,6 +58,10 @@ _REFERENCE_PRECEDENCE = {
     "member": 1,
     "value": 0,
 }
+
+# Reference kinds a local can shadow. A member or a type is reached through
+# something else and is never a bare use of a local's name.
+_SHADOWED_KINDS = frozenset({"value", "call", "construct"})
 
 _KIND_BY_CAPTURE = {
     "class": SymbolKind.CLASS,
@@ -193,7 +197,12 @@ class Reference:
     span: SourceRange
     container_id: str | None = None
     receiver: str | None = None
-    """The plain name a member was read through: `greeter` in `greeter.greet`."""
+    """What a member was read through: `greeter` in `greeter.greet`.
+
+    A plain name, `this.name` for a property of the enclosing class, or
+    ``EXPRESSION_RECEIVER`` when the member hangs off an expression such
+    as `make()->run()`, which no name describes.
+    """
 
     receiver_type: str | None = None
     """What the extractor could tell about the receiver's type, by name.
@@ -292,6 +301,18 @@ def _qualified_name(name: str, container: Symbol | None) -> str:
     return f"{parent}.{name}"
 
 
+EXPRESSION_RECEIVER = "(expr)"
+"""The receiver of a member read off an expression rather than a name."""
+
+CALL_TYPE_PREFIX = "<call>"
+"""Marks a receiver type that is whatever a call returns: `$g = $this->build()`.
+
+The rest of the string is ``callee|receiver|receiver type``, the last two
+empty when the call is bare. The resolver resolves the call and reads the
+callee's declared return type.
+"""
+
+
 @dataclass(slots=True)
 class _RawReference:
     name: str
@@ -306,11 +327,14 @@ class _Collected:
 
     definitions: list[_RawDefinition]
     references: list[_RawReference]
-    locals: list[tuple[str, SourceRange]]
-    """Names bound inside a function body, with where they were bound."""
+    locals: list[tuple[str, SourceRange | None]]
+    """Names bound inside a function, with the span of the function that binds them.
 
-    bindings: list[tuple[str, str, SourceRange]]
-    """``(variable, type name, where)`` for every annotated or constructed local."""
+    ``None`` is the module: a name bound there is a symbol, not a local.
+    """
+
+    bindings: list[tuple[str, str, SourceRange | None]]
+    """``(variable, type name, binding function)`` for every annotated or constructed local."""
 
     def shifted(self, adjust: Callable[[SourceRange], SourceRange]) -> _Collected:
         """The same findings with every span mapped through ``adjust``."""
@@ -319,8 +343,13 @@ class _Collected:
             definition.full_span = adjust(definition.full_span)
         for reference in self.references:
             reference.span = adjust(reference.span)
-        self.locals = [(name, adjust(span)) for name, span in self.locals]
-        self.bindings = [(var, kind, adjust(span)) for var, kind, span in self.bindings]
+        self.locals = [
+            (name, adjust(span) if span is not None else None) for name, span in self.locals
+        ]
+        self.bindings = [
+            (var, kind, adjust(span) if span is not None else None)
+            for var, kind, span in self.bindings
+        ]
         return self
 
 
@@ -376,28 +405,53 @@ def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
     reference_kinds: dict[SourceRange, str] = {}
     reference_names: dict[SourceRange, str] = {}
     receivers: dict[SourceRange, str] = {}
-    found_locals: list[tuple[str, SourceRange]] = []
-    bindings: list[tuple[str, str, SourceRange]] = []
+    chained: set[SourceRange] = set()
+    call_bindings: list[tuple[str, str, str, SourceRange | None, SourceRange]] = []
+    found_locals: list[tuple[str, SourceRange | None]] = []
+    bindings: list[tuple[str, str, SourceRange | None]] = []
 
     for _pattern_index, captures in cursor.matches(tree.root_node):
         local_nodes = captures.get("local")
         if local_nodes and "name" not in captures:
             node = local_nodes[0]
             if node.text is not None:
-                found_locals.append(
-                    (node.text.decode("utf-8", errors="replace").lstrip("$"), to_range(node))
-                )
+                found_locals.append((_text(node, language), _enclosing_function(node, language)))
             continue
         if "binding" in captures:
             var_nodes, type_nodes = captures.get("var"), captures.get("vtype")
-            if var_nodes and type_nodes and var_nodes[0].text and type_nodes[0].text:
-                bindings.append(
+            call_nodes = captures.get("vcall")
+            if var_nodes and call_nodes and var_nodes[0].text and call_nodes[0].text:
+                # The type is whatever the call returns; the resolver
+                # finds out. The receiver's own type is looked up once
+                # every binding is known, below.
+                receiver_nodes = captures.get("vcall_receiver")
+                call_receiver = (
+                    _text(receiver_nodes[0], language)
+                    if receiver_nodes and receiver_nodes[0].text is not None
+                    else ""
+                )
+                call_bindings.append(
                     (
-                        var_nodes[0].text.decode("utf-8", errors="replace").lstrip("$"),
-                        type_nodes[0].text.decode("utf-8", errors="replace"),
+                        _text(var_nodes[0], language),
+                        _text(call_nodes[0], language),
+                        call_receiver,
+                        _enclosing_function(captures["binding"][0], language),
                         to_range(captures["binding"][0]),
                     )
                 )
+                continue
+            if var_nodes and type_nodes and var_nodes[0].text and type_nodes[0].text:
+                binding_node = captures["binding"][0]
+                var = _text(var_nodes[0], language)
+                type_name = type_nodes[0].text.decode("utf-8", errors="replace")
+                bindings.append((var, type_name, _enclosing_function(binding_node, language)))
+                if _is_field_binding(binding_node):
+                    # A typed property binds `this.name` for every method
+                    # of the class: `$this->service->handle()` goes where
+                    # `private Service $service` says.
+                    bindings.append(
+                        ("this." + var, type_name, _enclosing_class(binding_node, language))
+                    )
             continue
         name_nodes = captures.get("name")
         if not name_nodes:
@@ -407,15 +461,18 @@ def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
         name_text = name_node.text
         if name_text is None:
             continue
-        name = name_text.decode("utf-8", errors="replace")
-        # PHP property names arrive with their sigil; the name people search
-        # for does not include it.
-        name = name.lstrip("$")
+        name = _text(name_node, language)
+        if not name_node.is_named:
+            # The `class` keyword of an anonymous class is the only name
+            # it has; PHP itself calls the type `class@anonymous`.
+            name = f"{name}@anonymous"
         # A string-keyed reference such as `@extends('layouts.app')` captures
         # the literal, quotes and all. The name is what is inside them.
         name = _unquote(name)
         if not name:
             continue
+        if "chained" in captures:
+            chained.add(name_span)
 
         for capture_name, nodes in captures.items():
             if capture_name.startswith(_DEFINITION_PREFIX):
@@ -459,17 +516,31 @@ def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
                     reference_names[name_span] = name
                 receiver_nodes = captures.get("receiver")
                 if receiver_nodes and receiver_nodes[0].text is not None:
-                    receivers[name_span] = (
-                        receiver_nodes[0].text.decode("utf-8", errors="replace").lstrip("$")
-                    )
+                    receivers[name_span] = _text(receiver_nodes[0], language)
+                field_nodes = captures.get("receiver_field")
+                if field_nodes and field_nodes[0].text is not None:
+                    receivers[name_span] = "this." + _text(field_nodes[0], language)
 
     ordered = sorted(
         definitions.values(), key=lambda d: (d.name_span.start, d.name_span.end)
     )
     references = [
-        _RawReference(reference_names[span], kind, span, receivers.get(span))
+        _RawReference(
+            reference_names[span],
+            kind,
+            span,
+            receivers.get(span) or (EXPRESSION_RECEIVER if span in chained else None),
+        )
         for span, kind in reference_kinds.items()
     ]
+    # A call's receiver may itself be a typed local; say so, so that the
+    # resolver can find the callee. This is why call bindings wait until
+    # the declared ones are all in.
+    scoping = _Scoping(found_locals, bindings)
+    for var, callee, call_receiver, scope, at in call_bindings:
+        receiver_type = scoping.type_of(call_receiver, at) if call_receiver else None
+        marker = f"{CALL_TYPE_PREFIX}{callee}|{call_receiver}|{receiver_type or ''}"
+        bindings.append((var, marker, scope))
     return _Collected(ordered, references, found_locals, bindings)
 
 
@@ -543,9 +614,14 @@ def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
         symbol_id = base_id if seen == 1 else f"{base_id}${seen}"
 
         # Locality is inherited: a closure inside a function is local, and so
-        # is everything inside that closure.
-        is_local = container is not None and (
-            container.local or container.kind in _LOCAL_SCOPES
+        # is everything inside that closure. A type is not: a class declared
+        # inside a function, PHP's `new class { ... }`, has members an agent
+        # navigates to, and a compiler-backed index files them as
+        # definitions like any other.
+        is_local = (
+            container is not None
+            and (container.local or container.kind in _LOCAL_SCOPES)
+            and not definition.kind.is_type_like
         )
         symbol = Symbol(
             id=symbol_id,
@@ -576,70 +652,154 @@ def _merge(into: _Collected, extra: _Collected) -> None:
 class _Scoping:
     """Which names are local to which function, and what type each has.
 
-    Built once per file from the `@local` and `@binding` captures. A local
-    is visible in the function that binds it and in every closure nested
-    inside that function, and stops being visible at a class or the
-    module: that is the scoping rule shared by every language here, near
+    Built once per file from the `@local` and `@binding` captures, each of
+    which the collector tagged with the span of the function that binds it.
+    A local is visible in that function and in every closure nested inside
+    it, which is the scoping rule shared by every language here, near
     enough that the differences do not reach a reference's resolution.
 
-    Scopes are the callable and type symbols. A `const` inside a function
-    may be a symbol of its own, and a binding written on it belongs to the
-    function around it, not to the variable.
+    The scope is the function *node*, not a symbol. Half of a front end's
+    code sits inside anonymous callbacks that are nobody's symbol, and a
+    `const` declared there shadows just as well as one in a named function.
     """
 
-    __slots__ = ("_by_id", "_names", "_symbols", "_types")
+    __slots__ = ("_names", "_types")
 
     def __init__(
         self,
-        symbols: list[Symbol],
-        scopes: ScopeIndex[int],
-        found_locals: list[tuple[str, SourceRange]],
-        bindings: list[tuple[str, str, SourceRange]],
+        found_locals: list[tuple[str, SourceRange | None]],
+        bindings: list[tuple[str, str, SourceRange | None]],
     ) -> None:
-        self._symbols = symbols
-        self._by_id = {symbol.id: index for index, symbol in enumerate(symbols)}
-        self._names: dict[int, set[str]] = {}
-        self._types: dict[tuple[int | None, str], str] = {}
-        for name, span in found_locals:
-            owner = self._owner(scopes.innermost(span))
-            # A name bound at module or class level is a symbol, not a
-            # local; only a function's own bindings shadow anything.
-            if owner is not None and symbols[owner].kind.is_callable:
-                self._names.setdefault(owner, set()).add(name)
-        for var, type_name, span in bindings:
-            self._types.setdefault((self._owner(scopes.innermost(span)), var), type_name)
+        self._names: dict[str, list[SourceRange]] = {}
+        self._types: dict[str, list[tuple[SourceRange | None, str]]] = {}
+        for name, scope in found_locals:
+            # A name bound at module level is a symbol, not a local; only a
+            # function's own bindings shadow anything.
+            if scope is not None:
+                self._names.setdefault(name, []).append(scope)
+        for var, type_name, scope in bindings:
+            self._types.setdefault(var, []).append((scope, type_name))
 
-    def _owner(self, index: int | None) -> int | None:
-        """The nearest enclosing function or type, or the module."""
-        while index is not None:
-            symbol = self._symbols[index]
-            if symbol.kind.is_callable or symbol.kind.is_type_like:
-                return index
-            index = self._by_id.get(symbol.container_id or "")
-        return None
+    def is_local(self, name: str, span: SourceRange) -> bool:
+        return any(_encloses(scope, span) for scope in self._names.get(name, ()))
 
-    def _scopes_up(self, index: int | None) -> Iterator[int | None]:
-        """Every scope around a position, innermost first, ending at the module."""
-        current = self._owner(index)
-        while current is not None:
-            yield current
-            current = self._owner(self._by_id.get(self._symbols[current].container_id or ""))
-        yield None
-
-    def is_local(self, name: str, index: int | None) -> bool:
-        return any(
-            scope is not None and name in self._names.get(scope, ())
-            for scope in self._scopes_up(index)
-        )
-
-    def type_of(self, receiver: str | None, index: int | None) -> str | None:
+    def type_of(self, receiver: str | None, span: SourceRange) -> str | None:
+        """The innermost binding of ``receiver`` that is in scope at ``span``."""
         if not receiver:
             return None
-        for scope in self._scopes_up(index):
-            found = self._types.get((scope, receiver))
-            if found is not None:
-                return found
-        return None
+        best: tuple[int, int] | None = None
+        found: str | None = None
+        module_level: str | None = None
+        for scope, type_name in self._types.get(receiver, ()):
+            if scope is None:
+                module_level = module_level or type_name
+            elif _encloses(scope, span):
+                size = (
+                    scope.end.line - scope.start.line,
+                    scope.end.character - scope.start.character,
+                )
+                if best is None or size < best:
+                    best, found = size, type_name
+        return found if found is not None else module_level
+
+
+def _encloses(outer: SourceRange, inner: SourceRange) -> bool:
+    return (outer.start.line, outer.start.character) <= (
+        inner.start.line,
+        inner.start.character,
+    ) and (inner.end.line, inner.end.character) <= (outer.end.line, outer.end.character)
+
+
+# The node types that open a scope for locals, per grammar. A language not
+# listed gets the union, which is harmless: an unknown node type never
+# matches anything.
+_JS_FUNCTION_NODES = frozenset(
+    {
+        "function_declaration",
+        "function_expression",
+        "function",
+        "arrow_function",
+        "method_definition",
+        "generator_function",
+        "generator_function_declaration",
+    }
+)
+_FUNCTION_NODES: dict[str, frozenset[str]] = {
+    "typescript": _JS_FUNCTION_NODES,
+    "tsx": _JS_FUNCTION_NODES,
+    "javascript": _JS_FUNCTION_NODES,
+    "python": frozenset({"function_definition", "lambda"}),
+    "php": frozenset(
+        {
+            "function_definition",
+            "method_declaration",
+            "anonymous_function",
+            "anonymous_function_creation_expression",
+            "arrow_function",
+        }
+    ),
+}
+_ANY_FUNCTION_NODES = frozenset().union(*_FUNCTION_NODES.values())
+
+# Languages whose variables carry a sigil the name does without.
+_SIGIL_LANGUAGES = frozenset({"php", "blade"})
+
+
+def _text(node: Node, language: str) -> str:
+    text = (node.text or b"").decode("utf-8", errors="replace")
+    return text.lstrip("$") if language in _SIGIL_LANGUAGES else text
+
+
+# The node types that are a class body's owner, for bindings of `this.x`.
+_CLASS_NODES: dict[str, frozenset[str]] = {
+    "typescript": frozenset({"class_declaration", "abstract_class_declaration", "class"}),
+    "tsx": frozenset({"class_declaration", "abstract_class_declaration", "class"}),
+    "javascript": frozenset({"class_declaration", "class"}),
+    "python": frozenset({"class_definition"}),
+    "php": frozenset(
+        {"class_declaration", "anonymous_class", "trait_declaration", "enum_declaration"}
+    ),
+}
+_ANY_CLASS_NODES = frozenset().union(*_CLASS_NODES.values())
+
+# Binding nodes that declare a property rather than a local.
+_FIELD_BINDING_NODES = frozenset(
+    {"property_declaration", "property_promotion_parameter", "public_field_definition"}
+)
+
+
+def _is_field_binding(node: Node) -> bool:
+    if node.type in _FIELD_BINDING_NODES:
+        return True
+    # TypeScript's `constructor(private svc: Svc)` promotes the parameter
+    # to a property, and the only sign of it is the modifier.
+    return node.type == "required_parameter" and any(
+        child.type == "accessibility_modifier" for child in node.children
+    )
+
+
+def _enclosing(node: Node, kinds: frozenset[str]) -> SourceRange | None:
+    """The span of the nearest ancestor of one of ``kinds``, skipping ``node``'s own.
+
+    A function declared inside another is bound in the outer one, not in
+    itself: the walk skips an ancestor when ``node`` is its own name.
+    """
+    current = node.parent
+    while current is not None:
+        if current.type in kinds and current.child_by_field_name("name") != node:
+            return to_range(current)
+        current = current.parent
+    return None
+
+
+def _enclosing_function(node: Node, language: str) -> SourceRange | None:
+    """The function ``node`` is bound in, or ``None`` at module level."""
+    return _enclosing(node, _FUNCTION_NODES.get(language, _ANY_FUNCTION_NODES))
+
+
+def _enclosing_class(node: Node, language: str) -> SourceRange | None:
+    """The class ``node`` is declared in, or ``None`` outside any."""
+    return _enclosing(node, _CLASS_NODES.get(language, _ANY_CLASS_NODES))
 
 
 def extract_source(
@@ -686,7 +846,7 @@ def extract_source(
         for index, symbol in enumerate(symbols)
     )
     definition_spans = {symbol.name_range for symbol in symbols}
-    scoping = _Scoping(symbols, scopes, collected.locals, collected.bindings)
+    scoping = _Scoping(collected.locals, collected.bindings)
 
     references: list[Reference] = []
     for raw in collected.references:
@@ -697,11 +857,12 @@ def extract_source(
             # reference to B; a name that is its own definition site is not
             # a reference to anything.
             continue
-        container_index = scopes.innermost(raw.span)
-        if raw.kind == "value" and scoping.is_local(raw.name, container_index):
-            # A bare use of a parameter or a local: the function's own
-            # business, and not a use of any symbol this index defines.
+        if raw.kind in _SHADOWED_KINDS and scoping.is_local(raw.name, raw.span):
+            # A use of a parameter or a local, whether read, called or
+            # constructed: the function's own business, and not a use of
+            # any symbol this index defines.
             continue
+        container_index = scopes.innermost(raw.span)
         references.append(
             Reference(
                 name=raw.name,
@@ -711,7 +872,7 @@ def extract_source(
                     symbols[container_index].id if container_index is not None else None
                 ),
                 receiver=raw.receiver,
-                receiver_type=scoping.type_of(raw.receiver, container_index),
+                receiver_type=scoping.type_of(raw.receiver, raw.span),
             )
         )
     references.sort(key=lambda reference: (reference.span.start, reference.name))

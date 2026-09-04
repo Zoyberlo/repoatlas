@@ -23,7 +23,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from ..model import Edge, EdgeKind, ResolutionTier, Symbol, SymbolKind
-from ..parse.extract import Reference
+from ..parse.extract import CALL_TYPE_PREFIX, EXPRESSION_RECEIVER, Reference
 from ..parse.imports import FileImports
 from ..plugins.base import FrameworkPlugin
 from .modules import ModuleResolver
@@ -77,8 +77,77 @@ _MEMBER_REFERENCE_KINDS = frozenset({"call", "member"})
 _CONSTRUCTOR_NAMES = ("constructor", "__init__", "__construct")
 
 # Receivers that mean the enclosing class, which the member rung already
-# handles without any type being declared.
-_SELF_RECEIVERS = frozenset({"this", "self", "cls", "static"})
+# handles without any type being declared, and the ones that mean what it
+# extends.
+_SELF_RECEIVERS = frozenset({"this", "self", "cls", "static", "super", "parent"})
+_PARENT_RECEIVERS = frozenset({"super", "parent"})
+
+
+def receiver_shape(reference: Reference) -> str:
+    """What a member was reached through, named as the accuracy report names it.
+
+    ``none`` is not a member access at all. The rest describe the
+    receiver: ``self``; ``type`` for a class named outright; ``variable``
+    and ``property of self``, each ``(typed)`` when a declaration or a
+    `new` says what it is and ``(untyped)`` otherwise; ``expression`` for
+    a member of whatever a call or a subscript returned.
+
+    The comparison groups edges by this, because oracles differ in which
+    shapes they can resolve at all, and a shape an oracle never resolves
+    cannot be scored against it.
+    """
+    if reference.kind not in _MEMBER_REFERENCE_KINDS:
+        return "none"
+    receiver = reference.receiver
+    if receiver is None:
+        return "none" if reference.kind == "call" else "expression"
+    if receiver == EXPRESSION_RECEIVER:
+        return "expression"
+    if receiver in _SELF_RECEIVERS:
+        return "self"
+    typed = " (typed)" if reference.receiver_type else " (untyped)"
+    if "." in receiver:
+        return "property of self" + typed
+    if reference.receiver_type:
+        if reference.receiver_type.startswith(CALL_TYPE_PREFIX):
+            return "variable (typed by call)"
+        return "variable (typed)"
+    if receiver[:1].isupper():
+        return "type"
+    return "variable (untyped)"
+
+
+# How the member rung reads each shape: what to look the member up in.
+_RUNG_BY_SHAPE = {
+    "none": "bare",
+    "self": "self",
+    "type": "static",
+    "variable (typed)": "typed",
+    "variable (typed by call)": "typed",
+    "property of self (typed)": "typed",
+}
+
+# A declared return type, read off a signature line: PHP and TypeScript
+# write `): Type`, Python `-> Type`. Generics and namespaces are cut down
+# to the bare name, which is what a type reference is resolved from.
+_RETURN_TYPE = re.compile(
+    r"\)\s*:\s*\??\s*(?:Promise<)?\s*\\?(?P<colon>[A-Za-z_][\w\\.]*)"
+    r"|->\s*(?P<arrow>[A-Za-z_][\w.]*)"
+)
+
+
+def _declared_return_type(signature: str | None) -> str | None:
+    if not signature:
+        return None
+    found = _RETURN_TYPE.search(signature)
+    if found is None:
+        return None
+    name = found.group("colon") or found.group("arrow") or ""
+    return name.replace("\\", ".").rsplit(".", 1)[-1] or None
+
+
+def _receiver_shape(reference: Reference) -> str:
+    return _RUNG_BY_SHAPE.get(receiver_shape(reference), "unknown")
 
 # A member access resolves to a method or field, never to a free function;
 # an inheritance clause names a type. Filtering by kind removes a whole
@@ -293,6 +362,15 @@ class Resolver:
     )
 
     _bases: dict[str, Symbol] = field(default_factory=dict, repr=False)
+    """The class each type extends, for `parent::`."""
+
+    _ancestors: dict[str, list[Symbol]] = field(default_factory=dict, repr=False)
+    """Everything each type extends, implements or uses, in the order written.
+
+    A member reached through a type is looked for here, breadth first, so
+    a method inherited from a base or pulled in by a trait is found where
+    it is declared.
+    """
     """Each type's resolved base, recorded as its `extends` clause resolves.
 
     What `parent::` means. A base clause is written before the methods that
@@ -319,11 +397,27 @@ class Resolver:
             if reference.kind != "class":
                 continue
             owner = self.index.enclosing_type(reference.container_id)
-            if owner is None or owner.id in self._bases:
+            if owner is None:
                 continue
             target, _tier = self._target(path, reference)
-            if target is not None and target.kind.is_type_like and target.id != owner.id:
-                self._bases[owner.id] = target
+            if target is not None and target.kind.is_type_like:
+                self._record_ancestor(owner, target)
+
+    def _record_ancestor(self, owner: Symbol | None, target: Symbol) -> None:
+        """A base clause resolved: remember it for `parent::` and member lookups.
+
+        Only base clauses arrive here. `Client::where()` also names a
+        class, but the class it names is not what the enclosing type
+        extends, and recording it as such once made every command that
+        queried a model inherit from it.
+        """
+        if owner is None or target.id == owner.id:
+            return
+        chain = self._ancestors.setdefault(owner.id, [])
+        if all(existing.id != target.id for existing in chain):
+            chain.append(target)
+        if owner.id not in self._bases and target.kind is SymbolKind.CLASS:
+            self._bases[owner.id] = target
 
     def resolve_file(self, path: str, references: list[Reference]) -> list[Edge]:
         """Resolve every reference in one file."""
@@ -339,14 +433,15 @@ class Resolver:
             return None
         target = self._constructor_of(target, reference)
         source_id = reference.container_id or self.module_symbols.get(path)
-        if source_id is None or source_id == target.id:
+        if source_id is None:
+            return None
+        if source_id == target.id and reference.kind not in _MEMBER_REFERENCE_KINDS:
+            # A class naming itself in its own body is not a dependency.
+            # A method calling itself is: recursion is a call, and an
+            # oracle records it.
             return None
         if reference.kind == "class" and target.kind.is_type_like:
-            # A base clause resolved. Remember it for `parent::`, and for
-            # anything else that wants to know what this type extends.
-            owner = self.index.enclosing_type(reference.container_id)
-            if owner is not None and owner.id not in self._bases:
-                self._bases[owner.id] = target
+            self._record_ancestor(self.index.enclosing_type(reference.container_id), target)
         self.stats.by_tier[tier.label] += 1
         return Edge(
             src_id=source_id,
@@ -390,6 +485,15 @@ class Resolver:
                 base = self._bases.get(owner.id)
                 if base is not None:
                     return base, ResolutionTier.SAME_MODULE
+            self.stats.unresolved += 1
+            return None, ResolutionTier.FUZZY
+
+        if reference.kind == "type" and name in _SCOPE_SELF:
+            # `: static`, `: self`, `new self()`: the enclosing class,
+            # written without its name.
+            owner = self.index.enclosing_type(reference.container_id)
+            if owner is not None:
+                return owner, ResolutionTier.SAME_MODULE
             self.stats.unresolved += 1
             return None, ResolutionTier.FUZZY
 
@@ -450,29 +554,26 @@ class Resolver:
                     self.stats.external += 1
                     return None, ResolutionTier.FUZZY
 
-        # Rung two, first half: a member of the receiver's declared type.
-        # `greeter.greet()` where `greeter: Greeter`, or `Util::helper()`,
-        # says which class holds the member; the class is resolved like any
-        # type name and the member looked up in it and in what it extends.
-        # This is the rung that tells one `greet` from another when the
-        # repository has several, which the bottom rungs cannot.
-        if reference.kind in _MEMBER_REFERENCE_KINDS:
-            typed = self._through_receiver(path, reference)
-            if typed is not None:
-                return typed
+        if reference.kind == "import":
+            # An import site names what it imports and nothing else. The
+            # rung above is the only one that can say where that is; the
+            # ones below would match the name against whatever this file
+            # happens to define, which is how `use Foundation\Kernel as
+            # ConsoleKernel` once resolved to the `Kernel` written under it.
+            self.stats.external += 1
+            return None, ResolutionTier.FUZZY
 
-        # Rung two: a member of the type the reference is written in.
-        # `this.greet()` inside `User.shout` means `User.greet`, and no
-        # type inference is needed to know it: the receiver is the
-        # enclosing class. Without this rung the name falls through to a
-        # repository-wide search that cannot tell a class's method from
-        # the interface method it implements.
-        if reference.kind in _MEMBER_REFERENCE_KINDS:
-            owner = self.index.enclosing_type(reference.container_id)
-            if owner is not None:
-                member = _prefer(self.index.members(owner.id, name), reference)
-                if member is not None:
-                    return member, ResolutionTier.SAME_MODULE
+        # Rung two: a member, reached through its receiver. What the
+        # receiver is decides everything: `$this` is the enclosing type, a
+        # typed local or a static scope is that type, and a name nobody
+        # declared a type for is unknown. Unknown stops here. The rungs
+        # below match a bare name against the whole repository, and a
+        # real Laravel application measured that at 0 of 890 right for
+        # `suffix` and 48 of 812 for `unique_name`: `$order->id` is not some
+        # job's `$id`, and `$order->update()` is not a controller's.
+        member = self._resolve_member(path, reference)
+        if member is not None:
+            return member
 
         # Rung three: defined in this very file. No import needed and no
         # ambiguity possible, so it ranks just below a resolved import.
@@ -483,6 +584,12 @@ class Resolver:
         # Rung four: exactly one definition of the name in the repository.
         # Wrong only when the true target was never indexed.
         public = self.index.public_by_name(name)
+        if reference.kind == "call" and reference.receiver is None:
+            # A bare call reaches a function, or a class in a language
+            # that constructs by calling. Never a method or a field: those
+            # need a receiver, and PHP's `end($list)` is not a property
+            # called `$end` in some other class.
+            public = [s for s in public if s.kind is SymbolKind.FUNCTION or s.kind.is_type_like]
         if len(public) == 1:
             return public[0], ResolutionTier.UNIQUE_NAME
 
@@ -500,37 +607,170 @@ class Resolver:
         self.stats.unresolved += 1
         return None, ResolutionTier.FUZZY
 
-    def _through_receiver(
+    def _resolve_member(
         self, path: str, reference: Reference
-    ) -> tuple[Symbol, ResolutionTier] | None:
-        """Resolve a member through what its receiver is known to be."""
-        type_name = reference.receiver_type
-        if type_name is None:
-            receiver = reference.receiver
-            if not receiver or receiver in _SELF_RECEIVERS or not receiver[:1].isupper():
-                return None
-            # `Util::helper()` or `Config.get()`: the receiver is the type.
-            type_name = receiver
-        owner, tier = self._target(
+    ) -> tuple[Symbol | None, ResolutionTier] | None:
+        """Resolve a member through its receiver, or say that nothing can.
+
+        Returns ``None`` only when the reference is not a member access at
+        all, a bare call such as `helper()`, so that the name rungs may
+        try. For a member the answer is final: the symbol, or an
+        unresolved edge with the statistics saying why.
+        """
+        shape = _receiver_shape(reference)
+        if shape == "bare":
+            return None
+        receiver = reference.receiver or ""
+        if shape == "self":
+            owner = self.index.enclosing_type(reference.container_id)
+            if owner is None:
+                # `this.save()` with no class around it: a Vue options
+                # object, or a mixin. The file's own methods and fields
+                # are what `this` can reach there.
+                found = _prefer(self.index.in_file(path, reference.name), reference)
+                if found is not None and (
+                    found.kind.is_callable or found.kind is SymbolKind.FIELD
+                ):
+                    return found, ResolutionTier.SAME_MODULE
+                return self._unresolved()
+            found = self._member_in_hierarchy(
+                owner, reference, skip_own=receiver in _PARENT_RECEIVERS
+            )
+            if found is not None:
+                return found, ResolutionTier.SAME_MODULE
+            return self._unresolved()
+        if shape in ("typed", "static"):
+            # `Util::helper()`, `Config.get()`, or `greeter.greet()` where
+            # `greeter: Greeter`: the receiver is a type, resolved like any
+            # other reference, and the member is looked for in it and in
+            # what it extends. The edge takes the tier the type resolved
+            # at. When the type is not ours, neither is the member.
+            type_name = reference.receiver_type if shape == "typed" else receiver
+            if type_name is not None and type_name.startswith(CALL_TYPE_PREFIX):
+                owner, tier = self._type_of_call(path, reference, type_name)
+            else:
+                owner, tier = self._target(
+                    path,
+                    Reference(
+                        name=type_name or receiver,
+                        kind="type",
+                        span=reference.span,
+                        container_id=reference.container_id,
+                    ),
+                )
+            return self._member_of(owner, tier, reference)
+        # An untyped name. An import may still say what it is: a module
+        # whose export is the member, or a class imported under a name
+        # that does not look like one.
+        via_import = self._receiver_via_import(path, receiver)
+        if via_import is not None:
+            return self._member_of(via_import, ResolutionTier.IMPORT_MAP, reference)
+        return self._unresolved()
+
+    def _type_of_call(
+        self, path: str, reference: Reference, marker: str
+    ) -> tuple[Symbol | None, ResolutionTier]:
+        """The type a local was assigned from a call: `$g = $this->build()`.
+
+        The callee is resolved like the call it is; what it returns is
+        read off its signature, in the callee's own file, where the type
+        name means what that file's imports say. A class called directly,
+        as Python constructs, is its own answer.
+        """
+        callee, receiver, receiver_type = [*marker[len(CALL_TYPE_PREFIX) :].split("|"), "", ""][:3]
+        target, tier = self._target(
             path,
             Reference(
-                name=type_name,
-                kind="type",
+                name=callee,
+                kind="call",
                 span=reference.span,
                 container_id=reference.container_id,
+                receiver=receiver or None,
+                receiver_type=receiver_type or None,
             ),
         )
-        if owner is None or not owner.kind.is_type_like:
-            return None
-        current: Symbol | None = owner
+        if target is None:
+            return None, ResolutionTier.FUZZY
+        if target.kind.is_type_like:
+            return target, tier
+        if target.kind is SymbolKind.CONSTRUCTOR:
+            return self.index.enclosing_type(target.container_id), tier
+        declared = _declared_return_type(target.signature)
+        if declared is None:
+            return self._unresolved()
+        if declared in _SCOPE_SELF:
+            return self.index.enclosing_type(target.container_id), tier
+        owner, type_tier = self._target(
+            target.path,
+            Reference(
+                name=declared,
+                kind="type",
+                span=target.name_range,
+                container_id=target.container_id,
+            ),
+        )
+        weaker = type_tier if type_tier.default_confidence < tier.default_confidence else tier
+        return owner, weaker
+
+    def _member_of(
+        self, owner: Symbol | None, tier: ResolutionTier, reference: Reference
+    ) -> tuple[Symbol | None, ResolutionTier]:
+        if owner is None:
+            # The lookup that failed has already been counted.
+            return None, ResolutionTier.FUZZY
+        if owner.kind is SymbolKind.MODULE:
+            found = _prefer(self.index.in_file(owner.path, reference.name), reference)
+            return (found, tier) if found is not None else self._unresolved()
+        if not owner.kind.is_type_like:
+            return self._unresolved()
+        found = self._member_in_hierarchy(owner, reference)
+        return (found, tier) if found is not None else self._unresolved()
+
+    def _member_in_hierarchy(
+        self, owner: Symbol, reference: Reference, *, skip_own: bool = False
+    ) -> Symbol | None:
+        """The member as declared on ``owner`` or the nearest ancestor that has it."""
+        queue = [owner]
         seen: set[str] = set()
-        while current is not None and current.id not in seen:
+        while queue:
+            current = queue.pop(0)
+            if current.id in seen:
+                continue
             seen.add(current.id)
-            member = _prefer(self.index.members(current.id, reference.name), reference)
-            if member is not None:
-                return member, tier
-            current = self._bases.get(current.id)
+            if not (skip_own and current.id == owner.id):
+                found = _prefer(self.index.members(current.id, reference.name), reference)
+                if found is not None:
+                    return found
+            queue.extend(self._ancestors.get(current.id, ()))
         return None
+
+    def _receiver_via_import(self, path: str, receiver: str) -> Symbol | None:
+        """What an imported name stands for, when it is a type or a module."""
+        file_imports = self.imports.get(path)
+        if file_imports is None:
+            return None
+        found = file_imports.binding_for(receiver)
+        if found is None:
+            return None
+        statement, binding = found
+        resolved_path = self._resolve_module(path, statement.module, statement.relative_level)
+        if resolved_path is None:
+            return None
+        candidates = [
+            symbol
+            for symbol in self.index.in_file(resolved_path, binding.source_name)
+            if symbol.kind.is_type_like or symbol.kind is SymbolKind.MODULE
+        ]
+        if candidates:
+            return min(candidates, key=lambda s: (s.path, s.name_range.start, s.id))
+        if binding.original is None:
+            module_id = self.module_symbols.get(resolved_path)
+            return self.index.get(module_id) if module_id else None
+        return None
+
+    def _unresolved(self) -> tuple[None, ResolutionTier]:
+        self.stats.unresolved += 1
+        return None, ResolutionTier.FUZZY
 
     def _import_resolves(self, path: str, name: str) -> bool:
         """Whether ``name`` was imported from a file this index covers.

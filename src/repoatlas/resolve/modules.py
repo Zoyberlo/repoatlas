@@ -227,6 +227,43 @@ class ComposerResolver:
         return None
 
 
+def _compiler_options(config_path: Path, data: object, depth: int = 0) -> dict[str, object]:
+    """``compilerOptions`` with those of a local ``extends`` chain folded in.
+
+    A `tsconfig.json` that extends `./tsconfig.base.json` declares its
+    aliases in the base, and reading the child alone finds none. Only
+    relative parents are followed; a package such as `@vue/tsconfig` holds
+    no paths of this repository's. The child wins on every key, and on
+    every alias, one by one.
+    """
+    if not isinstance(data, dict):
+        return {}
+    options: dict[str, object] = dict(data.get("compilerOptions") or {})
+    parent = data.get("extends")
+    if not isinstance(parent, str) or not parent.startswith(".") or depth >= 5:
+        return options
+    parent_path = config_path.parent / parent
+    if parent_path.suffix != ".json":
+        parent_path = parent_path.with_suffix(".json")
+    try:
+        parent_data = json.loads(
+            _strip_json_comments(parent_path.read_text(encoding="utf-8-sig"))
+        )
+    except (OSError, json.JSONDecodeError):
+        return options
+    inherited = _compiler_options(parent_path, parent_data, depth + 1)
+    merged = dict(inherited)
+    merged.update({key: value for key, value in options.items() if key != "paths"})
+    own_paths = options.get("paths")
+    if isinstance(own_paths, dict):
+        base_paths = inherited.get("paths")
+        merged["paths"] = {
+            **(base_paths if isinstance(base_paths, dict) else {}),
+            **own_paths,
+        }
+    return merged
+
+
 def _read_tsconfig(
     root: Path, directories: Iterable[str] = ("",)
 ) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
@@ -258,12 +295,15 @@ def _read_tsconfig(
                 data = json.loads(_strip_json_comments(raw))
             except json.JSONDecodeError:
                 continue
-            options = data.get("compilerOptions") or {}
+            options = _compiler_options(config_path, data)
             declared = str(options.get("baseUrl") or "").strip("./")
             base = _normalise(PurePosixPath(where) / declared) if where else declared
             if base not in bases:
                 bases.append(base)
-            for pattern, targets in (options.get("paths") or {}).items():
+            declared_paths = options.get("paths")
+            if not isinstance(declared_paths, dict):
+                declared_paths = {}
+            for pattern, targets in declared_paths.items():
                 if not isinstance(targets, list):
                     continue
                 for target in targets:

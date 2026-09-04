@@ -427,18 +427,45 @@ class TestLaravelEdges:
 
 
 class TestBladeReachesPhp:
-    def test_a_method_called_from_a_template_resolves(self, tmp_path: Path) -> None:
-        # The link that was missing: a Blade template reached its layouts
-        # and components but never the PHP it calls.
-        write(tmp_path, "composer.json", json.dumps({"require": {"laravel/framework": "^11"}}))
+    def _laravel(self, tmp_path: Path) -> None:
+        write(
+            tmp_path,
+            "composer.json",
+            json.dumps(
+                {
+                    "require": {"laravel/framework": "^11"},
+                    "autoload": {"psr-4": {"App\\": "app/"}},
+                }
+            ),
+        )
         write(
             tmp_path,
             "app/Models/User.php",
             "<?php\nnamespace App\\Models;\nclass User\n{\n    public function isAdmin(): bool\n    {\n        return true;\n    }\n}\n",
         )
+
+    def test_a_method_called_on_an_untyped_template_variable_is_not_guessed(
+        self, tmp_path: Path
+    ) -> None:
+        # `$user` in a template is whatever the controller passed. Once
+        # this resolved by name, and a real application showed where that
+        # leads: `$order->id` to some job's `$id`, `$order->update()` to a
+        # controller's. Unresolved is the honest answer.
+        self._laravel(tmp_path)
         write(tmp_path, "resources/views/profile.blade.php", "<p>{{ $user->isAdmin() }}</p>\n")
+        assert ("resources/views/profile.blade.php", 1) not in edge_targets(tmp_path)
+
+    def test_a_variable_the_template_constructs_carries_its_type(self, tmp_path: Path) -> None:
+        # The PHP inside a template is PHP: a `new` in a `@php` block types
+        # the variable for the echo below it.
+        self._laravel(tmp_path)
+        write(
+            tmp_path,
+            "resources/views/profile.blade.php",
+            "@php use App\\Models\\User; $user = new User(); @endphp\n<p>{{ $user->isAdmin() }}</p>\n",
+        )
         targets = edge_targets(tmp_path)
-        assert targets[("resources/views/profile.blade.php", 1)] == "app/Models/User.php#User.isAdmin"
+        assert targets[("resources/views/profile.blade.php", 2)] == "app/Models/User.php#User.isAdmin"
 
 
 class TestQuasarEdges:

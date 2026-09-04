@@ -22,11 +22,26 @@
 (enum_declaration
   name: (identifier) @name) @definition.enum
 
-(function_declaration
-  name: (identifier) @name) @definition.function
+; Functions and variables are symbols only at module level. A `const`
+; inside a function is that function's business: a compiler-backed index
+; files it as a local, an agent never navigates to it, and a real front end
+; had more of them than it had exported names. They are captured as locals
+; further down, so that uses of them shadow any symbol sharing the name.
+(program
+  (function_declaration
+    name: (identifier) @name) @definition.function)
 
-(generator_function_declaration
-  name: (identifier) @name) @definition.function
+(export_statement
+  declaration: (function_declaration
+    name: (identifier) @name) @definition.function)
+
+(program
+  (generator_function_declaration
+    name: (identifier) @name) @definition.function)
+
+(export_statement
+  declaration: (generator_function_declaration
+    name: (identifier) @name) @definition.function)
 
 (method_definition
   name: (property_identifier) @name) @definition.method
@@ -53,12 +68,37 @@
 
 ; A function assigned to a name is a function, not a variable. This pattern
 ; is more specific than the plain declarator below and wins the tie.
-(variable_declarator
-  name: (identifier) @name
-  value: [(arrow_function) (function_expression)]) @definition.function
+(program
+  (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name
+      value: [(arrow_function) (function_expression)]) @definition.function))
 
-(variable_declarator
-  name: (identifier) @name) @definition.constant
+(export_statement
+  declaration: (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name
+      value: [(arrow_function) (function_expression)]) @definition.function))
+
+(program
+  (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name) @definition.constant))
+
+(export_statement
+  declaration: (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name) @definition.constant))
+
+(program
+  (variable_declaration
+    (variable_declarator
+      name: (identifier) @name) @definition.constant))
+
+(export_statement
+  declaration: (variable_declaration
+    (variable_declarator
+      name: (identifier) @name) @definition.constant))
 
 ; --- references ----------------------------------------------------------
 
@@ -121,15 +161,45 @@
 
 ; --- locals --------------------------------------------------------------
 
-; Names bound inside a function. A bare use of one is a use of the local,
-; never of a repository symbol sharing the name.
+; Names bound inside a function: parameters, declarations, catch bindings,
+; destructured names, and functions declared inside functions. A bare use
+; of one is a use of the local, never of a repository symbol sharing the
+; name. The extractor keys each on the function that binds it, so a local
+; declared inside an anonymous callback shadows there too.
 (required_parameter
   pattern: (identifier) @local)
 
 (optional_parameter
   pattern: (identifier) @local)
 
+(arrow_function
+  parameter: (identifier) @local)
+
 (variable_declarator
+  name: (identifier) @local)
+
+(catch_clause
+  parameter: (identifier) @local)
+
+(for_in_statement
+  left: (identifier) @local)
+
+(object_pattern
+  (shorthand_property_identifier_pattern) @local)
+
+(pair_pattern
+  value: (identifier) @local)
+
+(array_pattern
+  (identifier) @local)
+
+(rest_pattern
+  (identifier) @local)
+
+(assignment_pattern
+  left: (identifier) @local)
+
+(function_declaration
   name: (identifier) @local)
 
 ; What a local's type is: an annotation on the parameter or declarator, or
@@ -154,17 +224,90 @@
   value: (new_expression
     constructor: (identifier) @vtype)) @binding
 
-; A value used by name: an argument, a returned name, an initialiser. These
-; are the uses of a constant or a function that is passed rather than
-; called, which no call or member pattern sees.
-(arguments
-  (identifier) @name) @reference.value
+; --- values --------------------------------------------------------------
 
-(return_statement
-  (identifier) @name) @reference.value
+; Every bare identifier is a use of something. The ones that are not, the
+; binding sites, are removed by the extractor: definitions by their span,
+; parameters and locals by the captures above. Property names have their
+; own node type and never match here. Listing the contexts one by one, as
+; this query once did, missed `export default x`, `export { x }`, `a = x`,
+; `{ x }` and every operator expression, and a real front end showed it.
+(identifier) @name @reference.value
+
+(shorthand_property_identifier) @name @reference.value
+
+; --- receivers through this -----------------------------------------------
+
+(member_expression
+  object: (this) @receiver
+  property: (property_identifier) @name) @reference.member
+
+(call_expression
+  function: (member_expression
+    object: (this) @receiver
+    property: (property_identifier) @name)) @reference.call
+
+(member_expression
+  object: (super) @receiver
+  property: (property_identifier) @name) @reference.member
+
+(call_expression
+  function: (member_expression
+    object: (super) @receiver
+    property: (property_identifier) @name)) @reference.call
+
+; `this.service.handle()`: a property of the enclosing class, typed by its
+; declaration or by the constructor parameter that promoted it.
+(member_expression
+  object: (member_expression
+    object: (this)
+    property: (property_identifier) @receiver_field)
+  property: (property_identifier) @name) @reference.member
+
+(call_expression
+  function: (member_expression
+    object: (member_expression
+      object: (this)
+      property: (property_identifier) @receiver_field)
+    property: (property_identifier) @name)) @reference.call
+
+(public_field_definition
+  name: (property_identifier) @var
+  type: (type_annotation
+    (type_identifier) @vtype)) @binding
+
+; A member of an expression: nothing names the receiver.
+(call_expression
+  function: (member_expression
+    object: (_) @chained
+    property: (property_identifier) @name)) @reference.call
+
+; --- types by call ---------------------------------------------------------
+
+; `const user = makeUser()`, `const data = await this.api.load()`: the
+; local is whatever the call returns, read off the callee's signature.
+(variable_declarator
+  name: (identifier) @var
+  value: (call_expression
+    function: (identifier) @vcall)) @binding
 
 (variable_declarator
-  value: (identifier) @name) @reference.value
+  name: (identifier) @var
+  value: (call_expression
+    function: (member_expression
+      object: [(identifier) (this)] @vcall_receiver
+      property: (property_identifier) @vcall))) @binding
 
-(template_substitution
-  (identifier) @name) @reference.value
+(variable_declarator
+  name: (identifier) @var
+  value: (await_expression
+    (call_expression
+      function: (identifier) @vcall))) @binding
+
+(variable_declarator
+  name: (identifier) @var
+  value: (await_expression
+    (call_expression
+      function: (member_expression
+        object: [(identifier) (this)] @vcall_receiver
+        property: (property_identifier) @vcall)))) @binding

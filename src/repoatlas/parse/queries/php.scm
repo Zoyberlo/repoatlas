@@ -46,6 +46,12 @@
 (namespace_definition
   name: (namespace_name) @name) @definition.module
 
+; `new class(...) { ... }` has no name; the keyword stands in for it and
+; the extractor calls the type `class@anonymous`, as PHP does. It is a type
+; like any other: its members belong to it, and `$this` inside them is it.
+(anonymous_class
+  "class" @name) @definition.class
+
 ; --- references ----------------------------------------------------------
 
 (function_call_expression
@@ -157,24 +163,35 @@
 ; --- scoped access -------------------------------------------------------
 
 ; `Greeter::DEFAULT_PREFIX`, `Util::helper()`, `Config::$instance`: the
-; scope is a class reference and the name after `::` is a member of it.
+; scope names a type and the name after `::` is a member of it. It is a
+; type reference, not a `class` one: `class` is reserved for base clauses,
+; because the resolver reads those as what the enclosing type extends.
 ; The grammar gives the constant form no field names, so anchors pick the
 ; first and last children apart.
 (class_constant_access_expression
-  . (name) @name) @reference.class
+  . (name) @name) @reference.type
+
+(class_constant_access_expression
+  . (qualified_name
+    (name) @name .)) @reference.type
 
 (class_constant_access_expression
   (name) @name .) @reference.member
 
 (scoped_call_expression
-  scope: (name) @name) @reference.class
+  scope: (name) @name) @reference.type
 
 (scoped_call_expression
   scope: (qualified_name
-    (name) @name)) @reference.class
+    (name) @name)) @reference.type
 
 (scoped_property_access_expression
-  scope: (name) @name) @reference.class
+  scope: (name) @name) @reference.type
+
+; `$x instanceof Ad` names a type as well.
+(binary_expression
+  "instanceof"
+  right: (name) @name) @reference.type
 
 ; `self::`, `static::` and `parent::` name the enclosing class or its base
 ; without spelling either. The resolver knows which class it is in; the
@@ -221,3 +238,125 @@
     (argument
       (string) @name))
   (#eq? @_fn "route")) @reference.route
+
+; --- receivers through properties -----------------------------------------
+
+; `$this->service->handle()`: the receiver is a property of the enclosing
+; class, and its declared type says where `handle` lives.
+(member_call_expression
+  object: (member_access_expression
+    object: (variable_name
+      (name) @_this)
+    name: (name) @receiver_field)
+  name: (name) @name
+  (#eq? @_this "this")) @reference.call
+
+(member_access_expression
+  object: (member_access_expression
+    object: (variable_name
+      (name) @_this)
+    name: (name) @receiver_field)
+  name: (name) @name
+  (#eq? @_this "this")) @reference.member
+
+; A typed property binds `this.name` for the whole class.
+(property_declaration
+  type: (named_type
+    (name) @vtype)
+  (property_element
+    name: (variable_name
+      (name) @var))) @binding
+
+(property_declaration
+  type: (optional_type
+    (named_type
+      (name) @vtype))
+  (property_element
+    name: (variable_name
+      (name) @var))) @binding
+
+; `self::make()`, `static::make()`, `parent::make()`: the receiver is the
+; enclosing class or what it extends.
+(scoped_call_expression
+  scope: (relative_scope) @receiver
+  name: (name) @name) @reference.call
+
+; A member of an expression, `make()->run()` or `$a[0]->run()`: nothing
+; names the receiver, and the resolver must not guess one.
+(member_call_expression
+  object: (_) @chained
+  name: (name) @name) @reference.call
+
+; --- receivers of constants and static properties ---------------------------
+
+; `Greeter::DEFAULT_PREFIX`, `self::DEFAULT_PREFIX`, `Config::$instance`:
+; the scope is the receiver of the member after `::`. `Foo::class` names
+; no member and is left out.
+(class_constant_access_expression
+  . (name) @receiver
+  (name) @name .
+  (#not-eq? @name "class")) @reference.member
+
+(class_constant_access_expression
+  . (relative_scope) @receiver
+  (name) @name .
+  (#not-eq? @name "class")) @reference.member
+
+(class_constant_access_expression
+  . (qualified_name
+    (name) @receiver .)
+  (name) @name .
+  (#not-eq? @name "class")) @reference.member
+
+(scoped_property_access_expression
+  scope: (name) @receiver
+  name: (variable_name
+    (name) @name)) @reference.member
+
+(scoped_property_access_expression
+  scope: (relative_scope) @receiver
+  name: (variable_name
+    (name) @name)) @reference.member
+
+(scoped_call_expression
+  scope: (qualified_name
+    (name) @receiver .)
+  name: (name) @name) @reference.call
+
+; --- types by call ---------------------------------------------------------
+
+; `$greeter = $this->build()`: the local is whatever `build()` returns,
+; which its signature says. The resolver reads it there.
+(assignment_expression
+  left: (variable_name
+    (name) @var)
+  right: (function_call_expression
+    function: (name) @vcall)) @binding
+
+(assignment_expression
+  left: (variable_name
+    (name) @var)
+  right: (member_call_expression
+    object: (variable_name
+      (name) @vcall_receiver)
+    name: (name) @vcall)) @binding
+
+(assignment_expression
+  left: (variable_name
+    (name) @var)
+  right: (scoped_call_expression
+    scope: (name) @vcall_receiver
+    name: (name) @vcall)) @binding
+
+(assignment_expression
+  left: (variable_name
+    (name) @var)
+  right: (object_creation_expression
+    (qualified_name
+      (name) @vtype .))) @binding
+
+; `$x instanceof \App\Models\Schedule`
+(binary_expression
+  "instanceof"
+  right: (qualified_name
+    (name) @name)) @reference.type

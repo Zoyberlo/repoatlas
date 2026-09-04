@@ -529,3 +529,75 @@ class TestLocalsAndReceivers:
         fields = [s for s in result.symbols if s.kind.value == "field"]
         assert [s.qualified_name for s in fields] == ["A.x"]
         assert any(r.name == "x" and r.kind == "member" for r in result.references)
+
+
+class TestReceiversAndAnonymousClasses:
+    def test_a_chained_call_records_an_expression_receiver(self) -> None:
+        from repoatlas.parse.extract import EXPRESSION_RECEIVER
+
+        php = extract("a.php", b"<?php\nfunction f($a) { return $a->b()->c(); }\n")
+        assert next(r for r in php.references if r.name == "c").receiver == EXPRESSION_RECEIVER
+        assert next(r for r in php.references if r.name == "b").receiver == "a"
+        ts = extract("a.ts", b"function f() { return make().run(); }\n")
+        assert next(r for r in ts.references if r.name == "run").receiver == EXPRESSION_RECEIVER
+
+    def test_instanceof_and_a_qualified_class_constant_are_type_references(self) -> None:
+        result = extract(
+            "a.php",
+            b"<?php\nfunction f($x) { if ($x instanceof Ad) {} return \\App\\M\\Trust::class; }\n",
+        )
+        types = {r.name for r in result.references if r.kind == "type"}
+        assert {"Ad", "Trust"} <= types
+
+    def test_an_anonymous_class_is_a_type_with_members(self) -> None:
+        result = extract(
+            "a.php",
+            b"<?php\nfunction make() { return new class { protected $data; public function f() {} }; }\n",
+        )
+        names = {s.qualified_name: s.kind.value for s in result.symbols}
+        assert names["make.class@anonymous"] == "class"
+        assert names["make.class@anonymous.data"] == "field"
+        assert names["make.class@anonymous.f"] == "method"
+
+    def test_a_typed_property_types_this_dot_name(self) -> None:
+        result = extract(
+            "a.php",
+            b"<?php\nclass C { private Svc $svc; public function h() { $this->svc->go(); } }\n",
+        )
+        call = next(r for r in result.references if r.name == "go")
+        assert (call.receiver, call.receiver_type) == ("this.svc", "Svc")
+
+    def test_a_promoted_parameter_types_both_the_local_and_the_property(self) -> None:
+        result = extract(
+            "a.php",
+            b"<?php\nclass C { public function __construct(private Svc $svc) { $svc->go(); } "
+            b"public function h() { $this->svc->run(); } }\n",
+        )
+        by_name = {r.name: r for r in result.references if r.name in ("go", "run")}
+        assert by_name["go"].receiver_type == "Svc"
+        assert by_name["run"].receiver_type == "Svc"
+
+    def test_this_is_a_receiver_in_typescript(self) -> None:
+        result = extract("a.ts", b"class C { x = 1; f() { return this.x; } }\n")
+        assert next(r for r in result.references if r.name == "x").receiver == "this"
+
+
+class TestTypesByCall:
+    def test_a_local_assigned_from_a_call_carries_the_call(self) -> None:
+        from repoatlas.parse.extract import CALL_TYPE_PREFIX
+
+        result = extract(
+            "a.php",
+            b"<?php\nclass A { function r(Svc $s) { $g = $this->build(); $h = make(); $i = $s->go(); "
+            b"return $g->x() . $h->y() . $i->z(); } }\n",
+        )
+        by_name = {r.name: r.receiver_type for r in result.references if r.name in ("x", "y", "z")}
+        assert by_name["x"] == f"{CALL_TYPE_PREFIX}build|this|"
+        assert by_name["y"] == f"{CALL_TYPE_PREFIX}make||"
+        assert by_name["z"] == f"{CALL_TYPE_PREFIX}go|s|Svc"
+
+    def test_a_qualified_instanceof_is_a_type_reference(self) -> None:
+        result = extract(
+            "a.php", b"<?php\nfunction f($m) { return $m instanceof \\App\\Models\\Schedule; }\n"
+        )
+        assert any(r.kind == "type" and r.name == "Schedule" for r in result.references)

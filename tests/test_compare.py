@@ -506,3 +506,127 @@ def test_an_empty_oracle_scores_nothing_and_says_so(candidate: IndexSnapshot) ->
     assert result.compared_paths == 0
     assert result.skipped_paths == len(candidate.paths)
     assert result.definitions.is_empty
+
+
+class TestOracleLocals:
+    def test_a_definition_the_oracle_files_as_local_is_not_scored(
+        self, candidate: IndexSnapshot, oracle: IndexSnapshot
+    ) -> None:
+        # scip-typescript files the methods of an object literal as `local`
+        # symbols; this index makes them navigable on purpose. That is a
+        # difference of scope, and the report says so instead of scoring it.
+        candidate.add_symbol(
+            Symbol(
+                id="src/app.ts#extra",
+                name="extra",
+                kind=SymbolKind.METHOD,
+                path="src/app.ts",
+                name_range=SourceRange.of(9, 2, 9, 7),
+            )
+        )
+        before = compare_snapshots(candidate, oracle).definitions.false_positives
+        oracle.add_symbol(
+            Symbol(
+                id="local 9",
+                name="extra",
+                kind=SymbolKind.METHOD,
+                path="src/app.ts",
+                name_range=SourceRange.of(9, 2, 9, 7),
+                local=True,
+            )
+        )
+        result = compare_snapshots(candidate, oracle)
+        assert result.oracle_local_definitions == 1
+        assert result.definitions.false_positives == before - 1
+        assert "files as local symbols, not scored: 1" in to_markdown(result)
+
+
+class TestOracleReach:
+    def test_a_shape_the_oracle_never_resolves_is_not_scored(
+        self, candidate: IndexSnapshot, oracle: IndexSnapshot
+    ) -> None:
+        # scip-php resolves `$this->x` most of the time and `$var->x`
+        # never. Forty edges through variables, at sites where the oracle
+        # has nothing, are its blind spot, not forty mistakes.
+        from repoatlas.model import Edge, EdgeKind, ResolutionTier
+
+        target = next(
+            s for s in candidate.symbols.values() if not s.synthetic and s.path == "src/app.ts"
+        )
+        shapes: dict[tuple[str, int, int], str] = {}
+        for line in range(100, 140):
+            candidate.add_edge(
+                Edge(
+                    src_id=target.id,
+                    dst_id=target.id,
+                    kind=EdgeKind.CALLS,
+                    tier=ResolutionTier.SUFFIX,
+                    site_path="src/app.ts",
+                    site_range=SourceRange.of(line, 4, line, 9),
+                )
+            )
+            shapes[("src/app.ts", line, 4)] = "variable (untyped)"
+        blind = compare_snapshots(candidate, oracle)
+        assert blind.references.false_positives >= 40
+        seen = compare_snapshots(candidate, oracle, ComparisonOptions(site_shapes=shapes))
+        assert seen.unjudged_shape_edges == 40
+        assert seen.references.false_positives == blind.references.false_positives - 40
+        row = next(c for c in seen.shape_coverage if c.shape == "variable (untyped)")
+        assert (row.candidate, row.oracle_seen, row.scored) == (40, 0, False)
+        assert "| variable (untyped) | 40 | 0 | no |" in to_markdown(seen)
+
+    def test_a_small_sample_is_never_declared_a_blind_spot(
+        self, candidate: IndexSnapshot, oracle: IndexSnapshot
+    ) -> None:
+        from repoatlas.model import Edge, EdgeKind, ResolutionTier
+
+        target = next(
+            s for s in candidate.symbols.values() if not s.synthetic and s.path == "src/app.ts"
+        )
+        candidate.add_edge(
+            Edge(
+                src_id=target.id,
+                dst_id=target.id,
+                kind=EdgeKind.CALLS,
+                tier=ResolutionTier.SUFFIX,
+                site_path="src/app.ts",
+                site_range=SourceRange.of(100, 4, 100, 9),
+            )
+        )
+        result = compare_snapshots(
+            candidate, oracle, ComparisonOptions(site_shapes={("src/app.ts", 100, 4): "expression"})
+        )
+        assert result.unjudged_shape_edges == 0
+
+
+class TestDefinitionReach:
+    def test_members_of_object_literals_the_oracle_never_records_are_not_scored(
+        self, candidate: IndexSnapshot, oracle: IndexSnapshot
+    ) -> None:
+        # A Pinia store's actions are methods of an object literal. This
+        # index records them; scip-typescript records nothing there. Forty
+        # of them are a scope difference, not forty false definitions.
+        holder = Symbol(
+            id="src/app.ts#useStore",
+            name="useStore",
+            kind=SymbolKind.CONSTANT,
+            path="src/app.ts",
+            name_range=SourceRange.of(90, 6, 90, 14),
+        )
+        candidate.add_symbol(holder)
+        for line in range(100, 140):
+            candidate.add_symbol(
+                Symbol(
+                    id=f"src/app.ts#useStore.m{line}",
+                    name=f"m{line}",
+                    kind=SymbolKind.METHOD,
+                    path="src/app.ts",
+                    name_range=SourceRange.of(line, 4, line, 8),
+                    container_id=holder.id,
+                )
+            )
+        result = compare_snapshots(candidate, oracle)
+        assert result.unjudged_shape_definitions == 40
+        row = next(c for c in result.definition_coverage if c.shape == "member of an object literal")
+        assert (row.candidate, row.oracle_seen, row.scored) == (40, 0, False)
+        assert "| member of an object literal | 40 | 0 | no |" in to_markdown(result)

@@ -80,12 +80,14 @@ class TestExtraction:
         names = {s.name for s in build.snapshot.symbols.values() if not s.synthetic}
         assert {"User", "Admin", "Greets", "makeUser", "run", "greet"} <= names
 
-    def test_marks_a_binding_inside_a_function_as_local(self, build) -> None:
+    def test_a_binding_inside_a_function_is_not_a_symbol(self, build) -> None:
         by_name = {
             s.name: s for s in build.snapshot.symbols.values() if not s.synthetic
         }
-        # `const user` lives in the body of `run`.
-        assert by_name["user"].local
+        # `const user` lives in the body of `run`: the function's business,
+        # found by reading the function, and nothing an agent navigates to.
+        # A real front end had more of these than it had exported names.
+        assert "user" not in by_name
         # `DEFAULT_NAME` is exported from the module.
         assert not by_name["DEFAULT_NAME"].local
 

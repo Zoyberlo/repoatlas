@@ -11,6 +11,12 @@ This is the measurement. It changed one thing in the benchmark, nothing in
 the weights, and that second half is the result rather than the absence of
 one.
 
+*Revisited later the same day:* the resolver was then rebuilt around what
+two compiler-backed oracles said (`docs/benchmarks/oracles.md`), and the
+plain and steered baselines below moved to 0.188 and 0.312. The weights
+were not re-swept; the finding that none of them mattered was about their
+relative effect, and nothing here changed that.
+
 ## The repository and the method
 
 A private Laravel 10 and Quasar application, 1,568 commits over three

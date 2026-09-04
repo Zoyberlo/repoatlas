@@ -153,6 +153,51 @@ no confidence of their own:
 Each of those was found by an oracle fixture, not by reading: the three
 fixtures under `tests/fixtures/` each caught a different one.
 
+### A member resolves through its receiver, or not at all
+
+The first real repository under an oracle, a Laravel application against
+`scip-php`, put the two bottom rungs at 0 of 890 and 48 of 812 right, and
+every wrong edge was a member reached through a variable nobody had typed.
+`$order->id` is not some job's `$id`; `$order->update()` is not a controller's.
+Eloquent models declare no properties, so such members are most of what a
+Laravel application contains, and matching them by name across the
+repository is a coin flip with the wrong coin.
+
+The rule since then: a member is looked up in its receiver's type and what
+that type extends, implements and uses. The receiver is `$this`, a local
+with a declared or constructed type or one assigned from a call whose
+signature declares its return, a typed property of the enclosing class, or
+a class named outright. Anything else is unknown, and unknown is
+unresolved: no rung below tries. Bare calls, constructions, type names and
+plain values keep the full ladder, because for those a name is most of the
+evidence there is. Measured after the change on the same repository:
+references 0.993 precision at 1.000 recall, and no rung claiming more than
+it delivers. `docs/benchmarks/oracles.md` has the tables.
+
+### What an oracle can judge
+
+An oracle is partial in ways that are not errors, and a comparison that
+does not know them measures the oracle. Three are handled explicitly and
+reported with their counts:
+
+- **Files it never opened.** `scip-typescript` does not read `.vue`; an
+  edge into one is neither confirmed nor denied, and is set aside.
+- **Positions it files as local.** A definition at a position the oracle
+  records as a `local` symbol is a difference of scope, not accuracy.
+- **Shapes it never resolves.** For each shape of receiver, `$this->x`,
+  `$typed->x`, `$untyped->x`, `Util::x`, `make()->x`, the comparison
+  counts how many of the candidate's sites the oracle resolved anything
+  at. Fewer than one in a hundred, over at least thirty, and the shape is
+  outside the oracle's reach: `scip-php` 0.0.2 resolves `$this->x` at six
+  sites in ten and a typed variable's member at none in 880. Definitions
+  get the same test, which is how the methods of a Pinia store's object
+  literal, 118 of them, stopped counting as false against an indexer that
+  records nothing for them.
+
+The report prints all three under *Honesty checks* and *What the oracle
+can judge*. Gating by what the oracle demonstrably does is the honest
+alternative to either trusting it blindly or special-casing it by name.
+
 ### Targets
 
 The one independent published comparison of retrieval quality on a large
@@ -160,7 +205,11 @@ Java codebase, using compiled bytecode as the oracle, puts iterative grep at
 F1 0.46, a tree-sitter graph at 0.67 and SCIP at 0.96, with the gap widest
 on transitive type-hierarchy questions ([type-resolved reachability study]).
 Those are the numbers to beat and to be honest about: the goal is to clear
-grep decisively, not to pretend to match a compiler.
+grep decisively, not to pretend to match a compiler. On the one real
+repository measured so far, within what its oracles can judge, the index
+sits at 0.99 on both languages; what the oracles cannot judge, members
+through typed variables and the methods of object literals, is listed in
+the report and in `docs/benchmarks/oracles.md` rather than claimed.
 
 ### Framework conventions, and why they are not a rung
 
@@ -277,7 +326,8 @@ against commits the sweep never saw:
 
 What the benchmark did settle is not a weight at all. Steering the map by
 the words of the task nearly doubles the changed symbols it names, 0.136 to
-0.264, and how those words are matched to names moves the score by more
+0.264 (0.188 to 0.312 once the resolver stopped guessing members by name;
+see `docs/benchmarks/oracles.md`), and how those words are matched to names moves the score by more
 than every weight in `pagerank.py` together. The lesson is about where the
 leverage in a ranking sits: not in the constants, in what the walk is
 pointed at.

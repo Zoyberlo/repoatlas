@@ -767,8 +767,30 @@ def _cmd_verify_oracle(args: argparse.Namespace) -> int:
     return _EXIT_FAILED_CHECK
 
 
+def _load_candidate(
+    path: Path,
+) -> tuple[IndexSnapshot, dict[tuple[str, int, int], str] | None]:
+    """A candidate index, and what each of its references reached through.
+
+    Only a parsed repository knows its receiver shapes; a SCIP file
+    carries edges alone, and is scored without the shape gate.
+    """
+    if not path.is_dir():
+        return _load(path), None
+    from .resolve.cascade import receiver_shape
+
+    build = _build(path)
+    shapes = {
+        (site_path, reference.span.start.line, reference.span.start.character): receiver_shape(
+            reference
+        )
+        for site_path, reference in build.references
+    }
+    return build.snapshot, shapes
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
-    candidate = _load(args.candidate)
+    candidate, site_shapes = _load_candidate(args.candidate)
     oracle = _load(args.oracle)
     options = ComparisonOptions(
         policy=args.policy,
@@ -777,6 +799,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         restrict_to_oracle_paths=not args.all_paths,
         bootstrap_resamples=args.resamples,
         bootstrap_seed=args.seed,
+        site_shapes=site_shapes,
     )
     result = compare_snapshots(candidate, oracle, options)
     text = to_json(result) if args.format == "json" else to_markdown(result)

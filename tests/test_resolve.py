@@ -304,7 +304,12 @@ class TestCascade:
         other = _symbol("u.ts#Greets.greet", "greet", "u.ts", 1, SymbolKind.METHOD, interface.id)
         resolver = self._resolver([klass, method, shout, interface, other])
         edges = resolver.resolve_file(
-            "u.ts", [Reference("greet", "call", SourceRange.of(18, 16, 18, 21), shout.id)]
+            "u.ts",
+            [
+                Reference(
+                    "greet", "call", SourceRange.of(18, 16, 18, 21), shout.id, receiver="this"
+                )
+            ],
         )
         assert edges[0].dst_id == method.id
 
@@ -403,13 +408,20 @@ class TestCascade:
         )
         assert edges[0].dst_id == klass.id
 
-    def test_an_edge_never_points_a_symbol_at_itself(self) -> None:
+    def test_recursion_is_a_call_but_a_type_naming_itself_is_not(self) -> None:
+        # A function calling itself is a call, and an oracle records it. A
+        # class naming its own type in its body is not a dependency.
         recursive = _symbol("a.py#loop", "loop", "a.py", 0)
-        resolver = self._resolver([recursive])
+        klass = _symbol("a.py#K", "K", "a.py", 5, SymbolKind.CLASS)
+        resolver = self._resolver([recursive, klass])
         edges = resolver.resolve_file(
-            "a.py", [Reference("loop", "call", SourceRange.of(1, 4, 1, 8), recursive.id)]
+            "a.py",
+            [
+                Reference("loop", "call", SourceRange.of(1, 4, 1, 8), recursive.id),
+                Reference("K", "type", SourceRange.of(6, 4, 6, 5), klass.id),
+            ],
         )
-        assert edges == []
+        assert [(e.src_id, e.dst_id) for e in edges] == [(recursive.id, recursive.id)]
 
     def test_stats_report_the_shape_of_the_evidence(self) -> None:
         target = _symbol("b.py#only", "only", "b.py", 0)
@@ -586,3 +598,237 @@ class TestDerivedInheritance:
             if e.kind.value == "implements"
         }
         assert stored == direct
+
+
+class TestMemberRungs:
+    """A member resolves through its receiver, or not at all.
+
+    Every test here is a false positive or a miss a real Laravel
+    application produced against scip-php, reduced to the two files that
+    reproduce it.
+    """
+
+    def test_an_untyped_receiver_does_not_resolve_by_name_across_files(self, tmp_path: Path) -> None:
+        # `$order->update([])` was resolving to a controller's `update`, and
+        # `$order->id` to a job's `$id`: 0 of 890 such edges were right.
+        (tmp_path / "UserController.php").write_text(
+            "<?php\nclass UserController { public function update() {} public $id; }\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "run.php").write_text(
+            "<?php\nfunction run($ad) { $order->update([]); return $order->id; }\n", encoding="utf-8"
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert [e for e in edges if e.kind.value != "contains" and e.site_path == "run.php"] == []
+
+    def test_a_static_call_on_a_foreign_class_stops_at_that_class(self, tmp_path: Path) -> None:
+        # `Auth::user()` inside a controller that has its own `user()`
+        # method: the receiver is the facade, which is not ours, and the
+        # enclosing class has nothing to do with it.
+        (tmp_path / "AuthController.php").write_text(
+            "<?php\nuse Illuminate\\Support\\Facades\\Auth;\n"
+            "class AuthController { public function user() {} "
+            "public function me() { return Auth::user(); } }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert not [e for e in edges if e.kind.value != "contains" and e.dst_id.endswith("AuthController.user")]
+
+    def test_a_member_of_an_expression_is_not_looked_up_by_name(self, tmp_path: Path) -> None:
+        # `Auth::guard('web')->login($user)` in a controller with a
+        # `login()` action: the receiver is whatever `guard()` returned.
+        (tmp_path / "AuthController.php").write_text(
+            "<?php\nclass AuthController { public function login() {} "
+            "public function go() { Auth::guard('web')->login(1); } }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert not [e for e in edges if e.kind.value != "contains" and e.dst_id.endswith("AuthController.login")]
+
+    def test_a_static_call_does_not_make_its_class_a_base(self, tmp_path: Path) -> None:
+        # `Client::where()` inside a command once recorded Client as what
+        # the command extends, and `parent::__construct()` went there.
+        (tmp_path / "Client.php").write_text(
+            "<?php\nclass Client { public static function where() {} }\n", encoding="utf-8"
+        )
+        (tmp_path / "Cmd.php").write_text(
+            "<?php\nclass Cmd extends Command { public function __construct() "
+            "{ parent::__construct(); Client::where(); } }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert not [e for e in edges if e.kind.value != "contains" and e.kind.value == "inherits" and e.src_id == "Cmd.php#Cmd"]
+        targets = {e.dst_id for e in edges if e.kind.value != "contains" and e.site_path == "Cmd.php"}
+        assert targets == {"Client.php#Client", "Client.php#Client.where"}
+
+    def test_a_typed_property_carries_calls_through_this(self, tmp_path: Path) -> None:
+        # The most common miss: `$this->service->handle()` where the
+        # constructor promoted `private Service $service`.
+        (tmp_path / "Svc.php").write_text(
+            "<?php\nclass Svc { public function go() {} }\n", encoding="utf-8"
+        )
+        (tmp_path / "Ctl.php").write_text(
+            "<?php\nclass Ctl { private Svc $svc; "
+            "public function __construct(private Svc $other) {} "
+            "public function h() { $this->svc->go(); $this->other->go(); } }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        calls = [e for e in edges if e.kind.value != "contains" and e.site_path == "Ctl.php" and e.dst_id == "Svc.php#Svc.go"]
+        assert len(calls) == 2
+
+    def test_a_typed_field_carries_calls_through_this_in_typescript(self, tmp_path: Path) -> None:
+        (tmp_path / "svc.ts").write_text("export class Svc { go(): void {} }\n", encoding="utf-8")
+        (tmp_path / "ctl.ts").write_text(
+            "import { Svc } from './svc';\n"
+            "export class Ctl { private svc: Svc; constructor(private other: Svc) {} "
+            "run() { this.svc.go(); this.other.go(); } }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        calls = [e for e in edges if e.kind.value != "contains" and e.site_path == "ctl.ts" and e.dst_id == "svc.ts#Svc.go"]
+        assert len(calls) == 2
+        assert {e.tier.label for e in calls} == {"import_map"}
+
+    def test_an_inherited_method_is_found_through_this(self, tmp_path: Path) -> None:
+        (tmp_path / "Base.php").write_text(
+            "<?php\nclass Base { protected function helper() {} }\n", encoding="utf-8"
+        )
+        (tmp_path / "Child.php").write_text(
+            "<?php\nclass Child extends Base { public function run() { $this->helper(); } }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert any(
+            e.site_path == "Child.php"
+            and e.dst_id == "Base.php#Base.helper"
+            and e.tier.label == "same_module"
+            for e in edges
+        )
+
+    def test_a_trait_method_is_found_through_this(self, tmp_path: Path) -> None:
+        (tmp_path / "HasName.php").write_text(
+            "<?php\ntrait HasName { public function name() {} }\n", encoding="utf-8"
+        )
+        (tmp_path / "User.php").write_text(
+            "<?php\nclass User { use HasName; public function greet() { return $this->name(); } }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert any(
+            e.site_path == "User.php" and e.dst_id == "HasName.php#HasName.name" for e in edges
+        )
+
+    def test_this_in_a_vue_options_object_reaches_the_file_own_methods(self, tmp_path: Path) -> None:
+        (tmp_path / "Comp.vue").write_text(
+            "<template><div/></template>\n<script>\n"
+            "export default { methods: { bar() {}, foo() { this.bar(); } } }\n</script>\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert any(
+            e.site_path == "Comp.vue" and e.dst_id.endswith("bar") and e.kind.value == "calls"
+            for e in edges
+        )
+
+    def test_an_aliased_external_import_does_not_resolve_to_a_namesake(self, tmp_path: Path) -> None:
+        # `use Foundation\Console\Kernel as ConsoleKernel;` above
+        # `class Kernel`: the import site resolved to the class under it.
+        (tmp_path / "Kernel.php").write_text(
+            "<?php\nuse Illuminate\\Foundation\\Console\\Kernel as ConsoleKernel;\n"
+            "class Kernel extends ConsoleKernel {}\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert [e for e in edges if e.kind.value != "contains" and e.site_path == "Kernel.php" and e.site_range] == []
+
+    def test_this_inside_an_anonymous_class_is_that_class(self, tmp_path: Path) -> None:
+        (tmp_path / "Export.php").write_text(
+            "<?php\nclass Export { protected $data; }\n", encoding="utf-8"
+        )
+        (tmp_path / "make.php").write_text(
+            "<?php\nfunction make($d) { return new class($d) { protected $data; "
+            "public function __construct($d) { $this->data = $d; } }; }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        targets = {e.dst_id for e in edges if e.kind.value != "contains" and e.site_path == "make.php" and e.site_range}
+        assert targets == {"make.php#make.class@anonymous.data"}
+
+
+class TestReturnTypesAndRecursion:
+    def test_a_local_assigned_from_a_call_takes_the_callee_return_type(self, tmp_path: Path) -> None:
+        # The phpdemo edge scip-php could not see: `$greeter = $this->build(true)`
+        # where `build(): Greeter`.
+        (tmp_path / "Greeter.php").write_text(
+            "<?php\nclass Greeter { public function greet() {} }\n", encoding="utf-8"
+        )
+        (tmp_path / "App.php").write_text(
+            "<?php\nclass App { public function build(): Greeter { return new Greeter(); } "
+            "public function run() { $g = $this->build(); return $g->greet(); } }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert any(e.site_path == "App.php" and e.dst_id == "Greeter.php#Greeter.greet" for e in edges)
+
+    def test_a_python_class_called_directly_types_the_local(self, tmp_path: Path) -> None:
+        (tmp_path / "models.py").write_text(
+            "class Admin:\n    def audit(self):\n        pass\n\n\n"
+            "def build() -> Admin:\n    return Admin()\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "app.py").write_text(
+            "from models import Admin, build\n\n\n"
+            "def run():\n    a = Admin()\n    b = build()\n    return a.audit(), b.audit()\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        audits = [e for e in edges if e.site_path == "app.py" and e.dst_id == "models.py#Admin.audit"]
+        assert len(audits) == 2
+
+    def test_a_typescript_local_from_a_call_is_typed(self, tmp_path: Path) -> None:
+        (tmp_path / "user.ts").write_text(
+            "export class User { greet(): string { return 'x'; } }\n"
+            "export function makeUser(): User { return new User(); }\n"
+            "export async function loadUser(): Promise<User> { return new User(); }\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "app.ts").write_text(
+            "import { makeUser, loadUser } from './user';\n"
+            "export async function run() { const u = makeUser(); const v = await loadUser(); "
+            "return u.greet() + v.greet(); }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        greets = [e for e in edges if e.site_path == "app.ts" and e.dst_id == "user.ts#User.greet"]
+        assert len(greets) == 2
+
+    def test_recursion_is_a_call(self, tmp_path: Path) -> None:
+        (tmp_path / "K.php").write_text(
+            "<?php\nclass K { public static function walk($n) { return self::walk($n - 1); } "
+            "public function again() { return $this->again(); } }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        calls = {(e.src_id, e.dst_id) for e in edges if e.kind.value == "calls"}
+        assert ("K.php#K.walk", "K.php#K.walk") in calls
+        assert ("K.php#K.again", "K.php#K.again") in calls
+
+    def test_static_as_a_return_type_is_the_enclosing_class(self, tmp_path: Path) -> None:
+        (tmp_path / "F.php").write_text(
+            "<?php\nclass F { public function unverified(): static { return $this; } }\n",
+            encoding="utf-8",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert any(e.kind.value == "uses_type" and e.dst_id == "F.php#F" for e in edges)
+
+    def test_a_builtin_function_does_not_reach_a_field_of_the_same_name(self, tmp_path: Path) -> None:
+        # PHP's `end($list)` was resolving to `public $end` in some class.
+        (tmp_path / "P.php").write_text(
+            "<?php\nclass P { public $end = 1; }\n", encoding="utf-8"
+        )
+        (tmp_path / "f.php").write_text(
+            "<?php\nfunction last($xs) { return end($xs); }\n", encoding="utf-8"
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert not [e for e in edges if e.site_path == "f.php" and e.kind.value != "contains"]

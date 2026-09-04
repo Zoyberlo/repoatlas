@@ -9,6 +9,11 @@ measurement, because none existed.
 `repoatlas localize` is that measurement. This is what it found on the
 first real repository it ran against, and what changed as a result.
 
+*Revisited later the same day:* after the resolver stopped matching
+members by name (`docs/benchmarks/oracles.md`), the same benchmark reads
+0.188 plain and 0.312 steered at the symbol level, from 0.136 and 0.264.
+The numbers below are as they were measured; the conclusions stand.
+
 ## The repository
 
 A private Laravel and Quasar application: Laravel 10 in `backend/`, Quasar

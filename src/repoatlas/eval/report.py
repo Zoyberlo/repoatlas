@@ -108,6 +108,55 @@ def to_markdown(comparison: Comparison, *, samples: int = 5) -> str:
         f"not scored: {len(comparison.unsited_edges)}"
     )
     lines.append(
+        f"- Edges into files the oracle does not cover, not scored: "
+        f"{comparison.uncovered_target_edges}"
+    )
+    lines.append(
+        f"- Definitions the oracle files as local symbols, not scored: "
+        f"{comparison.oracle_local_definitions}; edges into such positions: "
+        f"{comparison.oracle_local_target_edges}"
+    )
+    if comparison.shape_coverage:
+        lines.append(
+            f"- Edges through receivers the oracle never resolves, not scored: "
+            f"{comparison.unjudged_shape_edges}"
+        )
+        lines.extend(
+            [
+                "",
+                "## What the oracle can judge",
+                "",
+                "Edges are scored only for the shapes of receiver the oracle resolves "
+                "somewhere. A shape it never resolves, given enough tries, is outside "
+                "its reach, and edges of that shape are listed here rather than "
+                "counted wrong.",
+                "",
+                "| receiver | edges | sites the oracle resolved | scored |",
+                "| --- | ---: | ---: | --- |",
+            ]
+        )
+        for coverage in comparison.shape_coverage:
+            lines.append(
+                f"| {coverage.shape} | {coverage.candidate} | {coverage.oracle_seen} | "
+                f"{'yes' if coverage.scored else 'no'} |"
+            )
+    if any(not coverage.scored for coverage in comparison.definition_coverage):
+        lines.extend(
+            [
+                "",
+                "The same holds for definitions. A kind of definition the oracle never "
+                "records, given enough of them, is outside its reach:",
+                "",
+                "| definition | ours | sites the oracle defined | scored |",
+                "| --- | ---: | ---: | --- |",
+            ]
+        )
+        for coverage in comparison.definition_coverage:
+            lines.append(
+                f"| {coverage.shape} | {coverage.candidate} | {coverage.oracle_seen} | "
+                f"{'yes' if coverage.scored else 'no'} |"
+            )
+    lines.append(
         f"- Matches that needed column tolerance: "
         f"{comparison.tolerant_definition_matches} definitions, "
         f"{comparison.tolerant_reference_matches} references"

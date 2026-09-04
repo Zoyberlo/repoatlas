@@ -163,3 +163,28 @@
 (type
   (attribute
     attribute: (identifier) @name)) @reference.type
+
+; --- chained calls ----------------------------------------------------------
+
+; A member of an expression, `make().run()`: nothing names the receiver.
+(call
+  function: (attribute
+    object: (_) @chained
+    attribute: (identifier) @name)) @reference.call
+
+; --- types by call ---------------------------------------------------------
+
+; `greeter = build()` is whatever `build` returns, and `admin = Admin()`
+; is an Admin: Python constructs by calling, and the resolver tells the
+; two apart by what the callee turns out to be.
+(assignment
+  left: (identifier) @var
+  right: (call
+    function: (identifier) @vcall)) @binding
+
+(assignment
+  left: (identifier) @var
+  right: (call
+    function: (attribute
+      object: (identifier) @vcall_receiver
+      attribute: (identifier) @vcall))) @binding

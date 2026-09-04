@@ -393,6 +393,21 @@ types live in the store now (schema 2). Only 15 remains open, and the
 fixtures are small: the next accuracy number worth having is a real
 Laravel backend under `scip-php`.
 
+*Status 2026-09-04, night:* that measurement was made, and it was the most
+productive thing this project has done. The backend scored 0.429 on
+reference precision the first time; the calibration table put the two
+name-matching rungs at 0 and 6 percent right on members through untyped
+variables, which is what a Laravel application is made of. The resolver
+now looks a member up through its receiver or leaves it alone, the
+comparison gates its score by what the oracle demonstrably resolves, and
+the same repository scores 0.993 / 1.000 on references and 0.996 / 1.000
+on definitions; the Quasar frontend under `scip-typescript` 0.994 / 1.000.
+Eleven distinct defects fell out on the way, each with a test, and the
+localisation benchmark rose from 0.136 / 0.264 to 0.188 / 0.312 without
+being touched. Write-up: `docs/benchmarks/oracles.md`. Still open: 15, and
+a Laravel-specific rung for `$user->x` by naming convention, which no
+oracle can judge and so has not been written.
+
 | # | Item | Why first | Size |
 | ---: | --- | --- | --- |
 | 1 | Calibrate tokens per model, thread the estimator through the tools (1.1) | The budget is wrong by a third | half a day |

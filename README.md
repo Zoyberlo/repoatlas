@@ -88,12 +88,11 @@ TypeScript fixture it says:
 | definitions | 1.000 | 1.000 | 1.000 | 13 | 0 | 0 |
 | references | 1.000 | 1.000 | 1.000 | 23 | 0 | 0 |
 
-Expected calibration error 0.097, worst bin 0.450, over 19 edges:
+Expected calibration error 0.079, worst bin 0.100, over 19 edges:
 
 | confidence bin | edges | claimed | observed | gap |
 | --- | ---: | ---: | ---: | ---: |
-| 0.45 to 0.65 | 1 | 0.550 | 1.000 | -0.450 |
-| 0.88 to 0.93 | 10 | 0.900 | 1.000 | -0.100 |
+| 0.88 to 0.93 | 11 | 0.900 | 1.000 | -0.100 |
 | 0.93 to 0.97 | 8 | 0.950 | 1.000 | -0.050 |
 
 **That calibration table is the part to read.** Resolving a name without a
@@ -114,16 +113,34 @@ toolchain. Two more fixtures do the same for the rest of the stack:
 | `scip-python` 0.6.6 | 1.00 / 1.00 | 1.00 / 1.00 |
 | `scip-php` 0.0.1 | 1.00 / 1.00 | 0.93 / 1.00 |
 
-The one PHP false positive is a call through an untyped parameter that
-`scip-php` declines to resolve and this index resolves by name; the edge is
-right, the oracle is incomplete. Getting here took what a tag query alone
-cannot do: dropping uses of parameters and locals that shadow a symbol's
-name, typing a receiver from its annotation or its `new` so `user.greet()`
-goes to the class `user` was declared as, and deriving the override and
-transitive-interface edges a compiler records but nobody writes down.
-Three small fixtures are where those were found, not where they are
-proven; `tests/test_oracles.py` holds each language to its floor so none
-of it can regress quietly.
+The one PHP false positive is a call on a local assigned from a method
+whose signature says what it returns; this index reads that, `scip-php`
+does not. Getting here took what a tag query alone cannot do: dropping
+uses of parameters and locals that shadow a symbol's name, typing a
+receiver from its annotation, its `new` or the call it was assigned from,
+so `user.greet()` goes to the class `user` was declared as, and deriving
+the override and transitive-interface edges a compiler records but nobody
+writes down. `tests/test_oracles.py` holds each language to its floor so
+none of it can regress quietly.
+
+Fixtures are where problems are found, not where an index is proven. The
+same two indexers were run over a production Laravel 10 and Quasar
+application, 163 PHP files and 24 JavaScript files the oracles cover:
+
+| | definitions P / R | references P / R |
+| --- | ---: | ---: |
+| Laravel backend, `scip-php` | 0.996 / 1.000 | 0.993 / 1.000 |
+| Quasar frontend, `scip-typescript` | 0.968 / 1.000 | 0.994 / 1.000 |
+
+The first run against that backend scored 0.429 on references. Every
+member reached through an untyped variable, `$order->id`, `$order->update()`,
+had been matched by name across the repository, and the calibration table
+put those rungs at 0 and 6 percent right. The rule that came out of it:
+a member resolves through its receiver, or not at all. The report also
+learned to ask what an oracle can judge: `scip-php` resolves nothing
+through a variable, typed or not, in four thousand tries, so edges of that
+shape are listed rather than scored. The whole story, before and after, is
+in [docs/benchmarks/oracles.md](docs/benchmarks/oracles.md).
 
 The report also carries a per-edge-kind table, a dangling-edge count, and
 bootstrap confidence intervals resampled over files. Before trusting the
