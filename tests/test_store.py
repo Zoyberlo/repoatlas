@@ -610,3 +610,42 @@ def test_a_store_that_fails_to_open_does_not_leak_its_connection(
         IndexStore(target)
     target.unlink()
     assert not target.exists()
+
+
+class TestToolchainStamp:
+    def test_the_stamp_changes_when_this_package_does(self) -> None:
+        """A new release re-parses: the extractor decides what a file yields too.
+
+        A store built before a signature was widened kept the old ones,
+        because the stamp watched the queries and the queries had not
+        moved.
+        """
+        import repoatlas
+        from repoatlas.store.database import toolchain_version
+
+        queries = [("python", "(module) @x")]
+        before = toolchain_version(queries)
+        original = repoatlas.__version__
+        try:
+            repoatlas.__version__ = original + "+next"
+            import importlib
+
+            import repoatlas.store.database as database
+
+            importlib.reload(database)
+            after = database.toolchain_version(queries)
+        finally:
+            repoatlas.__version__ = original
+            import importlib
+
+            import repoatlas.store.database as database
+
+            importlib.reload(database)
+        assert before != after
+
+    def test_the_stamp_still_changes_when_a_query_does(self) -> None:
+        from repoatlas.store.database import toolchain_version
+
+        assert toolchain_version([("python", "(a) @x")]) != toolchain_version(
+            [("python", "(b) @x")]
+        )

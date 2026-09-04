@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .. import __version__
 from ..model import (
     Edge,
     EdgeKind,
@@ -81,11 +82,14 @@ def content_digest(data: bytes) -> str:
 def toolchain_version(queries: Iterable[tuple[str, str]]) -> str:
     """A stamp covering everything that decides what extraction produces.
 
-    The tree-sitter version and every tag query, hashed together. Editing a
-    query changes the symbols a file yields, and an index that kept the old
-    ones would be wrong in a way nothing else would notice.
+    The tree-sitter version, this package's version, and every tag query,
+    hashed together. Editing a query changes the symbols a file yields,
+    and so does editing the extractor: a store built before a signature
+    was widened kept the old signatures and no test noticed, because the
+    queries were untouched and the stamp only watched those.
     """
     digest = hashlib.blake2b(digest_size=16)
+    digest.update(__version__.encode())
     try:
         import tree_sitter
 
