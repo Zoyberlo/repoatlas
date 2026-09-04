@@ -202,10 +202,14 @@ alternative to either trusting it blindly or special-casing it by name.
 
 The one independent published comparison of retrieval quality on a large
 Java codebase, using compiled bytecode as the oracle, puts iterative grep at
-F1 0.46, a tree-sitter graph at 0.67 and SCIP at 0.96, with the gap widest
-on transitive type-hierarchy questions ([type-resolved reachability study]).
-Those are the numbers to beat and to be honest about: the goal is to clear
-grep decisively, not to pretend to match a compiler. On the one real
+mean F1 0.32, a tree-sitter graph at 0.50 and SCIP at 0.88 on twelve
+transitive type-hierarchy questions, and the gap is recall (0.32 / 0.50 /
+0.97) rather than precision (0.65 / 0.67 / 0.86) ([type-resolved
+reachability study], recomputed from its published `results.csv`; an
+earlier revision of this page quoted 0.46 / 0.67 / 0.96, which appear in
+no table of the study). Those are the numbers to beat and to be honest
+about: the goal is to clear grep decisively, not to pretend to match a
+compiler. On the one real
 repository measured so far, within what its oracles can judge, the index
 sits at 0.99 on both languages; what the oracles cannot judge, members
 through typed variables and the methods of object literals, is listed in
