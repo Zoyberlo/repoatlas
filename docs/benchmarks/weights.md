@@ -157,6 +157,7 @@ skeleton in path order, cut at the same 2,000 tokens, which is what
 | --- | ---: | ---: |
 | skeleton prefix (Repomix-shaped) | 0.028 | 0.032 |
 | grep for the subject's words, busiest file first | 0.111 | 0.222 |
+| name-matched graph, steered (aider's) | 0.269 | 0.494 |
 | ranked, plain | 0.221 | 0.554 |
 | ranked, steered by the subject's words | 0.309 | 0.579 |
 
@@ -175,4 +176,18 @@ declaration line, since a grep hit lands in a body; the map arms did not
 move (0.221 / 0.309 before and after). Grep finds a third of what the
 steered map finds and half of what the unsteered one does, for the same
 tokens. A grep the agent can repeat and widen is a different thing, and
-`repoatlas agentbench` (tier 4) exists to measure that one.
+`repoatlas agentbench` (tier 4) measured that one: over twenty-four
+paired tasks an agent finds the same symbols with the index and without,
+0.349 against 0.317, and spends four more turns and a fifth more tokens
+doing it.
+
+The fourth arm, added the same day, is the closest published relative:
+aider's repo map, whose graph joins a file that mentions a name to every
+file defining it, no imports and no types. Built over the same symbols
+and ranked, steered, rendered and scored identically, it reaches 0.269
+symbol recall against this index's 0.309, and 0.494 file recall against
+0.579. Resolving a reference rather than matching it is worth about a
+sixth of each, which is a real difference and a smaller one than the
+machinery might suggest. It is worth much more elsewhere: on the
+question aider does not ask, who uses this symbol, matching a name is
+grep and scores grep's 0.78 against a resolved 1.00.

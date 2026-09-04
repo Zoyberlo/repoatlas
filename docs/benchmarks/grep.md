@@ -105,11 +105,60 @@ inside the noise. It also showed why the harness had to change: the grep
 arm had shell commands denied and spent a third of its turns being
 refused; both arms padded their answers to the allowed fifteen entries.
 
+The full run, forty-four commits and twenty-four tasks scored in both
+arms, one repeat, Opus 5 under a Max login:
+
+| | grep | with the index | paired delta |
+| --- | ---: | ---: | --- |
+| symbol recall | 0.317 | 0.349 | +0.032 [−0.059, +0.122] W6/L3, p=0.51 |
+| symbol recall at five | 0.272 | 0.231 | −0.041, p=0.51 |
+| file recall | 0.777 | 0.777 | ±0.000 |
+| tokens | 361,282 | 429,397 | **+68,116**, p=0.064 |
+| turns | 17.9 | 21.5 | **+3.7**, p=0.027 |
+| cost | $0.58 | $0.61 | +$0.03 |
+| index calls | 0 | 8.5 | every run used it |
+
+No difference in what was found, more turns to find it, at 19% more
+tokens. The index arm was told to start with `repo_map` and did: not one
+of the twenty-four runs ignored it, against the 0–6% unprompted use the
+published ablation saw, so this is not a case of an agent refusing a
+tool. Split at three files the picture does not change: +0.077 recall on
+small changes, −0.022 on large ones, neither near significance. On this
+task the index earns nothing, and that agrees with everything published
+about it.
+
 `repoatlas sitebench` asks who uses a symbol, scored against the SCIP
 oracle rather than against this index. That is where the ceiling above
-says the difference lives.
+says the difference lives, and it has not been run.
 
-<!-- numbers land here when the runs complete -->
+## Against the closest relative
+
+Aider's repo map is the same idea and came first: tree-sitter tags,
+PageRank, a token budget. Its graph connects *files*, and a reference to
+a name is an edge to every file defining that name, by exact string
+match, with no imports and no types. So the difference between that and
+this is one thing only, the edges, and it can be measured by building
+aider's graph over the same symbols and ranking, steering, rendering and
+scoring it identically.
+
+| map at 2,000 tokens, 281 commits | symbol recall | file recall |
+| --- | ---: | ---: |
+| skeleton prefix, no ranking | 0.028 | 0.032 |
+| grep for the task's words | 0.111 | 0.222 |
+| **name-matched graph, aider's** | **0.269** | **0.494** |
+| resolved graph, unsteered | 0.221 | 0.554 |
+| resolved graph, steered | **0.309** | **0.579** |
+
+Matching names gets most of the way. Against the steered map that is the
+fair comparison, resolution is worth +0.040 symbol recall and +0.085 file
+recall, about a sixth more of each. For drawing a map, aider's answer is
+most of the answer at a fraction of the code, and it is worth saying so.
+
+Where it is not most of the answer is the question aider does not ask.
+`find_references` on a name that means fifteen things is exactly right;
+matching that name is, by construction, the same 0.78 as grep, because it
+*is* grep with a file-level index. That is the whole of the difference,
+and it is the whole of the case for the extra machinery.
 
 ## What the published comparisons say
 
@@ -122,10 +171,17 @@ says the difference lives.
 
 ## What this measures and what it does not
 
-Measured: the index is right (0.99 precision and recall against
-compilers on this application), its answers cost a fraction of the
-equivalent reading, and on the one question with independent ground truth
-it is exactly right where a name search is four-fifths right.
+Measured, and positive: the index is right (0.99 precision and recall
+against compilers on this application); its answers cost a fraction of
+the equivalent reading; on the one question with independent ground
+truth it is exactly right where a name search is four-fifths right; and
+its resolved graph draws a better map than the name-matched graph that
+is the state of the art in an open-source tool, by about a sixth.
+
+Measured, and negative: an agent asked where a change goes does no
+better with the index than with grep, over twenty-four paired tasks, and
+takes four more turns and a fifth more tokens to arrive at the same
+answer. It used the index in every run; it just did not need it.
 
 Not measured, and not measurable on this stack: whether the index helps
 on the cases where grep is worst, because those are the cases where the
