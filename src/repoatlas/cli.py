@@ -154,6 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agentbench.add_argument("--repeats", type=int, default=1, help="runs per task and arm")
     agentbench.add_argument("--claude", default="claude", help="the Claude Code executable")
+    agentbench.add_argument("--serena", help="the serena executable, for the serena arm")
     agentbench.add_argument("--model", help="model for the agent; the CLI default otherwise")
     agentbench.add_argument("--max-turns", type=int, default=30)
     agentbench.add_argument("--max-files", type=int, default=8)
@@ -175,6 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
     sitebench.add_argument("--limit", type=int, default=20, help="symbols to ask about")
     sitebench.add_argument("--repeats", type=int, default=1)
     sitebench.add_argument("--claude", default="claude")
+    sitebench.add_argument("--serena", help="the serena executable, for the serena arm")
     sitebench.add_argument("--model")
     sitebench.add_argument("--max-turns", type=int, default=30)
     sitebench.add_argument("--timeout", type=int, default=900)
@@ -557,6 +559,7 @@ def _cmd_agentbench(args: argparse.Namespace) -> int:
             max_turns=args.max_turns,
             max_files=args.max_files,
             timeout=args.timeout,
+            serena=args.serena,
             progress=progress,
         )
     except HistoryError as exc:
@@ -606,6 +609,7 @@ def _cmd_sitebench(args: argparse.Namespace) -> int:
             model=args.model,
             max_turns=args.max_turns,
             timeout=args.timeout,
+            serena=args.serena,
             progress=progress,
         )
     except HistoryError as exc:

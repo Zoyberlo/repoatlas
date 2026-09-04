@@ -379,6 +379,7 @@ def run_sitebench(
     model: str | None = None,
     max_turns: int = 30,
     timeout: int = 900,
+    serena: str | None = None,
     progress: Any = None,
 ) -> SiteBenchResult:
     """Ask both arms where a symbol is used, and score against the oracle.
@@ -404,8 +405,17 @@ def run_sitebench(
     tasks = select_tasks(oracle, root, limit=limit)
     if not tasks:
         raise HistoryError("no symbol in this oracle has enough call sites to ask about")
-    config_path = Path(str(store) + ".mcp.json")
-    config_path.write_text(json.dumps(mcp_config(root, store)), encoding="utf-8")
+    configs: dict[str, Path] = {}
+    for arm_name in chosen:
+        arm = ARMS[arm_name]
+        if not arm.mcp:
+            continue
+        path = Path(f"{store}.{arm_name}.mcp.json")
+        path.write_text(
+            json.dumps(mcp_config(root, store, server=arm.server or "", serena=serena)),
+            encoding="utf-8",
+        )
+        configs[arm_name] = path
     result = SiteBenchResult(arms=chosen, tasks=len(tasks))
     for task in tasks:
         for arm_name in chosen:
@@ -419,7 +429,7 @@ def run_sitebench(
                     model=model,
                     max_turns=max_turns,
                     timeout=timeout,
-                    config_path=config_path if arm.mcp else None,
+                    config_path=configs.get(arm_name),
                 )
                 if isinstance(trace, str):
                     run = SiteRun(task.symbol_id, task.name, arm_name, repeat, False, trace)

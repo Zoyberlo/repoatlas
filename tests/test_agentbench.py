@@ -168,3 +168,61 @@ class TestFatalReasons:
         assert not _is_fatal("timeout")
         assert not _is_fatal("error_max_turns")
         assert not _is_fatal("repoatlas did not attach")
+
+
+class TestArms:
+    def test_the_serena_arm_attaches_its_own_server_and_only_reads(self, tmp_path: Path) -> None:
+        from repoatlas.agentbench import mcp_config
+
+        arm = ARMS["serena"]
+        assert arm.server == "serena" and arm.mcp
+        allowed = ",".join(arm.allowed_tools)
+        # Navigation only: it can also edit files and run shells.
+        assert "mcp__serena__find_referencing_symbols" in allowed
+        assert "mcp__serena__get_symbols_overview" in allowed
+        for forbidden in (
+            "execute_shell_command",
+            "replace_symbol_body",
+            "create_text_file",
+            "insert_after_symbol",
+            "write_memory",
+        ):
+            assert forbidden not in allowed
+        config = mcp_config(tmp_path, tmp_path / "i.db", server="serena", serena="/bin/serena")
+        server = config["mcpServers"]["serena"]
+        assert server["command"] == "/bin/serena"
+        assert "start-mcp-server" in server["args"]
+        assert str(tmp_path) in server["args"]
+        assert "repoatlas" not in config["mcpServers"]
+
+    def test_the_grep_arm_attaches_nothing(self) -> None:
+        assert ARMS["grep"].server is None
+        assert not ARMS["grep"].mcp
+
+    def test_a_missing_serena_is_named_not_guessed(self, tmp_path: Path, monkeypatch) -> None:
+        import shutil as shutil_module
+
+        from repoatlas.agentbench import mcp_config
+        from repoatlas.localize import HistoryError
+
+        monkeypatch.setattr(shutil_module, "which", lambda name: None)
+        with pytest.raises(HistoryError, match="serena"):
+            mcp_config(tmp_path, tmp_path / "i.db", server="serena")
+
+    def test_the_hints_do_not_prescribe_a_sequence(self) -> None:
+        # The first sitebench run spent twenty turns because the hint told
+        # it to start with repo_map for a question find_references answers.
+        for name in ("repoatlas", "serena"):
+            hint = ARMS[name].hint
+            assert "Start with" not in hint and "start with" not in hint
+            assert "without reading whole" in hint
+
+    def test_attachment_is_read_off_whichever_server_the_arm_asked_for(self) -> None:
+        trace = parse_stream(
+            [_event(type="system", subtype="init", mcp_servers=[{"name": "serena", "status": "connected"}])]
+        )
+        assert trace.mcp_attached is True
+        trace = parse_stream(
+            [_event(type="system", subtype="init", mcp_servers=[{"name": "serena", "status": "failed"}])]
+        )
+        assert trace.mcp_attached is False

@@ -68,9 +68,15 @@ class Arm:
     """One way of equipping the agent."""
 
     name: str
-    mcp: bool
+    server: str | None
+    """The MCP server to attach, or ``None`` for the arm that has only a shell."""
+
     allowed_tools: tuple[str, ...]
     hint: str
+
+    @property
+    def mcp(self) -> bool:
+        return self.server is not None
 
 
 # What an agent without an index uses, and what it reaches for anyway: the
@@ -100,19 +106,46 @@ _READ_ONLY_TOOLS = (
 ARMS: dict[str, Arm] = {
     "grep": Arm(
         name="grep",
-        mcp=False,
+        server=None,
         allowed_tools=_READ_ONLY_TOOLS,
         hint="Use Grep, Glob and Read to find them.",
     ),
     "repoatlas": Arm(
         name="repoatlas",
-        mcp=True,
+        server="repoatlas",
         allowed_tools=(*_READ_ONLY_TOOLS, "mcp__repoatlas__*"),
         hint=(
-            "An MCP server called repoatlas is attached, with an index of this "
-            "repository. Start with its repo_map tool, passing the task's words as "
-            "mention, then search_symbols, find_references and file_outline; use "
-            "Read only to confirm what the index says."
+            "An MCP server called repoatlas is attached, with a tree-sitter index "
+            "of this repository: a ranked map, symbol search, outlines, and "
+            "resolved references. Its tools can answer this without reading whole "
+            "files."
+        ),
+    ),
+    # Serena is the closest thing anyone ships to what this project does, and
+    # the usual recommendation for Claude Code, so it gets an arm rather than
+    # an argument. Only its read-only tools: it can also edit and run shells.
+    "serena": Arm(
+        name="serena",
+        server="serena",
+        allowed_tools=(
+            *_READ_ONLY_TOOLS,
+            "mcp__serena__find_symbol",
+            "mcp__serena__find_referencing_symbols",
+            "mcp__serena__find_declaration",
+            "mcp__serena__find_implementations",
+            "mcp__serena__get_symbols_overview",
+            "mcp__serena__search_for_pattern",
+            "mcp__serena__list_dir",
+            "mcp__serena__find_file",
+            "mcp__serena__read_file",
+            "mcp__serena__activate_project",
+            "mcp__serena__initial_instructions",
+        ),
+        hint=(
+            "An MCP server called serena is attached, backed by a language server "
+            "for this repository: symbol search, declarations, implementations and "
+            "referencing symbols. Its tools can answer this without reading whole "
+            "files."
         ),
     ),
 }
@@ -185,12 +218,45 @@ def claude_command(
     return command
 
 
-def mcp_config(root: Path, store: Path) -> dict[str, Any]:
-    """The MCP configuration that serves the scratch clone's index as it is.
+def mcp_config(
+    root: Path, store: Path, *, server: str = "repoatlas", serena: str | None = None
+) -> dict[str, Any]:
+    """The MCP configuration for one arm's server, over the same tree.
 
-    `--no-refresh` matters: the store holds the parent commit's index, and
-    the server must not re-index the working tree on start.
+    For this index, `--no-refresh` matters: the store holds the parent
+    commit's index and the server must not re-index the working tree on
+    start. Serena is given the same root and left to build whatever it
+    builds, which is part of what is being compared.
     """
+    if server == "serena":
+        executable = serena or shutil.which("serena")
+        if not executable:
+            raise HistoryError(
+                "no serena executable found; install it with "
+                "`uv tool install git+https://github.com/oraios/serena` or pass --serena"
+            )
+        return {
+            "mcpServers": {
+                "serena": {
+                    "command": str(executable),
+                    "args": [
+                        "start-mcp-server",
+                        "--context",
+                        "ide-assistant",
+                        "--project",
+                        str(root),
+                        "--transport",
+                        "stdio",
+                        "--enable-web-dashboard",
+                        "false",
+                        "--enable-gui-log-window",
+                        "false",
+                        "--log-level",
+                        "ERROR",
+                    ],
+                }
+            }
+        }
     executable = shutil.which("repoatlas")
     if executable:
         command, args = executable, []
@@ -257,7 +323,6 @@ def parse_stream(lines: Iterable[str]) -> RunTrace:
             if servers:
                 trace.mcp_attached = any(
                     isinstance(server, dict)
-                    and server.get("name") == "repoatlas"
                     and str(server.get("status", "")).lower() in ("connected", "ok", "ready")
                     for server in servers
                 )
@@ -564,6 +629,7 @@ def run_agentbench(
     max_turns: int = 30,
     max_files: int = 8,
     timeout: int = 900,
+    serena: str | None = None,
     progress: Any = None,
 ) -> AgentBenchResult:
     """Run every task through every arm and score the answers.
@@ -602,9 +668,18 @@ def run_agentbench(
                 result.tasks += 1
                 wanted_files = {snapshot.symbols[item].path for item in wanted_ids}
                 locator = _Locator(snapshot)
-                config_path.write_text(json.dumps(mcp_config(root, store_path)), encoding="utf-8")
                 for arm_name in chosen:
                     arm = ARMS[arm_name]
+                    arm_config = config_path.with_name(f"{config_path.name}.{arm_name}.json")
+                    if arm.mcp:
+                        arm_config.write_text(
+                            json.dumps(
+                                mcp_config(
+                                    root, store_path, server=arm.server or "", serena=serena
+                                )
+                            ),
+                            encoding="utf-8",
+                        )
                     for repeat in range(1, repeats + 1):
                         run = _run_once(
                             root,
@@ -615,7 +690,7 @@ def run_agentbench(
                             model=model,
                             max_turns=max_turns,
                             timeout=timeout,
-                            config_path=config_path if arm.mcp else None,
+                            config_path=arm_config if arm.mcp else None,
                             wanted_ids=wanted_ids,
                             wanted_files=wanted_files,
                             locator=locator,
@@ -677,7 +752,7 @@ def _run_command(
     if not trace.duration_ms:
         trace.duration_ms = int((time.monotonic() - started) * 1000)
     if arm.mcp and trace.mcp_attached is False:
-        return "repoatlas did not attach"
+        return f"{arm.server} did not attach"
     if not trace.ok:
         reason = trace.reason or f"exit {completed.returncode}"
         tail = completed.stderr.strip().splitlines()[-1:] if completed.stderr else []
