@@ -64,6 +64,8 @@ class SymbolKind(enum.Enum):
     TRAIT = "trait"
     ENUM = "enum"
     TYPE_ALIAS = "type_alias"
+    COMPONENT = "component"
+    """A UI component: a Vue single-file component's options object or setup script."""
     FUNCTION = "function"
     METHOD = "method"
     CONSTRUCTOR = "constructor"
@@ -90,6 +92,7 @@ _CALLABLE_KINDS = frozenset(
 _TYPE_LIKE_KINDS = frozenset(
     {
         SymbolKind.CLASS,
+        SymbolKind.COMPONENT,
         SymbolKind.INTERFACE,
         SymbolKind.TRAIT,
         SymbolKind.ENUM,

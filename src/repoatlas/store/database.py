@@ -700,9 +700,12 @@ class IndexStore:
             " ORDER BY (lower(s.name) = lower(?)) DESC,"
             " (instr(lower(s.name), lower(?)) > 0) DESC,"
             " coalesce(r.score, 0) DESC,"
+            " (lower(s.name) LIKE lower(?) || '%') DESC,"
             " length(s.name) ASC, s.path ASC, s.name_start_line ASC LIMIT ?"
         )
-        parameters = [*parameters, cleaned, cleaned, limit]
+        # Among equals, a name that starts with the query beats one that
+        # merely contains it: `Ad` lists AdService before LeadConfirmation.
+        parameters = [*parameters, cleaned, cleaned, cleaned, limit]
         return [_symbol_from(row) for row in self._connection.execute(sql, parameters)]
 
     def search_count(self, query: str, *, kinds: Sequence[str] = ()) -> int:
@@ -754,14 +757,16 @@ class IndexStore:
         count the callers and show five was a quarter of a second for a
         symbol used from three thousand places.
         """
+        # Containment is structure, not use: a class does not "use" its
+        # own methods by holding them.
         total = self._connection.execute(
             "SELECT count(DISTINCT e.src_id) FROM edges e JOIN symbols s ON s.id = e.src_id "
-            "WHERE e.dst_id = ? AND s.is_synthetic = 0",
+            "WHERE e.dst_id = ? AND s.is_synthetic = 0 AND e.kind != 'contains'",
             (symbol_id,),
         ).fetchone()
         rows = self._connection.execute(
             f"SELECT DISTINCT {_SYMBOL_COLUMNS} FROM edges e JOIN symbols s ON s.id = e.src_id "
-            "WHERE e.dst_id = ? AND s.is_synthetic = 0 "
+            "WHERE e.dst_id = ? AND s.is_synthetic = 0 AND e.kind != 'contains' "
             "ORDER BY s.path, s.name_start_line, s.id LIMIT ?",
             (symbol_id, limit),
         ).fetchall()
@@ -769,7 +774,7 @@ class IndexStore:
 
     def out_degree(self, symbol_id: str) -> int:
         row = self._connection.execute(
-            "SELECT count(*) FROM edges WHERE src_id = ?", (symbol_id,)
+            "SELECT count(*) FROM edges WHERE src_id = ? AND kind != 'contains'", (symbol_id,)
         ).fetchone()
         return int(row[0]) if row else 0
 
@@ -822,7 +827,7 @@ class IndexStore:
         placeholders = ", ".join("?" for _ in symbol_ids)
         rows = self._connection.execute(
             f"SELECT dst_id, count(DISTINCT src_id) FROM edges "
-            f"WHERE dst_id IN ({placeholders}) GROUP BY dst_id",
+            f"WHERE dst_id IN ({placeholders}) AND kind != 'contains' GROUP BY dst_id",
             tuple(symbol_ids),
         ).fetchall()
         return {row[0]: row[1] for row in rows}

@@ -348,7 +348,13 @@ def find_references(
         raise ToolError(
             f"no symbol with id {symbol_id!r}; use search_symbols to find its id"
         )
-    edges = [edge for edge in store.edges_to(symbol_id) if edge.score >= min_confidence]
+    # Containment is structure, not use; the class holding a method is
+    # not one of its callers.
+    edges = [
+        edge
+        for edge in store.edges_to(symbol_id)
+        if edge.score >= min_confidence and edge.kind is not EdgeKind.CONTAINS
+    ]
     if not edges:
         threshold = f" above confidence {min_confidence}" if min_confidence else ""
         return f"nothing uses {symbol.qualified_name or symbol.name}{threshold}\n"

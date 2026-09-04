@@ -234,6 +234,14 @@ class Framework:
     detect: tuple[Detection, ...]
     rules: tuple[Rule, ...]
     summary: str = ""
+    returns_receiver: tuple[str, ...] = ()
+    """Methods the framework supplies that return the receiver's own type.
+
+    `Ad::find(1)` is an Ad and `$ad->fresh()` is one too, though neither
+    method is written in the model: Eloquent provides them. Named here so
+    the resolver can type a local assigned from one, for a class that does
+    not itself declare the method.
+    """
 
     @property
     def kinds(self) -> tuple[str, ...]:
@@ -318,6 +326,7 @@ def load_framework(source: str) -> Framework:
         summary=str(entry.get("summary", "")),
         detect=tuple(_detection_from(item) for item in entry.get("detect", ())),
         rules=tuple(_rule_from(item) for item in entry.get("rules", ())),
+        returns_receiver=_strings(entry.get("returns_receiver", []), "returns_receiver"),
     )
 
 
@@ -359,6 +368,10 @@ class ConventionPlugin:
     @property
     def kinds(self) -> tuple[str, ...]:
         return self.framework.kinds
+
+    def returns_receiver(self, callee: str) -> bool:
+        """Whether the framework's ``callee`` returns the receiver's own type."""
+        return callee in self.framework.returns_receiver
 
     def detect(self, root: Path, files: frozenset[str]) -> bool:
         directories = project_directories(files)

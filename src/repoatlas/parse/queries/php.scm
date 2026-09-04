@@ -360,3 +360,41 @@
   "instanceof"
   right: (qualified_name
     (name) @name)) @reference.type
+
+; --- callable arrays ---------------------------------------------------------
+
+; `[AdController::class, 'index']`, as a route action or any PHP callable:
+; a call of that method, with the class as its receiver.
+(array_creation_expression
+  (array_element_initializer
+    (class_constant_access_expression
+      . (name) @receiver
+      (name) @_c .))
+  (array_element_initializer
+    (string
+      (string_content) @name))
+  (#eq? @_c "class")) @reference.call
+
+(array_creation_expression
+  (array_element_initializer
+    (class_constant_access_expression
+      . (qualified_name
+        (name) @receiver .)
+      (name) @_c .))
+  (array_element_initializer
+    (string
+      (string_content) @name))
+  (#eq? @_c "class")) @reference.call
+
+; --- what `$this` holds -----------------------------------------------------------
+
+; `$this->logger = $logger` in a constructor: the property takes the
+; parameter's type. Laravel injects services this way in every controller.
+(assignment_expression
+  left: (member_access_expression
+    object: (variable_name
+      (name) @_this)
+    name: (name) @var)
+  right: (variable_name
+    (name) @src)
+  (#eq? @_this "this")) @this_binding

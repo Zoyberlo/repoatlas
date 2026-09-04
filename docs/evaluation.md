@@ -166,9 +166,34 @@ repository is a coin flip with the wrong coin.
 The rule since then: a member is looked up in its receiver's type and what
 that type extends, implements and uses. The receiver is `$this`, a local
 with a declared or constructed type or one assigned from a call whose
-signature declares its return, a typed property of the enclosing class, or
-a class named outright. Anything else is unknown, and unknown is
-unresolved: no rung below tries. Bare calls, constructions, type names and
+signature or docblock declares its return, a typed property of the
+enclosing class, or a class named outright. Anything else is unknown, and
+unknown is unresolved: no rung below tries.
+
+What counts as a type, and how a property gets one, both grew when the
+index was pointed at the whole monorepo rather than a copy of its backend:
+
+- A value that owns members is its own type. `useAuthStore()` returns the
+  constant a Pinia store is declared in, and the store's actions are the
+  members declared inside it; the same holds for any object literal.
+- A Vue single-file component is a type, named after its file: the
+  options object's methods, computed properties and watchers are its
+  members, its `props` and the keys of `data()` are its fields, and
+  `this` inside it is the component. A `<script setup>` block is the same
+  component with its top-level declarations as members.
+- A property assigned in the constructor from a typed parameter has that
+  type: `$this->logger = $logger`, `this.svc = svc`, `self.client =
+  client`. This is how every Laravel controller receives its services.
+- A property with a `@var` docblock, and a method with a `@return` one,
+  declare their types as surely as a signature does.
+- A framework may supply methods a class never declares. The Laravel
+  plugin lists Eloquent's finders and refreshers, `find`, `create`,
+  `firstOrCreate`, `fresh`, so that `$ad = Ad::find(1)` is an `Ad` when
+  the model itself declares no `find`. A class that does declare the
+  method keeps its own return type.
+- `[AdController::class, 'index']`, the callable array a Laravel route
+  names its action with, is a call of that method; `import("pages/X.vue")`
+  and `require("./util")` are imports of that module. Bare calls, constructions, type names and
 plain values keep the full ladder, because for those a name is most of the
 evidence there is. Measured after the change on the same repository:
 references 0.993 precision at 1.000 recall, and no rung claiming more than

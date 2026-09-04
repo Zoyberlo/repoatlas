@@ -23,7 +23,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from ..model import Edge, EdgeKind, ResolutionTier, Symbol, SymbolKind
-from ..parse.extract import CALL_TYPE_PREFIX, EXPRESSION_RECEIVER, Reference
+from ..parse.extract import (
+    ASSIGNED_TYPE_PREFIX,
+    CALL_TYPE_PREFIX,
+    EXPRESSION_RECEIVER,
+    Reference,
+)
 from ..parse.imports import FileImports
 from ..plugins.base import FrameworkPlugin
 from .modules import ModuleResolver
@@ -48,6 +53,8 @@ _EDGE_KIND_BY_REFERENCE = {
     "route": EdgeKind.REFERENCES,
     # `self::`, `static::`, `parent::`: a class named without being spelled.
     "scope": EdgeKind.REFERENCES,
+    # `import("pages/Index.vue")`, `require("./util")`: a module by path.
+    "module": EdgeKind.IMPORTS,
 }
 
 # What each spelling of a relative scope means, per language. `static` is
@@ -106,6 +113,8 @@ def receiver_shape(reference: Reference) -> str:
     if receiver in _SELF_RECEIVERS:
         return "self"
     typed = " (typed)" if reference.receiver_type else " (untyped)"
+    if reference.receiver_type and reference.receiver_type.startswith(ASSIGNED_TYPE_PREFIX):
+        typed = " (typed by assignment)"
     if "." in receiver:
         return "property of self" + typed
     if reference.receiver_type:
@@ -125,6 +134,8 @@ _RUNG_BY_SHAPE = {
     "variable (typed)": "typed",
     "variable (typed by call)": "typed",
     "property of self (typed)": "typed",
+    "property of self (typed by assignment)": "typed",
+    "variable (typed by assignment)": "typed",
 }
 
 # A declared return type, read off a signature line: PHP and TypeScript
@@ -134,6 +145,28 @@ _RETURN_TYPE = re.compile(
     r"\)\s*:\s*\??\s*(?:Promise<)?\s*\\?(?P<colon>[A-Za-z_][\w\\.]*)"
     r"|->\s*(?P<arrow>[A-Za-z_][\w.]*)"
 )
+
+
+# `@return \App\Models\Ad|null`, `@return static`, `@return Collection<Ad>`:
+# the first type named, without namespace, generics or nullability.
+_DOC_RETURN = re.compile(r"@return\s+\\?([\w\\|$]+)")
+_NOT_A_TYPE = frozenset({"null", "void", "mixed", "never", "bool", "int", "string", "array", "float"})
+
+
+def _doc_return_type(documentation: str | None) -> str | None:
+    """The return type a docblock declares, for a signature that does not."""
+    if not documentation:
+        return None
+    found = _DOC_RETURN.search(documentation)
+    if found is None:
+        return None
+    for option in found.group(1).split("|"):
+        name = option.replace("\\", ".").rsplit(".", 1)[-1].strip("$")
+        if name == "this":
+            return "static"
+        if name and name not in _NOT_A_TYPE:
+            return name
+    return None
 
 
 def _declared_return_type(signature: str | None) -> str | None:
@@ -156,6 +189,7 @@ _KINDS_BY_REFERENCE: dict[str, frozenset[SymbolKind]] = {
     "class": frozenset(
         {
             SymbolKind.CLASS,
+            SymbolKind.COMPONENT,
             SymbolKind.INTERFACE,
             SymbolKind.TRAIT,
             SymbolKind.ENUM,
@@ -165,6 +199,7 @@ _KINDS_BY_REFERENCE: dict[str, frozenset[SymbolKind]] = {
     "type": frozenset(
         {
             SymbolKind.CLASS,
+            SymbolKind.COMPONENT,
             SymbolKind.INTERFACE,
             SymbolKind.TRAIT,
             SymbolKind.ENUM,
@@ -218,6 +253,7 @@ class SymbolIndex:
         "_by_name",
         "_by_path_name",
         "_by_qualified",
+        "_containers",
         "_members",
         "_public_by_name",
         "_symbols",
@@ -230,9 +266,12 @@ class SymbolIndex:
         self._by_path_name: dict[tuple[str, str], list[Symbol]] = defaultdict(list)
         self._by_qualified: dict[str, list[Symbol]] = defaultdict(list)
         self._members: dict[tuple[str, str], list[Symbol]] = defaultdict(list)
+        self._containers: set[str] = set()
         for symbol in symbols.values():
             if symbol.synthetic:
                 continue
+            if symbol.container_id is not None:
+                self._containers.add(symbol.container_id)
             self._by_name[symbol.name].append(symbol)
             self._by_path_name[(symbol.path, symbol.name)].append(symbol)
             if symbol.qualified_name:
@@ -265,6 +304,14 @@ class SymbolIndex:
     def members(self, container_id: str, name: str) -> list[Symbol]:
         """Definitions named ``name`` directly inside ``container_id``."""
         return self._members.get((container_id, name), [])
+
+    def has_members(self, symbol_id: str) -> bool:
+        """Whether anything is declared inside this symbol.
+
+        A value that owns members is its own type: a Pinia store, an
+        object literal, a module object.
+        """
+        return symbol_id in self._containers
 
     def get(self, symbol_id: str) -> Symbol | None:
         return self._symbols.get(symbol_id)
@@ -488,6 +535,17 @@ class Resolver:
             self.stats.unresolved += 1
             return None, ResolutionTier.FUZZY
 
+        if reference.kind == "module":
+            # A module named by path in an expression. The module resolver
+            # either knows the file, aliases included, or it is a package.
+            resolved_path = self._resolve_module(path, name, 0)
+            module_id = self.module_symbols.get(resolved_path) if resolved_path else None
+            module_symbol = self.index.get(module_id) if module_id else None
+            if module_symbol is not None:
+                return module_symbol, ResolutionTier.IMPORT_MAP
+            self.stats.external += 1
+            return None, ResolutionTier.FUZZY
+
         if reference.kind == "type" and name in _SCOPE_SELF:
             # `: static`, `: self`, `new self()`: the enclosing class,
             # written without its name.
@@ -646,6 +704,8 @@ class Resolver:
             # what it extends. The edge takes the tier the type resolved
             # at. When the type is not ours, neither is the member.
             type_name = reference.receiver_type if shape == "typed" else receiver
+            if type_name is not None and type_name.startswith(ASSIGNED_TYPE_PREFIX):
+                type_name = type_name[len(ASSIGNED_TYPE_PREFIX) :]
             if type_name is not None and type_name.startswith(CALL_TYPE_PREFIX):
                 owner, tier = self._type_of_call(path, reference, type_name)
             else:
@@ -677,7 +737,9 @@ class Resolver:
         name means what that file's imports say. A class called directly,
         as Python constructs, is its own answer.
         """
-        callee, receiver, receiver_type = [*marker[len(CALL_TYPE_PREFIX) :].split("|"), "", ""][:3]
+        # Two splits, not every one: the receiver type may itself be a
+        # call marker, `$b = $ad->fresh()` after `$ad = Ad::find(1)`.
+        callee, receiver, receiver_type = [*marker[len(CALL_TYPE_PREFIX) :].split("|", 2), "", ""][:3]
         target, tier = self._target(
             path,
             Reference(
@@ -690,13 +752,27 @@ class Resolver:
             ),
         )
         if target is None:
+            # The callee is not ours. A framework may still say what it
+            # returns: `Ad::find(1)` is an Ad and `$ad->fresh()` is one
+            # too, though Eloquent supplies both methods, not the model.
+            owner = self._receiver_type_of(path, reference, receiver, receiver_type)
+            if owner is not None and any(
+                plugin.returns_receiver(callee) for plugin in self.plugins
+            ):
+                return owner, ResolutionTier.UNIQUE_NAME
             return None, ResolutionTier.FUZZY
         if target.kind.is_type_like:
             return target, tier
         if target.kind is SymbolKind.CONSTRUCTOR:
             return self.index.enclosing_type(target.container_id), tier
-        declared = _declared_return_type(target.signature)
+        declared = _declared_return_type(target.signature) or _doc_return_type(
+            target.documentation
+        )
         if declared is None:
+            if self.index.has_members(target.id):
+                # `useAuthStore()` returns the store, whose actions are
+                # the members declared inside the constant.
+                return target, tier
             return self._unresolved()
         if declared in _SCOPE_SELF:
             return self.index.enclosing_type(target.container_id), tier
@@ -712,6 +788,31 @@ class Resolver:
         weaker = type_tier if type_tier.default_confidence < tier.default_confidence else tier
         return owner, weaker
 
+    def _receiver_type_of(
+        self, path: str, reference: Reference, receiver: str, receiver_type: str
+    ) -> Symbol | None:
+        """The type a call's receiver has, when it is one of ours."""
+        if receiver_type and receiver_type.startswith(CALL_TYPE_PREFIX):
+            # The receiver was itself assigned from a call; find out what
+            # that returned before asking what this one returns.
+            owner, _tier = self._type_of_call(path, reference, receiver_type)
+            return owner if owner is not None and owner.kind.is_type_like else None
+        if receiver_type.startswith(ASSIGNED_TYPE_PREFIX):
+            receiver_type = receiver_type[len(ASSIGNED_TYPE_PREFIX) :]
+        type_name = receiver_type or (receiver if receiver[:1].isupper() else "")
+        if not type_name:
+            return None
+        owner, _tier = self._target(
+            path,
+            Reference(
+                name=type_name,
+                kind="type",
+                span=reference.span,
+                container_id=reference.container_id,
+            ),
+        )
+        return owner if owner is not None and owner.kind.is_type_like else None
+
     def _member_of(
         self, owner: Symbol | None, tier: ResolutionTier, reference: Reference
     ) -> tuple[Symbol | None, ResolutionTier]:
@@ -721,7 +822,7 @@ class Resolver:
         if owner.kind is SymbolKind.MODULE:
             found = _prefer(self.index.in_file(owner.path, reference.name), reference)
             return (found, tier) if found is not None else self._unresolved()
-        if not owner.kind.is_type_like:
+        if not owner.kind.is_type_like and not self.index.has_members(owner.id):
             return self._unresolved()
         found = self._member_in_hierarchy(owner, reference)
         return (found, tier) if found is not None else self._unresolved()

@@ -112,6 +112,7 @@ class RefFact:
 NAVIGABLE_KINDS = frozenset(
     {
         SymbolKind.CLASS,
+        SymbolKind.COMPONENT,
         SymbolKind.INTERFACE,
         SymbolKind.TRAIT,
         SymbolKind.ENUM,

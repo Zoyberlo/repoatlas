@@ -171,3 +171,55 @@ that flows through one resolves. `--infer-tsconfig` produces an index of
 nothing.
 
 Neither copy, nor any per-file result, is committed; only these aggregates.
+
+## Then the monorepo itself
+
+The two copies above were each project at its own root. The repository
+they come from holds both, `backend/` and `frontend/`, and indexing it
+whole gave a number the copies could not: 9% of references resolved,
+against 31,500. The cause was one line, `composer.json` read at the
+repository root only, so every `use App\Models\Ad` was a package; but
+the rest of what the tools showed was what a Laravel + Vue application
+is actually made of, and none of it was handled:
+
+| shape, on the real repository | before | after |
+| --- | ---: | ---: |
+| references resolved | 2,881 (9.1%) | 8,035 (24.4%) |
+| edges | 3,916 | 10,825 |
+| `$this->x` unresolved | 3,832 | 885 |
+| `find_references` on a service method | its own class, via `contains` | its three callers |
+| plain map, first file | a page's watchers | the page's component |
+| `localize` symbol recall, plain / steered | 0.188 / 0.310 | 0.220 / 0.307 |
+
+What was added, each with a test that reproduces the shape from the
+repository in two files:
+
+- `composer.json` is read in every project directory, targets prefixed
+  with the project, as tsconfig aliases already were.
+- Containment is not use: `find_references`, `used by` and the search
+  counts leave `contains` edges out.
+- A value that owns members is its own type: `useAuthStore()` returns
+  the constant the store is declared in, and its actions and getters
+  are the members; the keys of its `state` are its fields.
+- A property assigned in the constructor from a typed parameter has that
+  type, in PHP, TypeScript and Python. Against `scip-php` these edges
+  are a shape of their own, "typed by assignment", which the oracle
+  resolves at no site and the report therefore lists rather than scores.
+- `@var` and `@return` docblocks declare types where the signature does
+  not.
+- The Laravel plugin names Eloquent's finders and refreshers, so
+  `Ad::find(1)` and `$ad->fresh()` are Ads; a class that declares the
+  method keeps its own return type.
+- A Vue single-file component is a type named after its file, with its
+  `props` and `data()` keys as fields and its options as members, so
+  `this` inside it has somewhere to look and the map lists the component
+  rather than its watchers; `<script setup>` is the same component.
+- `import("pages/Index.vue")` and `require("./util")` are imports;
+  `[AdController::class, 'index']` is a call of that action.
+- A name that starts with the query breaks ties in search.
+
+The oracle copies did not move: backend 0.993 / 1.000 on references,
+frontend 0.964 / 1.000, the frontend's six false positives being calls
+through a Pinia store that `scip-typescript` cannot type, too few to
+gate. The localisation benchmark gained on the plain map and held on the
+steered one; the new symbols compete for the same two thousand tokens.

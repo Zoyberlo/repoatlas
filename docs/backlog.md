@@ -426,6 +426,18 @@ wrapped one), 14% of symbols carry documentation, and the localisation
 benchmark is unchanged (0.188 / 0.310), which is the expected result: the
 lines cost about the same and now say what they are.
 
+*Status 2026-09-05:* the whole monorepo was then run through every tool
+and the resolution statistics read. Nine percent of references resolved:
+`composer.json` was read at the repository root and the application
+keeps it in `backend/`. Fixed, together with the eight shapes the tools
+exposed (constructor-injected services, Eloquent finders, Pinia stores,
+Vue components as `this`, dynamic imports, route action arrays,
+`contains` counted as use, prefix ties in search): 24% resolved, the map
+leads with components, `find_references` lists callers. Both oracle
+copies hold; write-up at the end of `docs/benchmarks/oracles.md`. Open:
+Laravel named routes (`route('login')`), config keys, and Blade
+directive arguments as PHP islands.
+
 | # | Item | Why first | Size |
 | ---: | --- | --- | --- |
 | 1 | Calibrate tokens per model, thread the estimator through the tools (1.1) | The budget is wrong by a third | half a day |

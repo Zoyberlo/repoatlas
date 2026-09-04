@@ -76,3 +76,19 @@ def test_a_short_query_takes_the_scan_path_with_the_same_order(store: IndexStore
     # by length.
     names = [symbol.name for symbol in store.search("th")]
     assert names[:3] == ["alpha_thing", "thing", "beta_thing"]
+
+
+def test_a_prefix_match_breaks_ties_among_equals(tmp_path: Path) -> None:
+    # `Ad` should list AdService before LeadConfirmation when nothing else
+    # tells them apart: both merely contain the query, one starts with it.
+    from repoatlas.store import IndexStore, update_store
+
+    project = tmp_path / "p"
+    project.mkdir()
+    (project / "a.php").write_text(
+        "<?php\nclass LeadConfirmation {}\nclass AdService {}\nclass Ad {}\n", encoding="utf-8"
+    )
+    with IndexStore(tmp_path / "i.db") as store:
+        update_store(project, store, use_git=False)
+        names = [s.name for s in store.search("Ad", limit=10)]
+    assert names == ["Ad", "AdService", "LeadConfirmation"]

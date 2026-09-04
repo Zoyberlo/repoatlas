@@ -46,6 +46,7 @@ __all__ = ["RankOptions", "RankedSymbol", "SymbolGraph", "rank_symbols"]
 # state, and both outrank a bare alias.
 _KIND_PRIOR = {
     SymbolKind.CLASS: 1.0,
+    SymbolKind.COMPONENT: 1.0,
     SymbolKind.INTERFACE: 1.0,
     SymbolKind.TRAIT: 1.0,
     SymbolKind.ENUM: 0.9,

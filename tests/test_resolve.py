@@ -832,3 +832,267 @@ class TestReturnTypesAndRecursion:
         )
         edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
         assert not [e for e in edges if e.site_path == "f.php" and e.kind.value != "contains"]
+
+
+def _write(root: Path, rel: str, text: str) -> None:
+    target = root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+
+
+LARAVEL_COMPOSER = (
+    '{"require": {"laravel/framework": "^10"}, '
+    '"autoload": {"psr-4": {"App\\\\": "app/"}}}'
+)
+
+
+class TestRealProjectShapes:
+    """Each test is a shape the real Laravel + Quasar monorepo had and the index missed."""
+
+    def test_composer_is_read_in_the_project_directory_of_a_monorepo(self, tmp_path: Path) -> None:
+        # `backend/composer.json` declares `App\` as `backend/app/`. Read at
+        # the repository root it was not there, and 91% of the real
+        # application's references went unresolved.
+        _write(tmp_path, "backend/composer.json", LARAVEL_COMPOSER)
+        _write(
+            tmp_path,
+            "backend/app/Models/Ad.php",
+            "<?php\nnamespace App\\Models;\nclass Ad extends Model { public function client() {} }\n",
+        )
+        _write(
+            tmp_path,
+            "backend/app/Services/AdService.php",
+            "<?php\nnamespace App\\Services;\nuse App\\Models\\Ad;\n"
+            "class AdService { public function f(Ad $ad) { return $ad->client(); } }\n",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        targets = {e.dst_id for e in edges if e.site_path == "backend/app/Services/AdService.php"}
+        assert "backend/app/Models/Ad.php#Ad" in targets
+        assert "backend/app/Models/Ad.php#Ad.client" in targets
+
+    def test_a_pinia_store_is_the_type_of_what_its_hook_returns(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "src/stores/auth.js",
+            'export const useAuthStore = defineStore("auth", { actions: { async fetchUser() {} } });\n',
+        )
+        _write(
+            tmp_path,
+            "src/page.js",
+            'import { useAuthStore } from "./stores/auth";\n'
+            "export function run() { const store = useAuthStore(); return store.fetchUser(); }\n",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert any(e.dst_id == "src/stores/auth.js#useAuthStore.fetchUser" for e in edges)
+
+    def test_eloquent_finders_return_the_model(self, tmp_path: Path) -> None:
+        # `Ad::find(1)` and `$ad->fresh()` are Ads, though Eloquent supplies
+        # both methods and the model declares neither.
+        _write(tmp_path, "composer.json", LARAVEL_COMPOSER)
+        _write(
+            tmp_path,
+            "app/Models/Ad.php",
+            "<?php\nnamespace App\\Models;\nclass Ad extends Model { public function client() {} }\n",
+        )
+        _write(
+            tmp_path,
+            "app/Svc.php",
+            "<?php\nnamespace App;\nuse App\\Models\\Ad;\n"
+            "class Svc { public function f() { $ad = Ad::find(1); $ad->client(); "
+            "$b = $ad->fresh(); return $b->client(); } }\n",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        hits = [e for e in edges if e.dst_id == "app/Models/Ad.php#Ad.client" and e.kind.value == "calls"]
+        assert len(hits) == 2
+        assert {e.tier.label for e in hits} == {"unique_name"}
+
+    def test_a_docblock_return_types_the_local_when_the_signature_does_not(self, tmp_path: Path) -> None:
+        _write(tmp_path, "Greeter.php", "<?php\nclass Greeter { public function greet() {} }\n")
+        _write(
+            tmp_path,
+            "App.php",
+            "<?php\nclass App {\n    /** @return \\Greeter|null */\n    public function build() {}\n"
+            "    public function run() { $g = $this->build(); return $g->greet(); }\n}\n",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert any(e.dst_id == "Greeter.php#Greeter.greet" for e in edges)
+
+    def test_a_dynamic_import_reaches_the_module(self, tmp_path: Path) -> None:
+        _write(tmp_path, "src/pages/Index.vue", "<template><div/></template>\n<script>\nexport default { name: 'Index' }\n</script>\n")
+        _write(tmp_path, "src/util.js", "export function helper() {}\n")
+        _write(
+            tmp_path,
+            "src/router.js",
+            'const routes = [{ path: "/", component: () => import("./pages/Index.vue") }];\n'
+            'const util = require("./util");\nexport default routes;\n',
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        targets = {e.dst_id for e in edges if e.site_path == "src/router.js" and e.kind.value == "imports"}
+        assert "src/pages/Index.vue#<module>" in targets
+        assert "src/util.js#<module>" in targets
+
+    def test_a_route_action_array_is_a_call_of_the_controller_method(self, tmp_path: Path) -> None:
+        _write(tmp_path, "composer.json", LARAVEL_COMPOSER)
+        _write(
+            tmp_path,
+            "app/Http/Controllers/AdController.php",
+            "<?php\nnamespace App\\Http\\Controllers;\nclass AdController { public function index() {} }\n",
+        )
+        _write(
+            tmp_path,
+            "routes/api.php",
+            "<?php\nuse App\\Http\\Controllers\\AdController;\n"
+            "Route::get('ads', [AdController::class, 'index']);\n",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert any(
+            e.site_path == "routes/api.php"
+            and e.dst_id == "app/Http/Controllers/AdController.php#AdController.index"
+            and e.kind.value == "calls"
+            for e in edges
+        )
+
+    def test_a_constructor_assignment_types_the_property(self, tmp_path: Path) -> None:
+        # Laravel's dependency injection: an untyped property assigned from
+        # a typed constructor parameter.
+        _write(tmp_path, "Logger.php", "<?php\nclass Logger { public function log() {} }\n")
+        _write(
+            tmp_path,
+            "Ctl.php",
+            "<?php\nclass Ctl { protected $logger;\n"
+            "    public function __construct(Logger $logger) { $this->logger = $logger; }\n"
+            "    public function h() { $this->logger->log(); } }\n",
+        )
+        _write(tmp_path, "svc.ts", "export class Svc { go(): void {} }\n")
+        _write(
+            tmp_path,
+            "ctl.ts",
+            "import { Svc } from './svc';\n"
+            "export class Ctl { private svc; constructor(svc: Svc) { this.svc = svc; } "
+            "run() { this.svc.go(); } }\n",
+        )
+        _write(tmp_path, "client.py", "class Client:\n    def fetch(self):\n        pass\n")
+        _write(
+            tmp_path,
+            "app.py",
+            "from client import Client\n\n\nclass App:\n    def __init__(self, client: Client):\n"
+            "        self.client = client\n\n    def run(self):\n        return self.client.fetch()\n",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        targets = {e.dst_id for e in edges if e.kind.value == "calls"}
+        assert "Logger.php#Logger.log" in targets
+        assert "svc.ts#Svc.go" in targets
+        assert "client.py#Client.fetch" in targets
+
+    def test_a_var_docblock_types_the_property(self, tmp_path: Path) -> None:
+        _write(tmp_path, "Svc.php", "<?php\nclass Svc { public function go() {} }\n")
+        _write(
+            tmp_path,
+            "Ctl.php",
+            "<?php\nclass Ctl {\n    /** @var Svc */\n    protected $svc;\n"
+            "    public function h() { $this->svc->go(); } }\n",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert any(e.dst_id == "Svc.php#Svc.go" for e in edges)
+
+    def test_a_vue_component_is_the_type_of_this(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "src/stores/ads.js",
+            'export const useAdsStore = defineStore("ads", { actions: { fetch() {} } });\n',
+        )
+        _write(
+            tmp_path,
+            "src/pages/AddAd.vue",
+            "<template><div/></template>\n<script>\n"
+            'import { useAdsStore } from "../stores/ads";\n'
+            "export default {\n  props: { userId: Number },\n"
+            "  data() { return { adsStore: useAdsStore(), busy: false }; },\n"
+            "  methods: {\n    save() { this.adsStore.fetch(); this.reset(); },\n    reset() {},\n  },\n"
+            "};\n</script>\n",
+        )
+        result = build_snapshot(tmp_path, use_git=False)
+        names = {s.qualified_name: s.kind.value for s in result.snapshot.symbols.values() if not s.synthetic}
+        assert names["AddAd"] == "component"
+        assert names["AddAd.userId"] == "field"
+        assert names["AddAd.adsStore"] == "field"
+        assert names["AddAd.save"] == "method"
+        targets = {e.dst_id for e in result.snapshot.edges if e.kind.value == "calls"}
+        assert "src/pages/AddAd.vue#AddAd.reset" in targets
+        assert "src/stores/ads.js#useAdsStore.fetch" in targets
+
+    def test_a_script_setup_component_holds_its_declarations(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "src/pages/Setup.vue",
+            "<script setup>\nconst count = ref(0)\nfunction bump() { count.value++ }\n</script>\n"
+            "<template><div/></template>\n",
+        )
+        result = build_snapshot(tmp_path, use_git=False)
+        names = {s.qualified_name: s.kind.value for s in result.snapshot.symbols.values() if not s.synthetic}
+        assert names["Setup"] == "component"
+        assert names["Setup.count"] == "constant"
+        # A function declared inside the component is one of its methods.
+        assert names["Setup.bump"] == "method"
+
+    def test_object_literal_keys_type_this_only_in_a_component(self, tmp_path: Path) -> None:
+        # A TypeScript class returning `{ user: makeUser() }` does not make
+        # `this.user` a User; a Vue component's `data()` does.
+        _write(tmp_path, "user.ts", "export class User { greet(): string { return ''; } }\n")
+        _write(
+            tmp_path,
+            "svc.ts",
+            "import { User } from './user';\nfunction makeUser(): User { return new User(); }\n"
+            "export class Svc { build() { return { user: makeUser() }; } run() { return this.user.greet(); } }\n",
+        )
+        edges = build_snapshot(tmp_path, use_git=False).snapshot.edges
+        assert not any(e.site_path == "svc.ts" and e.dst_id == "user.ts#User.greet" for e in edges)
+
+
+class TestStoreStateAndAssignedTypes:
+    def test_pinia_state_keys_are_fields_of_the_store(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "src/stores/ads.js",
+            'export const useAdsStore = defineStore("ads", {\n'
+            "  state: () => ({ ads: [], editedAd: null }),\n"
+            "  actions: { fetchAds() {} },\n});\n",
+        )
+        _write(
+            tmp_path,
+            "src/stores/users.ts",
+            'export const useUsersStore = defineStore("users", {\n'
+            "  state() { return { users: [] }; },\n});\n",
+        )
+        _write(
+            tmp_path,
+            "src/page.js",
+            'import { useAdsStore } from "./stores/ads";\n'
+            "export function run() { const s = useAdsStore(); return s.editedAd; }\n",
+        )
+        result = build_snapshot(tmp_path, use_git=False)
+        names = {s.qualified_name: s.kind.value for s in result.snapshot.symbols.values()}
+        assert names["useAdsStore.editedAd"] == "field"
+        assert names["useAdsStore.ads"] == "field"
+        assert names["useUsersStore.users"] == "field"
+        assert any(e.dst_id == "src/stores/ads.js#useAdsStore.editedAd" for e in result.snapshot.edges)
+
+    def test_a_property_typed_by_assignment_has_its_own_shape(self, tmp_path: Path) -> None:
+        # scip-php resolves members of declared-typed properties and not
+        # of assigned ones; the report must be able to tell them apart.
+        from repoatlas.resolve.cascade import receiver_shape
+
+        _write(tmp_path, "Logger.php", "<?php\nclass Logger { public function log() {} }\n")
+        _write(
+            tmp_path,
+            "Ctl.php",
+            "<?php\nclass Ctl { protected $logger; private Logger $typed;\n"
+            "    public function __construct(Logger $logger) { $this->logger = $logger; }\n"
+            "    public function h() { $this->logger->log(); $this->typed->log(); } }\n",
+        )
+        result = build_snapshot(tmp_path, use_git=False)
+        shapes = {r.receiver: receiver_shape(r) for p, r in result.references if r.name == "log"}
+        assert shapes["this.logger"] == "property of self (typed by assignment)"
+        assert shapes["this.typed"] == "property of self (typed)"
+        calls = [e for e in result.snapshot.edges if e.dst_id == "Logger.php#Logger.log" and e.kind.value == "calls"]
+        assert len(calls) == 2

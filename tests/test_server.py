@@ -396,3 +396,28 @@ class TestServeCli:
         target.write_text("x", encoding="utf-8")
         with pytest.raises(SystemExit, match="not a directory"):
             main(["serve", str(target)])
+
+
+class TestContainmentIsNotUse:
+    def test_find_references_and_used_by_ignore_containment(self, tmp_path: Path) -> None:
+        from repoatlas.server import tools
+        from repoatlas.store import IndexStore, update_store
+
+        project = tmp_path / "p"
+        project.mkdir()
+        (project / "a.py").write_text(
+            "class Greeter:\n    def greet(self):\n        pass\n\n\ndef main():\n    g = Greeter()\n    return g.greet()\n",
+            encoding="utf-8",
+        )
+        with IndexStore(tmp_path / "i.db") as store:
+            update_store(project, store, use_git=False)
+            uses = tools.find_references(store, "a.py#Greeter.greet")
+            assert "contains" not in uses
+            # The method has one real caller, and the class holding it is
+            # not one of them.
+            assert uses.startswith("1 use(s)")
+            listing = tools.get_symbol(store, "a.py#Greeter.greet")
+            assert "used by: 1" in listing
+            assert "Greeter\n" not in listing.split("used by")[-1].split("\n")[1]
+            found = tools.search_symbols(store, "greet")
+            assert "Greeter.greet  (1 use)" in found

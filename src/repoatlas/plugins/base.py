@@ -34,6 +34,10 @@ class FrameworkPlugin(Protocol):
         """Reference kinds this plugin can resolve, such as ``view``."""
         ...
 
+    def returns_receiver(self, callee: str) -> bool:
+        """Whether a method the framework supplies returns the receiver's own type."""
+        ...
+
     def detect(self, root: Path, files: frozenset[str]) -> bool:
         """Whether this repository uses the framework."""
         ...

@@ -188,3 +188,31 @@
     function: (attribute
       object: (identifier) @vcall_receiver
       attribute: (identifier) @vcall))) @binding
+
+; --- what `self` holds -----------------------------------------------------------
+
+; `self.client = client` in `__init__`: the attribute takes the
+; parameter's type.
+(assignment
+  left: (attribute
+    object: (identifier) @_self
+    attribute: (identifier) @var)
+  right: (identifier) @src
+  (#eq? @_self "self")) @this_binding
+
+; `self.client.fetch()`: a member of an attribute of the instance, typed by
+; what `__init__` assigned to it.
+(call
+  function: (attribute
+    object: (attribute
+      object: (identifier) @_self
+      attribute: (identifier) @receiver_field)
+    attribute: (identifier) @name)
+  (#eq? @_self "self")) @reference.call
+
+(attribute
+  object: (attribute
+    object: (identifier) @_self
+    attribute: (identifier) @receiver_field)
+  attribute: (identifier) @name
+  (#eq? @_self "self")) @reference.member

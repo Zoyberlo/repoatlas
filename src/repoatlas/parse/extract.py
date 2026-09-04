@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from ..model import SourceRange, Symbol, SymbolKind
 from ..spans import ScopeIndex
-from .embedded import embedded_regions, parse_embedded
+from .embedded import EmbeddedRegion, embedded_regions, parse_embedded
 from .imports import FileImports, extract_imports
 from .languages import LanguageSpec, get_language, get_parser, query_source
 
@@ -54,6 +54,7 @@ _REFERENCE_PRECEDENCE = {
     "class": 6,
     "scope": 6,
     "import": 5,
+    "module": 5,
     "construct": 4,
     "call": 3,
     "type": 2,
@@ -112,6 +113,7 @@ _KIND_PRECEDENCE = {
 _TYPE_CONTAINERS = frozenset(
     {
         SymbolKind.CLASS,
+        SymbolKind.COMPONENT,
         SymbolKind.INTERFACE,
         SymbolKind.TRAIT,
         SymbolKind.ENUM,
@@ -306,6 +308,14 @@ def _qualified_name(name: str, container: Symbol | None) -> str:
 EXPRESSION_RECEIVER = "(expr)"
 """The receiver of a member read off an expression rather than a name."""
 
+ASSIGNED_TYPE_PREFIX = "<assigned>"
+"""Marks a property type learned from a constructor assignment, `$this->x = $typed`.
+
+The type is as good as a declared one for resolution, but an oracle that
+reads declarations only cannot see it, so the accuracy report keeps the
+two shapes apart.
+"""
+
 CALL_TYPE_PREFIX = "<call>"
 """Marks a receiver type that is whatever a call returns: `$g = $this->build()`.
 
@@ -338,6 +348,13 @@ class _Collected:
     bindings: list[tuple[str, str, SourceRange | None]]
     """``(variable, type name, binding function)`` for every annotated or constructed local."""
 
+    pair_bindings: list[tuple[str, str, SourceRange | None]] = field(default_factory=list)
+    """Bindings of `this.key` read off object-literal pairs, `data() { return { store: useStore() } }`.
+
+    Only a Vue component makes the keys of an object literal members of
+    `this`, so the host decides whether these count.
+    """
+
     def shifted(self, adjust: Callable[[SourceRange], SourceRange]) -> _Collected:
         """The same findings with every span mapped through ``adjust``."""
         for definition in self.definitions:
@@ -351,6 +368,10 @@ class _Collected:
         self.bindings = [
             (var, kind, adjust(span) if span is not None else None)
             for var, kind, span in self.bindings
+        ]
+        self.pair_bindings = [
+            (var, kind, adjust(span) if span is not None else None)
+            for var, kind, span in self.pair_bindings
         ]
         return self
 
@@ -592,6 +613,8 @@ def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
     receivers: dict[SourceRange, str] = {}
     chained: set[SourceRange] = set()
     call_bindings: list[tuple[str, str, str, SourceRange | None, SourceRange]] = []
+    pair_bindings: list[tuple[str, str, SourceRange | None]] = []
+    this_assigns: list[tuple[str, str, SourceRange | None, SourceRange]] = []
     found_locals: list[tuple[str, SourceRange | None]] = []
     bindings: list[tuple[str, str, SourceRange | None]] = []
 
@@ -601,6 +624,37 @@ def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
             node = local_nodes[0]
             if node.text is not None:
                 found_locals.append((_text(node, language), _enclosing_function(node, language)))
+            continue
+        if "this_binding" in captures:
+            # `$this->logger = $logger` in a constructor: the property has
+            # the parameter's type, once the parameters' types are known.
+            var_nodes, src_nodes = captures.get("var"), captures.get("src")
+            node = captures["this_binding"][0]
+            if var_nodes and src_nodes and var_nodes[0].text and src_nodes[0].text:
+                this_assigns.append(
+                    (
+                        _text(var_nodes[0], language),
+                        _text(src_nodes[0], language),
+                        _enclosing_class(node, language),
+                        to_range(node),
+                    )
+                )
+            continue
+        if "binding" in captures and captures["binding"][0].type == "pair":
+            # `store: useStore()` or `client: new Client()` as a key of an
+            # object literal: a member of `this` in a Vue component's
+            # options, and nothing anywhere else.
+            var_nodes = captures.get("var")
+            call_nodes, type_nodes = captures.get("vcall"), captures.get("vtype")
+            if var_nodes and var_nodes[0].text and (call_nodes or type_nodes):
+                member = "this." + _text(var_nodes[0], language)
+                if call_nodes and call_nodes[0].text:
+                    marker = f"{CALL_TYPE_PREFIX}{_text(call_nodes[0], language)}||"
+                    pair_bindings.append((member, marker, None))
+                elif type_nodes and type_nodes[0].text:
+                    pair_bindings.append(
+                        (member, type_nodes[0].text.decode("utf-8", errors="replace"), None)
+                    )
             continue
         if "binding" in captures:
             var_nodes, type_nodes = captures.get("var"), captures.get("vtype")
@@ -690,6 +744,7 @@ def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
                 if existing is None or _KIND_PRECEDENCE[kind] > _KIND_PRECEDENCE[
                     existing.kind
                 ]:
+                    documentation = _documentation(nodes[0], decorators, language)
                     definitions[key] = _RawDefinition(
                         name,
                         kind,
@@ -697,8 +752,16 @@ def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
                         full_span,
                         _signature(nodes[0], decorators, name_span, lines, language),
                         hoist=capture_name == "definition.attribute",
-                        documentation=_documentation(nodes[0], decorators, language),
+                        documentation=documentation,
                     )
+                    if kind is SymbolKind.FIELD and documentation:
+                        # `/** @var AdService */ protected $service;` types
+                        # the property for every `$this->service->` below.
+                        declared = _doc_var_type(documentation)
+                        if declared is not None:
+                            bindings.append(
+                                ("this." + name, declared, _enclosing_class(nodes[0], language))
+                            )
             elif capture_name.startswith(_REFERENCE_PREFIX):
                 # Several patterns may capture one token. `user.greet()`
                 # matches both the call pattern and the member-read pattern,
@@ -733,12 +796,26 @@ def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
     # A call's receiver may itself be a typed local; say so, so that the
     # resolver can find the callee. This is why call bindings wait until
     # the declared ones are all in.
+    # In source order, each binding visible to the next: `$b = $ad->fresh()`
+    # needs to know what `$ad = Ad::find(1)` made `$ad`.
     scoping = _Scoping(found_locals, bindings)
-    for var, callee, call_receiver, scope, at in call_bindings:
+    for var, callee, call_receiver, scope, at in sorted(
+        call_bindings, key=lambda item: (item[4].start.line, item[4].start.character)
+    ):
         receiver_type = scoping.type_of(call_receiver, at) if call_receiver else None
         marker = f"{CALL_TYPE_PREFIX}{callee}|{call_receiver}|{receiver_type or ''}"
         bindings.append((var, marker, scope))
-    return _Collected(ordered, references, found_locals, bindings)
+        scoping.bind(var, marker, scope)
+    # Constructor assignments come last: the parameter they copy may itself
+    # be typed by a call.
+    for var, src, scope, at in this_assigns:
+        declared = scoping.type_of(src, at)
+        if declared is not None:
+            if not declared.startswith(CALL_TYPE_PREFIX):
+                declared = ASSIGNED_TYPE_PREFIX + declared
+            bindings.append(("this." + var, declared, scope))
+            scoping.bind("this." + var, declared, scope)
+    return _Collected(ordered, references, found_locals, bindings, pair_bindings)
 
 
 def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
@@ -775,11 +852,13 @@ def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
             # `self.x = ...` sits inside a method; the field it defines
             # belongs to the class around it. Outside any class it defines
             # nothing an index should hold.
+            # The nearest enclosing symbol that is not a function: a class
+            # for `self.x`, a store constant for a Pinia `state()` key.
             owner_index = next(
                 (
                     index
                     for _span, index in reversed(open_bodies)
-                    if symbols[index].kind in _TYPE_CONTAINERS
+                    if symbols[index].kind not in _LOCAL_SCOPES
                 ),
                 None,
             )
@@ -790,9 +869,14 @@ def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
                 continue
             fields_seen.add((container.id, definition.name))
             qualified = _qualified_name(definition.name, container)
+            # The same bookkeeping as any other id: a Vue component's
+            # `data()` key and the watcher named after it are two symbols.
+            hoisted_id = f"{path}#{qualified}"
+            seen = used.get(hoisted_id, 0) + 1
+            used[hoisted_id] = seen
             symbols.append(
                 Symbol(
-                    id=f"{path}#{qualified}",
+                    id=hoisted_id if seen == 1 else f"{hoisted_id}${seen}",
                     name=definition.name,
                     kind=SymbolKind.FIELD,
                     path=path,
@@ -848,6 +932,256 @@ def _merge(into: _Collected, extra: _Collected) -> None:
     into.bindings.extend(extra.bindings)
 
 
+_DOC_VAR = re.compile(r"@var\s+\\?([\w\\|]+)")
+_NOT_A_TYPE = frozenset({"null", "void", "mixed", "bool", "int", "string", "array", "float"})
+
+
+def _doc_var_type(documentation: str) -> str | None:
+    """The type a property's docblock declares: `@var \\App\\Models\\Ad|null`."""
+    found = _DOC_VAR.search(documentation)
+    if found is None:
+        return None
+    for option in found.group(1).split("|"):
+        name = option.replace("\\", ".").rsplit(".", 1)[-1]
+        if name and name not in _NOT_A_TYPE:
+            return name
+    return None
+
+
+def _vue_component(
+    tree: Tree, region: EmbeddedRegion, path: str, lines: list[str]
+) -> list[_RawDefinition]:
+    """A single-file component as a type: the thing `this` is inside it.
+
+    An options object has no class, so its methods, computed properties
+    and watchers had no container, `this.save()` had nothing to look in,
+    and a four-thousand-line page led the map with its watchers. The
+    component is named after the file, holds everything the script
+    declares, and lists its `props` and `data()` keys as fields: the
+    contract another component sees. A `<script setup>` block is the
+    same component with its top-level declarations as members.
+    """
+    root = tree.root_node
+    stem = path.rsplit("/", 1)[-1]
+    if stem.endswith(".vue"):
+        stem = stem[:-4]
+    export = next(
+        (
+            child
+            for child in root.named_children
+            if child.type == "export_statement" and _options_object(child) is not None
+        ),
+        None,
+    )
+    definitions: list[_RawDefinition] = []
+    if export is not None:
+        options = _options_object(export)
+        assert options is not None
+        keyword = next((c for c in export.children if c.type == "default"), None)
+        name_span = to_range(keyword) if keyword is not None else to_range(export)
+        # `export default defineComponent({` names nothing; the map line
+        # has to say which component this is.
+        definitions.append(
+            _RawDefinition(
+                stem,
+                SymbolKind.COMPONENT,
+                name_span,
+                to_range(export),
+                f"component {stem}",
+                documentation=_documentation(export, [], region.language),
+            )
+        )
+        for pair in options.named_children:
+            if pair.type != "pair":
+                continue
+            key = pair.child_by_field_name("key")
+            value = pair.child_by_field_name("value")
+            if key is None or value is None:
+                continue
+            key_text = _text(key, region.language).strip("'\"")
+            if key_text == "props":
+                definitions.extend(_vue_fields(value, lines, region.language))
+        for member in options.named_children:
+            if member.type == "method_definition":
+                name = member.child_by_field_name("name")
+                if name is not None and _text(name, region.language) == "data":
+                    definitions.extend(_vue_data_fields(member, lines, region.language))
+        return definitions
+    if _is_setup_script(region):
+        # No options object: the whole script is the component, and its
+        # top-level declarations are its members.
+        first = next((c for c in root.named_children if c.type != "comment"), None)
+        if first is None:
+            return definitions
+        span = SourceRange(start=to_range(first).start, end=to_range(root).end)
+        definitions.append(
+            _RawDefinition(
+                stem, SymbolKind.COMPONENT, to_range(first), span, f"component {stem} <script setup>"
+            )
+        )
+    return definitions
+
+
+_JS_LANGUAGES = frozenset({"javascript", "typescript", "tsx"})
+
+
+def _store_state_fields(tree: Tree, lines: list[str], language: str) -> list[_RawDefinition]:
+    """The keys of a Pinia store's `state` as fields of the store.
+
+    `defineStore("ads", { state: () => ({ ads: [], editedAd: null }) })`
+    declares what every component reads as `store.ads`; the actions and
+    getters are methods already, the state was nothing. The fields sit
+    inside the store's declarator, so containment makes them its members.
+    """
+    if language not in _JS_LANGUAGES:
+        return []
+    from tree_sitter import QueryCursor
+
+    query = _compiled_store_query(language)
+    found: list[_RawDefinition] = []
+    for _index, captures in QueryCursor(query).matches(tree.root_node):
+        state = captures.get("state")
+        if not state:
+            continue
+        literal = _returned_object(state[0])
+        if literal is not None:
+            fields = _vue_fields(literal, lines, language)
+            for field_definition in fields:
+                # Out of the `state()` method, onto the store itself.
+                field_definition.hoist = True
+            found.extend(fields)
+    return found
+
+
+@functools.cache
+def _compiled_store_query(language: str) -> Query:
+    from tree_sitter import Query
+
+    return Query(
+        get_language(language),
+        """
+        (call_expression
+          function: (identifier) @_fn
+          arguments: (arguments
+            (object
+              (pair
+                key: (property_identifier) @_key
+                value: [(arrow_function) (function_expression)] @state)))
+          (#eq? @_fn "defineStore")
+          (#eq? @_key "state"))
+        (call_expression
+          function: (identifier) @_fn
+          arguments: (arguments
+            (object
+              (method_definition
+                name: (property_identifier) @_key) @state))
+          (#eq? @_fn "defineStore")
+          (#eq? @_key "state"))
+        """,
+    )
+
+
+def _returned_object(function: Node) -> Node | None:
+    """The object literal a `state` function returns, whichever way it is written."""
+    body = function.child_by_field_name("body")
+    if body is None:
+        return None
+    if body.type == "object":
+        return body
+    if body.type == "parenthesized_expression":
+        return next((c for c in body.named_children if c.type == "object"), None)
+    if body.type == "statement_block":
+        returned = next((c for c in body.named_children if c.type == "return_statement"), None)
+        if returned is not None:
+            return next((c for c in returned.named_children if c.type == "object"), None)
+    return None
+
+
+def _options_object(export: Node) -> Node | None:
+    """The object of `export default { ... }` or `export default defineComponent({ ... })`."""
+    value = export.child_by_field_name("value")
+    if value is None:
+        return None
+    if value.type == "object":
+        return value
+    if value.type == "call_expression":
+        function = value.child_by_field_name("function")
+        arguments = value.child_by_field_name("arguments")
+        if (
+            function is not None
+            and (function.text or b"").endswith(b"defineComponent")
+            and arguments is not None
+        ):
+            return next((a for a in arguments.named_children if a.type == "object"), None)
+    return None
+
+
+def _vue_fields(value: Node, lines: list[str], language: str) -> list[_RawDefinition]:
+    """`props: { userId: Number }` or `props: ['userId']` as fields."""
+    found: list[_RawDefinition] = []
+    if value.type == "object":
+        for pair in value.named_children:
+            if pair.type != "pair":
+                continue
+            key = pair.child_by_field_name("key")
+            if key is None:
+                continue
+            name_span = to_range(key)
+            found.append(
+                _RawDefinition(
+                    _text(key, language).strip("'\""),
+                    SymbolKind.FIELD,
+                    name_span,
+                    to_range(pair),
+                    _signature(pair, [], name_span, lines, language),
+                )
+            )
+    elif value.type == "array":
+        for item in value.named_children:
+            if item.type != "string":
+                continue
+            fragment = next((c for c in item.named_children if c.type == "string_fragment"), None)
+            if fragment is None:
+                continue
+            name_span = to_range(fragment)
+            found.append(
+                _RawDefinition(
+                    _text(fragment, language),
+                    SymbolKind.FIELD,
+                    name_span,
+                    to_range(item),
+                    _signature(item, [], name_span, lines, language),
+                )
+            )
+    return found
+
+
+def _vue_data_fields(method: Node, lines: list[str], language: str) -> list[_RawDefinition]:
+    """The keys of the object `data()` returns, as fields of the component."""
+    body = method.child_by_field_name("body")
+    if body is None:
+        return []
+    returned = next((c for c in body.named_children if c.type == "return_statement"), None)
+    if returned is None:
+        return []
+    literal = next((c for c in returned.named_children if c.type == "object"), None)
+    if literal is None:
+        return []
+    fields = _vue_fields(literal, lines, language)
+    for found in fields:
+        # Declared inside `data()`, a member of the component: `this.busy`.
+        found.hoist = True
+    return fields
+
+
+def _is_setup_script(region: EmbeddedRegion) -> bool:
+    element = region.node.parent
+    if element is None:
+        return False
+    start = next((c for c in element.named_children if c.type == "start_tag"), None)
+    return start is not None and b"setup" in (start.text or b"")
+
+
 class _Scoping:
     """Which names are local to which function, and what type each has.
 
@@ -878,6 +1212,10 @@ class _Scoping:
                 self._names.setdefault(name, []).append(scope)
         for var, type_name, scope in bindings:
             self._types.setdefault(var, []).append((scope, type_name))
+
+    def bind(self, var: str, type_name: str, scope: SourceRange | None) -> None:
+        """Add a binding found after construction, visible to later lookups."""
+        self._types.setdefault(var, []).append((scope, type_name))
 
     def is_local(self, name: str, span: SourceRange) -> bool:
         return any(_encloses(scope, span) for scope in self._names.get(name, ()))
@@ -1009,6 +1347,8 @@ def extract_source(
     tree = parser.parse(source)
     lines = source.decode("utf-8", errors="replace").splitlines()
     collected = _collect(tree, spec.name, lines)
+    if spec.name in _JS_LANGUAGES:
+        collected.definitions.extend(_store_state_fields(tree, lines, spec.name))
 
     # A Vue component's definitions live in its script block, which is
     # another language. Parsing it here rather than in a second pass keeps
@@ -1034,7 +1374,13 @@ def extract_source(
                     definition.signature = definition.signature[len(prefix_text) :]
             _merge(collected, inner.shifted(region.adjust))
             continue
-        _merge(collected, _collect(inner_tree, region.language, lines))
+        inner = _collect(inner_tree, region.language, lines)
+        inner.definitions.extend(_store_state_fields(inner_tree, lines, region.language))
+        if spec.name == "vue":
+            inner.definitions.extend(_vue_component(inner_tree, region, path, lines))
+            # The keys of `data()` and the like are members of `this` here.
+            inner.bindings.extend(inner.pair_bindings)
+        _merge(collected, inner)
         embedded_imports.append(extract_imports(inner_tree, region.language))
     collected.definitions.sort(key=lambda d: (d.name_span.start, d.name_span.end))
 

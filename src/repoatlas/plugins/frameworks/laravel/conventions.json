@@ -21,6 +21,12 @@
       ]
     }
   ],
+  "returns_receiver": [
+    "create", "find", "findOrFail", "findOrNew", "findMany", "first", "firstOrFail",
+    "firstOrCreate", "firstOrNew", "firstWhere", "updateOrCreate", "make", "sole",
+    "fresh", "refresh", "load", "loadMissing", "loadCount", "fill", "forceFill",
+    "setAttribute", "replicate", "newInstance", "withoutRelations"
+  ],
   "rules": [
     {
       "kinds": ["view", "extends", "include"],

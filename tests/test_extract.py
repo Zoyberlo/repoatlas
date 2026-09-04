@@ -720,3 +720,21 @@ class TestSignaturesAndDocumentation:
         )
         assert declaration_of("@property def name(self):") == "def name(self):"
         assert declaration_of("constructor(private svc: Svc) {}") == "constructor(private svc: Svc) {}"
+
+
+class TestHoistedIdsAreUnique:
+    def test_a_data_key_and_a_watcher_of_the_same_name_are_two_symbols(self) -> None:
+        # A real page had `searchQuery` in `data()` and a watcher named
+        # `searchQuery`; the second reused the first's id and the store
+        # refused the file.
+        result = extract(
+            "src/pages/Page.vue",
+            b"<template><div/></template>\n<script>\nexport default {\n"
+            b"  data() { return { searchQuery: '' }; },\n"
+            b"  watch: { searchQuery(value) {} },\n"
+            b"  computed: { searchQuery() { return 1; } },\n"
+            b"};\n</script>\n",
+        )
+        ids = [s.id for s in result.symbols if s.name == "searchQuery"]
+        assert len(ids) == 3
+        assert len(set(ids)) == 3

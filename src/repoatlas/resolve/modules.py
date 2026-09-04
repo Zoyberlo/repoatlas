@@ -364,27 +364,45 @@ def _strip_json_comments(text: str) -> str:
     return "".join(result)
 
 
-def _read_composer(root: Path) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    """Read PSR-4 prefixes from composer.json, longest prefix first."""
-    config_path = root / "composer.json"
-    if not config_path.is_file():
-        return ()
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError):
-        return ()
+def _read_composer(
+    root: Path, directories: Iterable[str] = ("",)
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """PSR-4 prefixes from every project's composer.json, longest prefix first.
+
+    A Laravel application that lives in `backend/` declares `App\\` as
+    `app/` in `backend/composer.json`. Read at the repository root that
+    file is not there, and every `use App\\Models\\Ad` then looks like a
+    package: on the first real monorepo, 91% of references went
+    unresolved for exactly this. Targets are rewritten relative to the
+    repository, as tsconfig aliases are, so one table serves the walk.
+    """
     prefixes: list[tuple[str, tuple[str, ...]]] = []
-    for section in ("autoload", "autoload-dev"):
-        block = data.get(section) or {}
-        for scheme in ("psr-4", "psr-0"):
-            for prefix, target in (block.get(scheme) or {}).items():
-                targets = target if isinstance(target, list) else [target]
-                prefixes.append(
-                    (
-                        str(prefix),
-                        tuple(str(item).strip("/") for item in targets),
+    for where in directories:
+        config_path = (root / where / "composer.json") if where else (root / "composer.json")
+        if not config_path.is_file():
+            continue
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        for section in ("autoload", "autoload-dev"):
+            block = data.get(section) or {}
+            for scheme in ("psr-4", "psr-0"):
+                for prefix, target in (block.get(scheme) or {}).items():
+                    targets = target if isinstance(target, list) else [target]
+                    prefixes.append(
+                        (
+                            str(prefix),
+                            tuple(
+                                _normalise(PurePosixPath(where) / str(item).strip("/"))
+                                if where
+                                else str(item).strip("/")
+                                for item in targets
+                            ),
+                        )
                     )
-                )
     prefixes.sort(key=lambda pair: len(pair[0]), reverse=True)
     return tuple(prefixes)
 
@@ -399,5 +417,8 @@ def resolver_for(
     if language == "python":
         return PythonResolver(known_files=known_files)
     if language == "php":
-        return ComposerResolver(known_files=known_files, prefixes=_read_composer(root))
+        return ComposerResolver(
+            known_files=known_files,
+            prefixes=_read_composer(root, project_directories(known_files)),
+        )
     return None

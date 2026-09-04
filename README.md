@@ -78,9 +78,9 @@ TypeScript fixture it says:
 
 > **Index accuracy: repoatlas 0.1.0 (tree-sitter) vs scip-typescript 0.4.0**
 >
-> Compared 2 files. Symbol kinds in scope: class, constant, constructor,
-> enum, field, function, interface, macro, method, property, trait,
-> type_alias, variable. Not scored, because the oracle emits no such edge:
+> Compared 2 files. Symbol kinds in scope: class, component, constant,
+> constructor, enum, field, function, interface, macro, method, property,
+> trait, type_alias, variable. Not scored, because the oracle emits no such edge:
 > 6 edges of kind `contains`.
 
 | kind | precision | recall | F1 | tp | fp | fn |
@@ -130,7 +130,7 @@ application, 163 PHP files and 24 JavaScript files the oracles cover:
 | | definitions P / R | references P / R |
 | --- | ---: | ---: |
 | Laravel backend, `scip-php` | 0.996 / 1.000 | 0.993 / 1.000 |
-| Quasar frontend, `scip-typescript` | 0.968 / 1.000 | 0.994 / 1.000 |
+| Quasar frontend, `scip-typescript` | 0.968 / 1.000 | 0.964 / 1.000 |
 
 The first run against that backend scored 0.429 on references. Every
 member reached through an untyped variable, `$order->id`, `$order->update()`,
@@ -141,6 +141,17 @@ learned to ask what an oracle can judge: `scip-php` resolves nothing
 through a variable, typed or not, in four thousand tries, so edges of that
 shape are listed rather than scored. The whole story, before and after, is
 in [docs/benchmarks/oracles.md](docs/benchmarks/oracles.md).
+
+Those copies were each project on its own. Pointed at the monorepo they
+live in, the index resolved 9% of references, because `composer.json`
+was read at the repository root and the Laravel application keeps it in
+`backend/`. That, and what a Laravel + Vue codebase actually looks like
+(services injected in constructors and assigned to untyped properties,
+Eloquent finders that return the model, Pinia stores returned by a hook,
+Vue components with no class for `this` to be, routers that name pages
+in `import()`), took the rate to 24% and the map from watchers to
+components; the rest is the framework's, and stays unresolved rather
+than guessed.
 
 The report also carries a per-edge-kind table, a dangling-edge count, and
 bootstrap confidence intervals resampled over files. Before trusting the

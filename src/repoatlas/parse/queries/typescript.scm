@@ -311,3 +311,44 @@
       function: (member_expression
         object: [(identifier) (this)] @vcall_receiver
         property: (property_identifier) @vcall)))) @binding
+
+; --- modules named by path ---------------------------------------------------
+
+; `component: () => import("pages/IndexPage.vue")` in a router, or
+; `require("./util")`: a module named in an expression rather than an
+; import statement. It resolves through the same alias tables.
+(call_expression
+  function: (import)
+  arguments: (arguments
+    (string
+      (string_fragment) @name))) @reference.module
+
+(call_expression
+  function: (identifier) @_fn
+  arguments: (arguments
+    (string
+      (string_fragment) @name))
+  (#eq? @_fn "require")) @reference.module
+
+; --- what `this` holds ---------------------------------------------------------
+
+; `this.service = service` in a constructor: the property takes the
+; parameter's type.
+(assignment_expression
+  left: (member_expression
+    object: (this)
+    property: (property_identifier) @var)
+  right: (identifier) @src) @this_binding
+
+; `data() { return { store: useStore() } }`: in a Vue component, the keys
+; of that object are members of `this`; the extractor keeps them only for
+; a component.
+(pair
+  key: (property_identifier) @var
+  value: (call_expression
+    function: (identifier) @vcall)) @binding
+
+(pair
+  key: (property_identifier) @var
+  value: (new_expression
+    constructor: (identifier) @vtype)) @binding
