@@ -223,9 +223,42 @@ The report prints all three under *Honesty checks* and *What the oracle
 can judge*. Gating by what the oracle demonstrably does is the honest
 alternative to either trusting it blindly or special-casing it by name.
 
+### What the published comparisons settle, and what they do not
+
+Four independent measurements bracket the question this project exists to
+answer. They disagree, and the disagreement is the useful part: each
+measures a different task.
+
+| study | task | index versus grep |
+| --- | --- | --- |
+| *Code Isn't Memory*, [arXiv 2606.22417] | SWE-bench-style issue to fix, 91 instances, Opus 4.7, index on/off inside one agent | resolve 41.9% to 50.4% (p=0.003), localisation acc@5 44.3% to 84.5% (p<0.0001), **fewer** tokens (11.1k to 10.1k); multi-file changes 44.9% to 91.3% |
+| *Does a Language Server Save Tokens?*, [arXiv 2608.13568] | find all call sites, three models, five arms | F1 0.706 to 0.778 (Opus); LSP precision 1.00 against grep's 0.76; agents reach for it 45–57% of the time unprompted |
+| the same paper | localise a named symbol | LSP costs **+6%** tokens (Opus), +118% (Sonnet), −26% (Haiku); agents reach for it **0–6%** of the time |
+| *GrepRAG*, [arXiv 2601.23254] | repository-level code completion | grep-like retrieval **beats** a graph method, 38.6% against 19.4% exact match, at a thirty-fifth of the latency |
+
+Read together: a structural index earns its keep on questions that cross
+files and on questions about a name that is used for more than one thing.
+It does not earn it on "where would I change this", which is one grep
+away and which agents solve by grepping whatever else they are given. The
+language-server study names the variable that decides it, and it is not
+the language: *the target's lexical collision rate*, how often the name
+means something else in the same repository. On the Laravel and Quasar
+application this project is measured against, 65% of navigable symbols
+share their name with another, and a search for the median one returns
+four lines for every real use.
+
+That is why this project measures two task classes rather than one, and
+why the localisation number is expected to be a tie: `repoatlas
+agentbench` asks where a change goes, `repoatlas sitebench` asks who uses
+a symbol, and the second is where the literature says the answer lives.
+
+[arXiv 2606.22417]: https://arxiv.org/abs/2606.22417
+[arXiv 2608.13568]: https://arxiv.org/abs/2608.13568
+[arXiv 2601.23254]: https://arxiv.org/abs/2601.23254
+
 ### Targets
 
-The one independent published comparison of retrieval quality on a large
+One independent published comparison of retrieval quality on a large
 Java codebase, using compiled bytecode as the oracle, puts iterative grep at
 mean F1 0.32, a tree-sitter graph at 0.50 and SCIP at 0.88 on twelve
 transitive type-hierarchy questions, and the gap is recall (0.32 / 0.50 /
