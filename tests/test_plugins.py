@@ -485,6 +485,105 @@ class TestQuasarEdges:
         )
 
 
+class TestMonorepoLayouts:
+    """A repository is often several projects, and this is the common one.
+
+    The first real project this index was run on keeps Laravel in
+    `backend/` and Quasar in `frontend/`, with a `package.json` at the top
+    holding one unrelated dependency. Looking only at the repository root
+    found neither framework and dropped every convention edge in silence.
+    """
+
+    def monorepo(self, root: Path) -> None:
+        write(root, "package.json", json.dumps({"dependencies": {"dompurify": "^3.3"}}))
+        write(root, "backend/composer.json", json.dumps({"require": {"laravel/framework": "^10"}}))
+        write(root, "frontend/package.json", json.dumps({"dependencies": {"quasar": "^2.16"}}))
+        write(
+            root,
+            "backend/app/Http/Controllers/HomeController.php",
+            "<?php\nclass HomeController\n{\n    public function index()\n    {\n        return view('home.index');\n    }\n}\n",
+        )
+        write(root, "backend/resources/views/home/index.blade.php", "<x-alert />\n")
+        write(root, "backend/resources/views/components/alert.blade.php", "<div></div>\n")
+        write(
+            root,
+            "frontend/src/pages/IndexPage.vue",
+            "<template>\n  <UserCard />\n</template>\n",
+        )
+        write(root, "frontend/src/components/UserCard.vue", "<template><div/></template>\n")
+
+    def test_both_frameworks_are_found_below_the_root(self, tmp_path: Path) -> None:
+        self.monorepo(tmp_path)
+        files = frozenset(
+            {
+                "backend/app/Http/Controllers/HomeController.php",
+                "frontend/src/pages/IndexPage.vue",
+            }
+        )
+        assert {p.name for p in active_plugins(tmp_path, files)} == {"laravel", "vue"}
+
+    def test_a_view_resolves_inside_its_own_project(self, tmp_path: Path) -> None:
+        self.monorepo(tmp_path)
+        targets = edge_targets(tmp_path)
+        assert targets[("backend/app/Http/Controllers/HomeController.php", 6)] == (
+            "backend/resources/views/home/index.blade.php#<module>"
+        )
+
+    def test_a_blade_component_resolves_inside_its_own_project(self, tmp_path: Path) -> None:
+        self.monorepo(tmp_path)
+        targets = edge_targets(tmp_path)
+        assert targets[("backend/resources/views/home/index.blade.php", 1)] == (
+            "backend/resources/views/components/alert.blade.php#<module>"
+        )
+
+    def test_a_vue_component_resolves_inside_its_own_project(self, tmp_path: Path) -> None:
+        self.monorepo(tmp_path)
+        targets = edge_targets(tmp_path)
+        assert targets[("frontend/src/pages/IndexPage.vue", 2)] == (
+            "frontend/src/components/UserCard.vue#<module>"
+        )
+
+    def test_the_root_is_still_a_project(self, tmp_path: Path) -> None:
+        laravel_project(tmp_path)
+        assert [p.name for p in active_plugins(tmp_path, frozenset())] == ["laravel"]
+
+    def test_two_apps_each_keep_their_own_views(self, tmp_path: Path) -> None:
+        for app in ("shop", "admin"):
+            write(tmp_path, f"{app}/composer.json", json.dumps({"require": {"laravel/framework": "^10"}}))
+            write(
+                tmp_path,
+                f"{app}/app/Controller.php",
+                "<?php\nclass Controller\n{\n    public function show()\n    {\n        return view('page');\n    }\n}\n",
+            )
+            write(tmp_path, f"{app}/resources/views/page.blade.php", f"<p>{app}</p>\n")
+        targets = edge_targets(tmp_path)
+        for app in ("shop", "admin"):
+            assert targets[(f"{app}/app/Controller.php", 6)] == (
+                f"{app}/resources/views/page.blade.php#<module>"
+            )
+
+    def test_a_manifest_too_deep_is_a_dependency_not_a_project(self, tmp_path: Path) -> None:
+        # `backend/app/Services/printer/package.json` is a real path from the
+        # project that prompted this; it is not a front end.
+        write(
+            tmp_path,
+            "a/b/c/composer.json",
+            json.dumps({"require": {"laravel/framework": "^10"}}),
+        )
+        assert active_plugins(tmp_path, frozenset({"a/b/c/src/x.php"})) == ()
+
+    def test_only_directories_holding_source_are_considered(self, tmp_path: Path) -> None:
+        from repoatlas.plugins.registry import project_directories
+
+        assert project_directories(["backend/app/x.php", "frontend/src/y.vue"]) == [
+            "",
+            "backend",
+            "frontend",
+            "backend/app",
+            "frontend/src",
+        ]
+
+
 class TestStoreAgreement:
     def test_the_store_resolves_conventions_the_same_way(self, tmp_path: Path) -> None:
         # The store and the batch builder are two paths to one answer. An

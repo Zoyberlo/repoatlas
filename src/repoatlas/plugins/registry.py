@@ -33,6 +33,15 @@ than a branch kept warm on the chance somebody needs it.
 Detection reads what a project declares, never what its directories are
 called. A repository with a `resources/views` folder is not Laravel.
 
+It also reads *where*. A repository is often several projects: this index
+was first run on a real one whose Laravel lives in `backend/` and whose
+Quasar front end lives in `frontend/`, with a `package.json` at the top
+holding a single unrelated dependency. Looking only at the repository root
+found neither framework and silently dropped every convention edge in the
+project. So a manifest is looked for in the root and in the directories
+above the files being indexed, and the directory that holds it becomes the
+prefix every candidate path is built inside.
+
 Rules
 -----
 
@@ -80,12 +89,14 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "MAX_PROJECT_DEPTH",
     "Candidate",
     "ConventionPlugin",
     "Framework",
     "RegistryError",
     "Rule",
     "load_framework",
+    "project_directories",
 ]
 
 class RegistryError(ValueError):
@@ -102,6 +113,27 @@ def _dig(data: Any, dotted: str) -> Any:
     return current
 
 
+# How far below the repository root a project's manifest is looked for.
+# One level covers `backend/` and `frontend/`, two covers `apps/api/`, and
+# beyond that a manifest is a dependency's own rather than a project's.
+MAX_PROJECT_DEPTH = 2
+
+
+def project_directories(files: Iterable[str]) -> list[str]:
+    """The directories a project manifest could sit in, nearest the root first.
+
+    Derived from the files being indexed rather than from a filesystem
+    walk: a directory holding no source is not a project, and walking a
+    repository that has `node_modules` in it is how an index becomes slow.
+    """
+    found: set[str] = {""}
+    for path in files:
+        parts = path.split("/")[:-1]
+        for depth in range(1, min(len(parts), MAX_PROJECT_DEPTH) + 1):
+            found.add("/".join(parts[:depth]))
+    return sorted(found, key=lambda item: (item.count("/") if item else -1, item))
+
+
 @dataclass(frozen=True, slots=True)
 class Detection:
     """One manifest that would prove a project uses a framework."""
@@ -110,9 +142,14 @@ class Detection:
     packages: frozenset[str]
     fields: tuple[str, ...] = ()
 
-    def matches(self, root: Path) -> bool:
+    def roots(self, root: Path, directories: Iterable[str]) -> list[str]:
+        """The directories whose manifest declares one of these packages."""
+        return [where for where in directories if self._declares(root, where)]
+
+    def _declares(self, root: Path, where: str) -> bool:
+        manifest = root / where / self.file if where else root / self.file
         try:
-            text = (root / self.file).read_text(encoding="utf-8-sig")
+            text = manifest.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError):
             return False
         try:
@@ -305,6 +342,15 @@ class ConventionPlugin:
     framework: Framework
     _indexed: frozenset[str] | None = field(default=None, repr=False)
     _by_basename: dict[str, tuple[str, ...]] = field(default_factory=dict, repr=False)
+    _roots_for: frozenset[str] | None = field(default=None, repr=False)
+    _roots: tuple[str, ...] = field(default=(), repr=False)
+    """Where in the repository this framework lives, as path prefixes.
+
+    Found by :meth:`detect` and used by :meth:`resolve`, which the plugin
+    protocol always calls in that order with the same file set. A resolve
+    against any other set falls back to the repository root, which is what
+    a single-project repository has anyway.
+    """
 
     @property
     def name(self) -> str:
@@ -315,7 +361,21 @@ class ConventionPlugin:
         return self.framework.kinds
 
     def detect(self, root: Path, files: frozenset[str]) -> bool:
-        return any(clause.matches(root) for clause in self.framework.detect)
+        directories = project_directories(files)
+        found: list[str] = []
+        for clause in self.framework.detect:
+            for where in clause.roots(root, directories):
+                if where not in found:
+                    found.append(where)
+        self._roots_for = files
+        self._roots = tuple(found)
+        return bool(found)
+
+    def roots_in(self, files: frozenset[str]) -> tuple[str, ...]:
+        """Where this framework lives, for the file set detection saw."""
+        if self._roots_for is not files:
+            return ("",)
+        return self._roots or ("",)
 
     def resolve(
         self,
@@ -329,35 +389,44 @@ class ConventionPlugin:
         cleaned = name.strip()
         if not cleaned:
             return None
+        roots = _nearest_first(self.roots_in(files), from_path)
         for rule in self.framework.rules:
             if not rule.claims(kind, language):
                 continue
             relative = rule.relative(cleaned)
             if relative is None:
                 continue
-            found = self._first_existing(rule, relative, files)
+            found = self._first_existing(rule, relative, files, roots)
             if found is not None:
                 return found
         return None
 
     def _first_existing(
-        self, rule: Rule, relative: str, files: frozenset[str]
+        self, rule: Rule, relative: str, files: frozenset[str], roots: tuple[str, ...]
     ) -> str | None:
         studly = _studly(relative)
-        for candidate in rule.candidates:
-            if candidate.searches_by_name:
-                found = self._by_name(candidate, relative, studly, files)
-            else:
-                found = self._at_path(candidate, relative, studly, files)
-            if found is not None:
-                return found
+        for project in roots:
+            for candidate in rule.candidates:
+                if candidate.searches_by_name:
+                    found = self._by_name(candidate, relative, studly, files, project)
+                else:
+                    found = self._at_path(candidate, relative, studly, files, project)
+                if found is not None:
+                    return found
         return None
 
     def _at_path(
-        self, candidate: Candidate, relative: str, studly: str, files: frozenset[str]
+        self,
+        candidate: Candidate,
+        relative: str,
+        studly: str,
+        files: frozenset[str],
+        project: str,
     ) -> str | None:
         tail = candidate.path.format(path=relative, studly=studly)
         stem = f"{candidate.root}/{tail}" if candidate.root else tail
+        if project:
+            stem = f"{project}/{stem}"
         for suffix in candidate.suffixes:
             full = f"{stem}{suffix}"
             if full in files:
@@ -365,7 +434,12 @@ class ConventionPlugin:
         return None
 
     def _by_name(
-        self, candidate: Candidate, relative: str, studly: str, files: frozenset[str]
+        self,
+        candidate: Candidate,
+        relative: str,
+        studly: str,
+        files: frozenset[str],
+        project: str,
     ) -> str | None:
         """Find a file by its basename, anywhere below a directory.
 
@@ -376,6 +450,8 @@ class ConventionPlugin:
         """
         stem = candidate.stem.format(path=relative, studly=studly)
         prefix = f"{candidate.under}/" if candidate.under else ""
+        if project:
+            prefix = f"{project}/{prefix}"
         for suffix in candidate.suffixes:
             for path in self._paths_named(f"{stem}{suffix}", files):
                 if path.startswith(prefix):
@@ -392,6 +468,22 @@ class ConventionPlugin:
                 name: tuple(sorted(paths)) for name, paths in index.items()
             }
         return self._by_basename.get(basename, ())
+
+
+def _nearest_first(roots: tuple[str, ...], from_path: str) -> tuple[str, ...]:
+    """Order the projects so the one holding the reference is tried first.
+
+    A `view()` written in `backend/app/` means a template in `backend`,
+    even in a repository where a second Laravel app would answer the same
+    name. Without this the answer would depend on directory order.
+    """
+    if len(roots) < 2:
+        return roots
+    inside = [where for where in roots if where and from_path.startswith(f"{where}/")]
+    if not inside:
+        return roots
+    rest = [where for where in roots if where not in inside]
+    return (*sorted(inside, key=len, reverse=True), *rest)
 
 
 def plugins_from(frameworks: Iterable[Framework]) -> tuple[ConventionPlugin, ...]:
