@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .model import IndexSnapshot, Symbol
+from .model import Edge, EdgeKind, IndexSnapshot, ResolutionTier, Symbol, SymbolKind
 from .rank import MapOptions, RankOptions, rank_symbols, render_map
 from .rank.cache import mention_keys
 from .rank.tokens import estimate_tokens
@@ -131,10 +131,14 @@ class CommitCase:
     symbol_recall_grep: float = 0.0
     """What grep gives for the same words and the same budget: hits, busiest file first."""
 
+    symbol_recall_names: float = 0.0
+    """The same ranking over a graph built by matching names, as aider's repo map does."""
+
     file_recall_plain: float = 0.0
     file_recall_steered: float = 0.0
     file_recall_skeleton: float = 0.0
     file_recall_grep: float = 0.0
+    file_recall_names: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -146,10 +150,12 @@ class CommitCase:
             "symbol_recall_steered": round(self.symbol_recall_steered, 3),
             "symbol_recall_skeleton": round(self.symbol_recall_skeleton, 3),
             "symbol_recall_grep": round(self.symbol_recall_grep, 3),
+            "symbol_recall_names": round(self.symbol_recall_names, 3),
             "file_recall_plain": round(self.file_recall_plain, 3),
             "file_recall_steered": round(self.file_recall_steered, 3),
             "file_recall_skeleton": round(self.file_recall_skeleton, 3),
             "file_recall_grep": round(self.file_recall_grep, 3),
+            "file_recall_names": round(self.file_recall_names, 3),
         }
 
 
@@ -176,10 +182,12 @@ class LocalizeResult:
             "symbol_recall_steered": round(self._mean("symbol_recall_steered"), 4),
             "symbol_recall_skeleton": round(self._mean("symbol_recall_skeleton"), 4),
             "symbol_recall_grep": round(self._mean("symbol_recall_grep"), 4),
+            "symbol_recall_names": round(self._mean("symbol_recall_names"), 4),
             "file_recall_plain": round(self._mean("file_recall_plain"), 4),
             "file_recall_steered": round(self._mean("file_recall_steered"), 4),
             "file_recall_skeleton": round(self._mean("file_recall_skeleton"), 4),
             "file_recall_grep": round(self._mean("file_recall_grep"), 4),
+            "file_recall_names": round(self._mean("file_recall_names"), 4),
         }
         if include_cases:
             # Subjects and paths are the repository's own content, so they
@@ -194,15 +202,17 @@ class LocalizeResult:
                 f"commits:  {len(self.cases)} scored of {self.walked} walked "
                 f"(budget {self.budget})",
                 "",
-                f"{'':<22}{'plain':>8}{'steered':>10}{'skeleton':>10}{'grep':>8}",
+                f"{'':<22}{'plain':>8}{'steered':>10}{'skeleton':>10}{'grep':>8}{'names':>8}",
                 f"{'symbol recall':<22}{self._mean('symbol_recall_plain'):>8.3f}"
                 f"{self._mean('symbol_recall_steered'):>10.3f}"
                 f"{self._mean('symbol_recall_skeleton'):>10.3f}"
-                f"{self._mean('symbol_recall_grep'):>8.3f}",
+                f"{self._mean('symbol_recall_grep'):>8.3f}"
+                f"{self._mean('symbol_recall_names'):>8.3f}",
                 f"{'file recall':<22}{self._mean('file_recall_plain'):>8.3f}"
                 f"{self._mean('file_recall_steered'):>10.3f}"
                 f"{self._mean('file_recall_skeleton'):>10.3f}"
-                f"{self._mean('file_recall_grep'):>8.3f}",
+                f"{self._mean('file_recall_grep'):>8.3f}"
+                f"{self._mean('file_recall_names'):>8.3f}",
             )
         ) + "\n"
 
@@ -423,6 +433,22 @@ def walk(
                         f"file_recall_{label}",
                         len(wanted_files & files) / len(wanted_files),
                     )
+                # What the same ranking finds over a graph built the way
+                # aider's repo map builds one: a reference to a name is an
+                # edge to every symbol of that name, with no import
+                # resolution and no types. Steered the same way, so the
+                # only difference is the graph.
+                names_snapshot = name_matched(snapshot, store)
+                ranked = rank_symbols(
+                    names_snapshot,
+                    focus_paths=seed_paths,
+                    focus_symbols=seeds,
+                    options=options,
+                )
+                points, files = _entries(render_map(ranked, map_options).text)
+                case.symbol_recall_names = len(locate.credit(points) & wanted_ids) / len(wanted_ids)
+                case.file_recall_names = len(wanted_files & files) / len(wanted_files)
+
                 # The baselines any ranking has to beat. The skeleton of the
                 # whole repository, files in path order, cut at the same
                 # budget, is what `repomix --compress` hands a model; grep
@@ -514,6 +540,53 @@ def grep_prefix(root: Path, snapshot: IndexSnapshot, words: Sequence[str], budge
             spent += cost
             lines.append(line)
     return "\n".join(lines) + "\n"
+
+
+def name_matched(snapshot: IndexSnapshot, store: IndexStore) -> IndexSnapshot:
+    """The same symbols, with edges built by matching names alone.
+
+    This is how aider's repo map connects a repository, and it is the
+    only part of this project that another tool already does: a
+    reference to `client` becomes an edge to every symbol called
+    `client`, however many that is and whatever the imports say. Ranking
+    the two graphs the same way, and scoring them the same way, is what
+    isolates the contribution of resolving a reference rather than
+    matching it.
+    """
+    by_name: dict[str, list[str]] = defaultdict(list)
+    for symbol in snapshot.symbols.values():
+        if not symbol.synthetic and not symbol.local:
+            by_name[symbol.name].append(symbol.id)
+    modules = {
+        symbol.path: symbol.id
+        for symbol in snapshot.symbols.values()
+        if symbol.kind is SymbolKind.MODULE
+    }
+    copy = IndexSnapshot(producer=snapshot.producer)
+    for symbol in snapshot.symbols.values():
+        copy.add_symbol(symbol)
+    seen: set[tuple[str, str]] = set()
+    for path, reference in store.references():
+        source = reference.container_id or modules.get(path)
+        if source is None:
+            continue
+        for target in by_name.get(reference.name, ()):
+            if target == source or (source, target) in seen:
+                continue
+            seen.add((source, target))
+            copy.add_edge(
+                Edge(
+                    src_id=source,
+                    dst_id=target,
+                    kind=EdgeKind.REFERENCES,
+                    tier=ResolutionTier.FUZZY,
+                )
+            )
+    # Containment is structure and the ranking wants it either way.
+    for edge in snapshot.edges:
+        if edge.kind is EdgeKind.CONTAINS:
+            copy.add_edge(edge)
+    return copy
 
 
 def skeleton_prefix(snapshot: IndexSnapshot, budget: int) -> str:

@@ -338,3 +338,69 @@ class TestGrepBaseline:
         result = run_localize(repo, work=work, commits=10)
         assert "grep" in result.as_text()
         assert "symbol_recall_grep" in result.as_dict()
+
+class TestNameMatchedGraph:
+    """The graph aider's repo map builds, for comparison with the resolved one."""
+
+    def test_a_reference_reaches_every_symbol_of_that_name(self, tmp_path: Path) -> None:
+        from repoatlas.localize import name_matched
+        from repoatlas.store import IndexStore, update_store
+
+        project = tmp_path / "p"
+        project.mkdir()
+        (project / "a.php").write_text(
+            "<?php\nclass A { public function client() {} }\n"
+            "class B { public function client() {} }\n",
+            encoding="utf-8",
+        )
+        (project / "use.php").write_text(
+            "<?php\nfunction go(A $a) { return $a->client(); }\n", encoding="utf-8"
+        )
+        with IndexStore(tmp_path / "i.db") as store:
+            update_store(project, store, use_git=False)
+            snapshot = store.snapshot()
+            resolved = {
+                (e.src_id, e.dst_id)
+                for e in snapshot.edges
+                if e.kind.value != "contains" and e.dst_id.endswith("client")
+            }
+            naive = name_matched(snapshot, store)
+        matched = {
+            (e.src_id, e.dst_id)
+            for e in naive.edges
+            if e.kind.value != "contains" and e.dst_id.endswith("client")
+        }
+        # Resolution knows `$a` is an A; matching by name cannot.
+        assert ("use.php#go", "a.php#A.client") in resolved
+        assert ("use.php#go", "a.php#B.client") not in resolved
+        assert ("use.php#go", "a.php#A.client") in matched
+        assert ("use.php#go", "a.php#B.client") in matched
+
+    def test_the_symbols_are_the_same_and_containment_survives(self, tmp_path: Path) -> None:
+        from repoatlas.localize import name_matched
+        from repoatlas.store import IndexStore, update_store
+
+        project = tmp_path / "p"
+        project.mkdir()
+        (project / "a.py").write_text(
+            "class A:\n    def run(self):\n        return helper()\n\n\ndef helper():\n    pass\n",
+            encoding="utf-8",
+        )
+        with IndexStore(tmp_path / "i.db") as store:
+            update_store(project, store, use_git=False)
+            snapshot = store.snapshot()
+            naive = name_matched(snapshot, store)
+        assert set(naive.symbols) == set(snapshot.symbols)
+        assert any(e.kind.value == "contains" for e in naive.edges)
+        assert all(
+            e.tier.label == "fuzzy" for e in naive.edges if e.kind.value != "contains"
+        )
+
+    def test_every_case_carries_the_name_matched_arm(self, repo: Path, work: Path) -> None:
+        cases = [case for _c, case in walk(repo, work=work, commits=10) if case.symbols]
+        assert cases
+        for case in cases:
+            assert 0.0 <= case.symbol_recall_names <= 1.0
+        result = run_localize(repo, work=work, commits=10)
+        assert "names" in result.as_text()
+        assert "symbol_recall_names" in result.as_dict()
