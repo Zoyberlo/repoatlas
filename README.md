@@ -431,12 +431,27 @@ proxy for a task, written afterwards by the person who did the work.
 
 A ranking has to beat not ranking at all, and this project once lost to
 a baseline that naive: file recall rewarded a map of bare filenames. So
-`localize` scores a third map beside the plain and the steered one: the
-skeleton of the whole repository, files in path order, cut at the same
-budget, which is what `repomix --compress` hands a model. On the same
-application it finds 0.028 of the changed symbols against 0.221 plain
-and 0.309 steered. The ranking is worth eight times the prefix; the
-words of the task, eleven.
+`localize` scores two baselines beside the plain and the steered map, at
+the same budget: the skeleton of the whole repository in path order,
+which is what `repomix --compress` hands a model, and grep for the task's
+own words, busiest file first, which is what an agent with no index does
+first. Every arm is scored the same way, a line crediting the innermost
+symbol around it, so a grep hit inside a method counts as finding it.
+
+| map, 281 commits, 2,000 tokens | symbol recall | file recall |
+| --- | ---: | ---: |
+| skeleton prefix (Repomix-shaped) | 0.028 | 0.032 |
+| grep for the task's words | 0.111 | 0.222 |
+| ranked, plain | 0.221 | 0.554 |
+| ranked, steered by the same words | 0.309 | 0.579 |
+
+The steered map finds nearly three times what grep finds for the same
+words in the same tokens, and the unsteered map twice. What that is
+worth to an agent that can grep as much as it likes is a different
+question, and `repoatlas agentbench` is built to ask it: the same tasks
+through Claude Code headless with and without the index, scored the same
+way, with tokens, turns and cost beside the recall. It waits on a
+logged-in Claude Code to run.
 
 ## Serving it to an agent
 

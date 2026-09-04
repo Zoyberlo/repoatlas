@@ -142,6 +142,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     search.add_argument("--format", choices=("text", "json"), default="text")
 
+    agentbench = subcommands.add_parser(
+        "agentbench",
+        help="tier 4: the same tasks through Claude Code with and without the index",
+    )
+    agentbench.add_argument("root", type=Path, help="a git repository with history")
+    agentbench.add_argument("--work", type=Path, help="scratch clone; a temp dir by default")
+    agentbench.add_argument("--commits", type=int, default=20, help="recent commits to pose")
+    agentbench.add_argument(
+        "--arms", default="grep,repoatlas", help="comma-separated: grep, repoatlas"
+    )
+    agentbench.add_argument("--repeats", type=int, default=1, help="runs per task and arm")
+    agentbench.add_argument("--claude", default="claude", help="the Claude Code executable")
+    agentbench.add_argument("--model", help="model for the agent; the CLI default otherwise")
+    agentbench.add_argument("--max-turns", type=int, default=30)
+    agentbench.add_argument("--max-files", type=int, default=8)
+    agentbench.add_argument("--timeout", type=int, default=900, help="seconds per run")
+    agentbench.add_argument("--out", type=Path, help="write the JSON result here")
+    agentbench.add_argument(
+        "--with-runs", action="store_true", help="include every run in the JSON"
+    )
+    agentbench.add_argument("--format", choices=("text", "json"), default="text")
+
     tokens = subcommands.add_parser(
         "tokens", help="where an index's tokens go: the skeleton's cost by directory"
     )
@@ -487,6 +509,51 @@ def _error_rate(result: object) -> float:
     files = sum(item.files for item in stats)
     failed = sum(item.files_with_errors for item in stats)
     return failed / files if files else 0.0
+
+
+def _cmd_agentbench(args: argparse.Namespace) -> int:
+    """Pose recent commits to Claude Code with and without the index, and score both."""
+    import tempfile
+
+    from .agentbench import AgentRun, iter_arms, run_agentbench
+    from .localize import HistoryError
+
+    root: Path = args.root.resolve()
+    if not (root / ".git").exists():
+        raise SystemExit(f"repoatlas: not a git repository: {root}")
+    work = args.work or Path(tempfile.gettempdir()) / f"repoatlas-agentbench-{root.name}"
+
+    def progress(run: AgentRun) -> None:
+        state = f"recall {run.symbol_recall:.2f}, {run.tokens} tokens" if run.ok else run.reason
+        print(f"{run.sha} {run.arm:>9} #{run.repeat}: {state}", file=sys.stderr)
+
+    try:
+        result = run_agentbench(
+            root,
+            work=work,
+            commits=args.commits,
+            arms=tuple(iter_arms(args.arms)),
+            repeats=max(1, args.repeats),
+            claude=args.claude,
+            model=args.model,
+            max_turns=args.max_turns,
+            max_files=args.max_files,
+            timeout=args.timeout,
+            progress=progress,
+        )
+    except HistoryError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+    if args.format == "json" or args.out:
+        payload = json.dumps(result.as_dict(include_runs=args.with_runs), indent=2) + "\n"
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(payload, encoding="utf-8")
+            print(f"wrote {args.out}", file=sys.stderr)
+        else:
+            print(payload, end="")
+    if args.format == "text":
+        print(result.as_text(), end="")
+    return _EXIT_OK
 
 
 def _cmd_tokens(args: argparse.Namespace) -> int:
@@ -874,6 +941,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "search": _cmd_search,
         "map": _cmd_map,
         "tokens": _cmd_tokens,
+        "agentbench": _cmd_agentbench,
         "calibrate": _cmd_calibrate,
         "bench": _cmd_bench,
         "localize": _cmd_localize,

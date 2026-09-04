@@ -156,6 +156,7 @@ skeleton in path order, cut at the same 2,000 tokens, which is what
 | map, 281 commits | symbol recall | file recall |
 | --- | ---: | ---: |
 | skeleton prefix (Repomix-shaped) | 0.028 | 0.032 |
+| grep for the subject's words, busiest file first | 0.111 | 0.222 |
 | ranked, plain | 0.221 | 0.554 |
 | ranked, steered by the subject's words | 0.309 | 0.579 |
 
@@ -164,3 +165,14 @@ repository are `backend/app/Console` commands, and stops. PageRank is
 worth eight times that; the words of the task, eleven. The baseline is
 built with this index's own extractor rather than by running Repomix,
 so it measures the ordering and the budget, not two tokenisers.
+
+The grep arm, added the same day, is the fairer opponent: the same words
+the steered map is given, case-insensitive substring hits over the
+indexed files, files ordered by how many hits they hold, cut at the same
+two thousand tokens. Scoring was changed for every arm at the same time,
+so that a line credits the innermost symbol around it rather than only a
+declaration line, since a grep hit lands in a body; the map arms did not
+move (0.221 / 0.309 before and after). Grep finds a third of what the
+steered map finds and half of what the unsteered one does, for the same
+tokens. A grep the agent can repeat and widen is a different thing, and
+`repoatlas agentbench` (tier 4) exists to measure that one.

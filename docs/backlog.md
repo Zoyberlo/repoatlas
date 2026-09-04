@@ -448,6 +448,17 @@ steered, in `docs/benchmarks/weights.md`. Integrating Repomix itself
 was not worth it: a different data model, a Node dependency, and what it
 does this index already does for its own case.
 
+*Same evening:* the question "does this beat grep for an agent" got its
+two answers-in-waiting. Cheap one, done: a grep arm in `localize`, the
+same words and budget, busiest file first, 0.111 symbol recall against
+0.309 steered and 0.221 plain (scoring by innermost symbol, all arms).
+Decisive one, built and not run: `repoatlas agentbench`, Claude Code
+headless with and without the MCP server on the same tasks, scored the
+same way, with tokens, cost, turns and a paired bootstrap delta. It
+needs a logged-in Claude Code executable; the desktop app's copy in WSL
+(`~/.claude/remote/ccd-cli/<version>`) runs headless but answers "Not
+logged in".
+
 | # | Item | Why first | Size |
 | ---: | --- | --- | --- |
 | 1 | Calibrate tokens per model, thread the estimator through the tools (1.1) | The budget is wrong by a third | half a day |

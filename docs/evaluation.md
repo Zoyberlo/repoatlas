@@ -400,6 +400,29 @@ line-level recall and context efficiency under a line budget.
 
 Scope: does any of this help a real agent?
 
+*Built 2026-09-05 as `repoatlas agentbench`.* It poses the same commits
+`localize` uses as tasks ("what would have to change for: <subject>",
+name the locations, do not edit) to Claude Code headless, once with the
+index served over MCP and once with grep, glob and read only, and scores
+each answer the way a map is scored: a `path:line` credits the innermost
+symbol around it, against the symbols the commit went on to change. Per
+arm it reports symbol recall, file recall and precision, tokens, cost,
+turns, wall clock and how often the MCP tools were called; between two
+arms, the paired per-task delta with a bootstrap interval. Runs where the
+server did not attach, timed out or failed are listed as excluded, not
+scored as losses.
+
+```bash
+repoatlas agentbench <repo> --commits 20 --arms grep,repoatlas --repeats 3   --claude claude --out agentbench.json
+```
+
+The scratch clone is checked out at each task's parent commit and indexed
+there, so the server describes exactly the tree the agent works in. What
+it needs and this project cannot supply is a logged-in Claude Code: the
+harness shells out to the executable given by `--claude`, and the
+measurement costs one short agent session per task and arm. It has not
+been run yet; the numbers below this line are the plan.
+
 Claude Code headless supplies what is needed:
 
 ```bash

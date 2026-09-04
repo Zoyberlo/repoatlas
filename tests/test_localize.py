@@ -289,3 +289,52 @@ class TestSkeletonBaseline:
         result = run_localize(repo, work=work, commits=10)
         assert "skeleton" in result.as_text()
         assert "symbol_recall_skeleton" in result.as_dict()
+
+
+class TestGrepBaseline:
+    def test_grep_lists_the_busiest_file_first_and_scores_by_the_symbol_around_the_hit(
+        self, tmp_path: Path
+    ) -> None:
+        from repoatlas.localize import _Locator, grep_prefix
+        from repoatlas.model import IndexSnapshot, SourceRange, Symbol, SymbolKind
+
+        (tmp_path / "a.py").write_text(
+            "def alpha():\n    return invoice()\n\n\ndef beta():\n    pass\n", encoding="utf-8"
+        )
+        (tmp_path / "b.py").write_text(
+            "def gamma():\n    x = invoice\n    y = invoice\n    return x\n", encoding="utf-8"
+        )
+        snapshot = IndexSnapshot()
+        for path, name, start, end in (
+            ("a.py", "alpha", 0, 1),
+            ("a.py", "beta", 4, 5),
+            ("b.py", "gamma", 0, 3),
+        ):
+            snapshot.add_symbol(
+                Symbol(
+                    id=f"{path}#{name}",
+                    name=name,
+                    kind=SymbolKind.FUNCTION,
+                    path=path,
+                    name_range=SourceRange.of(start, 4, start, 4 + len(name)),
+                    full_range=SourceRange.of(start, 0, end, 12),
+                )
+            )
+        text = grep_prefix(tmp_path, snapshot, ("invoice",), budget=100000)
+        assert text.index("b.py:") < text.index("a.py:")
+        assert "    2  return invoice()" in text
+        from repoatlas.localize import _entries
+
+        points, files = _entries(text)
+        assert files == {"a.py", "b.py"}
+        # A hit inside a body credits the function around it.
+        assert _Locator(snapshot).credit(points) == {"a.py#alpha", "b.py#gamma"}
+
+    def test_every_case_carries_the_grep_baseline(self, repo: Path, work: Path) -> None:
+        cases = [case for _c, case in walk(repo, work=work, commits=10) if case.symbols]
+        assert cases
+        for case in cases:
+            assert 0.0 <= case.symbol_recall_grep <= 1.0
+        result = run_localize(repo, work=work, commits=10)
+        assert "grep" in result.as_text()
+        assert "symbol_recall_grep" in result.as_dict()

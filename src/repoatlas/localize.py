@@ -128,9 +128,13 @@ class CommitCase:
     symbol_recall_skeleton: float = 0.0
     """The baseline: the whole repository's skeleton, files in path order, cut at the budget."""
 
+    symbol_recall_grep: float = 0.0
+    """What grep gives for the same words and the same budget: hits, busiest file first."""
+
     file_recall_plain: float = 0.0
     file_recall_steered: float = 0.0
     file_recall_skeleton: float = 0.0
+    file_recall_grep: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -141,9 +145,11 @@ class CommitCase:
             "symbol_recall_plain": round(self.symbol_recall_plain, 3),
             "symbol_recall_steered": round(self.symbol_recall_steered, 3),
             "symbol_recall_skeleton": round(self.symbol_recall_skeleton, 3),
+            "symbol_recall_grep": round(self.symbol_recall_grep, 3),
             "file_recall_plain": round(self.file_recall_plain, 3),
             "file_recall_steered": round(self.file_recall_steered, 3),
             "file_recall_skeleton": round(self.file_recall_skeleton, 3),
+            "file_recall_grep": round(self.file_recall_grep, 3),
         }
 
 
@@ -169,9 +175,11 @@ class LocalizeResult:
             "symbol_recall_plain": round(self._mean("symbol_recall_plain"), 4),
             "symbol_recall_steered": round(self._mean("symbol_recall_steered"), 4),
             "symbol_recall_skeleton": round(self._mean("symbol_recall_skeleton"), 4),
+            "symbol_recall_grep": round(self._mean("symbol_recall_grep"), 4),
             "file_recall_plain": round(self._mean("file_recall_plain"), 4),
             "file_recall_steered": round(self._mean("file_recall_steered"), 4),
             "file_recall_skeleton": round(self._mean("file_recall_skeleton"), 4),
+            "file_recall_grep": round(self._mean("file_recall_grep"), 4),
         }
         if include_cases:
             # Subjects and paths are the repository's own content, so they
@@ -186,13 +194,15 @@ class LocalizeResult:
                 f"commits:  {len(self.cases)} scored of {self.walked} walked "
                 f"(budget {self.budget})",
                 "",
-                f"{'':<22}{'plain':>8}{'steered':>10}{'skeleton':>10}",
+                f"{'':<22}{'plain':>8}{'steered':>10}{'skeleton':>10}{'grep':>8}",
                 f"{'symbol recall':<22}{self._mean('symbol_recall_plain'):>8.3f}"
                 f"{self._mean('symbol_recall_steered'):>10.3f}"
-                f"{self._mean('symbol_recall_skeleton'):>10.3f}",
+                f"{self._mean('symbol_recall_skeleton'):>10.3f}"
+                f"{self._mean('symbol_recall_grep'):>8.3f}",
                 f"{'file recall':<22}{self._mean('file_recall_plain'):>8.3f}"
                 f"{self._mean('file_recall_steered'):>10.3f}"
-                f"{self._mean('file_recall_skeleton'):>10.3f}",
+                f"{self._mean('file_recall_skeleton'):>10.3f}"
+                f"{self._mean('file_recall_grep'):>8.3f}",
             )
         ) + "\n"
 
@@ -388,19 +398,9 @@ def walk(
                     if word.lower() in by_name or word.lower() in by_stem
                 )
 
-                wanted_points = {
-                    (
-                        snapshot.symbols[item].path,
-                        snapshot.symbols[item].name_range.start.line + 1,
-                    )
-                    for item in wanted
-                    if item in snapshot.symbols
-                }
-                wanted_files = {
-                    snapshot.symbols[item].path
-                    for item in wanted
-                    if item in snapshot.symbols
-                }
+                wanted_ids = {item for item in wanted if item in snapshot.symbols}
+                wanted_files = {snapshot.symbols[item].path for item in wanted_ids}
+                locate = _Locator(snapshot)
 
                 for label, focus_paths, focus_symbols in (
                     ("plain", set(), set()),
@@ -416,23 +416,104 @@ def walk(
                     setattr(
                         case,
                         f"symbol_recall_{label}",
-                        len(wanted_points & points) / len(wanted_points),
+                        len(locate.credit(points) & wanted_ids) / len(wanted_ids),
                     )
                     setattr(
                         case,
                         f"file_recall_{label}",
                         len(wanted_files & files) / len(wanted_files),
                     )
-                # The baseline any ranking has to beat: the skeleton of the
+                # The baselines any ranking has to beat. The skeleton of the
                 # whole repository, files in path order, cut at the same
-                # budget. It is what `repomix --compress` hands a model,
-                # and this project once lost to a baseline that naive.
-                points, files = _entries(skeleton_prefix(snapshot, map_options.budget))
-                case.symbol_recall_skeleton = len(wanted_points & points) / len(wanted_points)
-                case.file_recall_skeleton = len(wanted_files & files) / len(wanted_files)
+                # budget, is what `repomix --compress` hands a model; grep
+                # for the same words, busiest file first and cut at the
+                # same budget, is what an agent with no index does first.
+                # This project once lost to a baseline that naive.
+                for label, text in (
+                    ("skeleton", skeleton_prefix(snapshot, map_options.budget)),
+                    ("grep", grep_prefix(root, snapshot, commit.mentions, map_options.budget)),
+                ):
+                    points, files = _entries(text)
+                    setattr(
+                        case,
+                        f"symbol_recall_{label}",
+                        len(locate.credit(points) & wanted_ids) / len(wanted_ids),
+                    )
+                    setattr(
+                        case,
+                        f"file_recall_{label}",
+                        len(wanted_files & files) / len(wanted_files),
+                    )
                 yield commit, case
     finally:
         _git(root, "checkout", "--quiet", "--detach", head, check=False)
+
+
+class _Locator:
+    """Which symbol a `path:line` point lands in: the innermost one around it.
+
+    A map names a symbol by its declaration line; grep lands anywhere in
+    its body. Both have found the symbol, and an agent shown either would
+    open the same function, so both are scored the same way.
+    """
+
+    __slots__ = ("_spans",)
+
+    def __init__(self, snapshot: IndexSnapshot) -> None:
+        self._spans: dict[str, list[tuple[int, int, str]]] = defaultdict(list)
+        for symbol in snapshot.symbols.values():
+            if symbol.synthetic or symbol.local:
+                continue
+            span = symbol.full_range or symbol.name_range
+            self._spans[symbol.path].append((span.start.line + 1, span.end.line + 1, symbol.id))
+
+    def credit(self, points: Iterable[tuple[str, int]]) -> set[str]:
+        found: set[str] = set()
+        for path, line in points:
+            best: tuple[int, str] | None = None
+            for start, end, symbol_id in self._spans.get(path, ()):
+                if start <= line <= end and (best is None or end - start < best[0]):
+                    best = (end - start, symbol_id)
+            if best is not None:
+                found.add(best[1])
+        return found
+
+
+def grep_prefix(root: Path, snapshot: IndexSnapshot, words: Sequence[str], budget: int) -> str:
+    """What grep shows for the task's words, busiest file first, cut at the budget.
+
+    Case-insensitive substring hits over the indexed files, rendered in
+    the map's own format so the same scorer reads them. Files come in
+    order of how many hits they hold, which is where an agent reading
+    grep output looks first; within a file, in line order.
+    """
+    needles = [word.lower() for word in words if word]
+    if not needles:
+        return ""
+    hits: dict[str, list[tuple[int, str]]] = {}
+    for path in sorted({symbol.path for symbol in snapshot.symbols.values()}):
+        try:
+            text = (root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        found = [
+            (number, line.strip()[:120])
+            for number, line in enumerate(text.splitlines(), start=1)
+            if any(needle in line.lower() for needle in needles)
+        ]
+        if found:
+            hits[path] = found
+    lines: list[str] = []
+    spent = 0
+    for path in sorted(hits, key=lambda item: (-len(hits[item]), item)):
+        block = [f"{path}:", *(f"{number:>5}  {text}" for number, text in hits[path]), ""]
+        for line in block:
+            cost = estimate_tokens(line + "\n")
+            if spent + cost > budget:
+                return "\n".join(lines) + "\n"
+            spent += cost
+            lines.append(line)
+    return "\n".join(lines) + "\n"
 
 
 def skeleton_prefix(snapshot: IndexSnapshot, budget: int) -> str:
