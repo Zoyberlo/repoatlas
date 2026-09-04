@@ -164,6 +164,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agentbench.add_argument("--format", choices=("text", "json"), default="text")
 
+    sitebench = subcommands.add_parser(
+        "sitebench",
+        help="tier 4, the other question: who uses this symbol, scored against a SCIP oracle",
+    )
+    sitebench.add_argument("root", type=Path, help="a working tree the oracle describes")
+    sitebench.add_argument("oracle", type=Path, help="a .scip index of that tree")
+    sitebench.add_argument("--store", type=Path, help="index to serve; built beside the oracle")
+    sitebench.add_argument("--arms", default="grep,repoatlas")
+    sitebench.add_argument("--limit", type=int, default=20, help="symbols to ask about")
+    sitebench.add_argument("--repeats", type=int, default=1)
+    sitebench.add_argument("--claude", default="claude")
+    sitebench.add_argument("--model")
+    sitebench.add_argument("--max-turns", type=int, default=30)
+    sitebench.add_argument("--timeout", type=int, default=900)
+    sitebench.add_argument("--out", type=Path)
+    sitebench.add_argument("--with-runs", action="store_true")
+    sitebench.add_argument("--format", choices=("text", "json"), default="text")
+
     tokens = subcommands.add_parser(
         "tokens", help="where an index's tokens go: the skeleton's cost by directory"
     )
@@ -538,6 +556,55 @@ def _cmd_agentbench(args: argparse.Namespace) -> int:
             model=args.model,
             max_turns=args.max_turns,
             max_files=args.max_files,
+            timeout=args.timeout,
+            progress=progress,
+        )
+    except HistoryError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+    if args.format == "json" or args.out:
+        payload = json.dumps(result.as_dict(include_runs=args.with_runs), indent=2) + "\n"
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(payload, encoding="utf-8")
+            print(f"wrote {args.out}", file=sys.stderr)
+        else:
+            print(payload, end="")
+    if args.format == "text":
+        print(result.as_text(), end="")
+    return _EXIT_OK
+
+
+def _cmd_sitebench(args: argparse.Namespace) -> int:
+    """Ask both arms where a symbol is used, and score against a compiler."""
+    from .agentbench import iter_arms
+    from .callsites import SiteRun, run_sitebench
+    from .localize import HistoryError
+    from .store import IndexStore, update_store
+
+    root: Path = args.root.resolve()
+    if not root.is_dir():
+        raise SystemExit(f"repoatlas: not a directory: {root}")
+    if not args.oracle.exists():
+        raise SystemExit(f"repoatlas: no such oracle: {args.oracle}")
+    store_path = args.store or args.oracle.with_suffix(".sitebench.db")
+    with IndexStore(store_path) as store:
+        update_store(root, store, use_git=False)
+
+    def progress(run: SiteRun) -> None:
+        state = f"F1 {run.f1:.2f} (P {run.precision:.2f} R {run.recall:.2f})" if run.ok else run.reason
+        print(f"{run.name[:24]:<24} {run.arm:>9}: {state}", file=sys.stderr)
+
+    try:
+        result = run_sitebench(
+            root,
+            args.oracle,
+            store=store_path,
+            arms=tuple(iter_arms(args.arms)),
+            limit=args.limit,
+            repeats=max(1, args.repeats),
+            claude=args.claude,
+            model=args.model,
+            max_turns=args.max_turns,
             timeout=args.timeout,
             progress=progress,
         )
@@ -942,6 +1009,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "map": _cmd_map,
         "tokens": _cmd_tokens,
         "agentbench": _cmd_agentbench,
+        "sitebench": _cmd_sitebench,
         "calibrate": _cmd_calibrate,
         "bench": _cmd_bench,
         "localize": _cmd_localize,

@@ -157,3 +157,14 @@ class TestResult:
         trace = parse_stream([_event(type="result", subtype="success", result="[]",
                                      permission_denials=[{"tool_name": "Bash"}, {"tool_name": "Bash"}])])
         assert trace.denials == 2
+
+
+class TestFatalReasons:
+    def test_a_spend_limit_stops_the_walk_and_a_timeout_does_not(self) -> None:
+        from repoatlas.agentbench import _is_fatal
+
+        assert _is_fatal("You've hit your monthly spend limit · raise it at claude.ai")
+        assert _is_fatal("Not logged in · Please run /login")
+        assert not _is_fatal("timeout")
+        assert not _is_fatal("error_max_turns")
+        assert not _is_fatal("repoatlas did not attach")

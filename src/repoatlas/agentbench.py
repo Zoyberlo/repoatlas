@@ -47,10 +47,12 @@ from .store import IndexStore, update_store
 
 __all__ = [
     "ARMS",
+    "FATAL_REASONS",
     "AgentBenchResult",
     "AgentRun",
     "Arm",
     "RunTrace",
+    "_run_command",
     "claude_command",
     "mcp_config",
     "parse_locations",
@@ -114,6 +116,18 @@ ARMS: dict[str, Arm] = {
         ),
     ),
 }
+
+# Reasons no further run can succeed either. A spend limit does not
+# recover in the minutes a walk takes, and sixty tasks of it produce sixty
+# identical exclusions and an hour of indexing for nothing, which is what
+# the first attempt at a sixty-commit run did.
+FATAL_REASONS = ("spend limit", "usage limit", "not logged in", "rate limit")
+
+
+def _is_fatal(reason: str) -> bool:
+    lowered = reason.lower()
+    return any(marker in lowered for marker in FATAL_REASONS)
+
 
 _ANSWER_RULES = (
     "Do not edit anything. Reply with only a JSON array of strings, most "
@@ -397,6 +411,8 @@ class AgentBenchResult:
     runs: list[AgentRun] = field(default_factory=list)
     walked: int = 0
     tasks: int = 0
+    stopped: str = ""
+    """Why the walk ended early, when it did."""
 
     def scored(self, arm: str) -> list[AgentRun]:
         return [run for run in self.runs if run.arm == arm and run.ok]
@@ -445,6 +461,7 @@ class AgentBenchResult:
             "arms": list(self.arms),
             "walked": self.walked,
             "tasks": self.tasks,
+            "stopped": self.stopped,
             "excluded": len(self.excluded()),
             "per_arm": {
                 arm: {
@@ -486,6 +503,7 @@ class AgentBenchResult:
         lines = [
             f"tasks:    {self.tasks} scored of {self.walked} walked; "
             f"{len(self.excluded())} run(s) excluded",
+            *([f"stopped:  {self.stopped}"] if self.stopped else []),
             "",
             f"{'':<16}" + "".join(f"{arm:>12}" for arm in self.arms),
         ]
@@ -605,9 +623,66 @@ def run_agentbench(
                         result.runs.append(run)
                         if progress is not None:
                             progress(run)
+                        if not run.ok and _is_fatal(run.reason):
+                            # Nothing after this can succeed; stop with
+                            # what was scored rather than walk on.
+                            result.stopped = run.reason
+                            return result
     finally:
         _git(root, "checkout", "--quiet", "--detach", head, check=False)
     return result
+
+
+def _run_command(
+    root: Path,
+    prompt: str,
+    arm: Arm,
+    *,
+    claude: str,
+    model: str | None,
+    max_turns: int,
+    timeout: int,
+    config_path: Path | None,
+) -> RunTrace | str:
+    """One headless run in ``root``: its trace, or why there is none.
+
+    Shared by both task classes, so that "where would this change" and
+    "who uses this" are asked of the same agent through the same command
+    and differ only in the question.
+    """
+    command = claude_command(
+        claude,
+        prompt,
+        arm,
+        mcp_config_path=config_path if arm.mcp else None,
+        model=model,
+        max_turns=max_turns,
+    )
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    except OSError as exc:
+        return f"could not start: {exc}"
+    trace = parse_stream(completed.stdout.splitlines())
+    if not trace.duration_ms:
+        trace.duration_ms = int((time.monotonic() - started) * 1000)
+    if arm.mcp and trace.mcp_attached is False:
+        return "repoatlas did not attach"
+    if not trace.ok:
+        reason = trace.reason or f"exit {completed.returncode}"
+        tail = completed.stderr.strip().splitlines()[-1:] if completed.stderr else []
+        return " ".join([reason, *tail])[:200]
+    return trace
 
 
 def _run_once(
@@ -625,41 +700,19 @@ def _run_once(
     wanted_files: set[str],
     locator: _Locator,
 ) -> AgentRun:
-    command = claude_command(
-        claude,
+    outcome = _run_command(
+        root,
         task_prompt(commit.subject, arm),
         arm,
-        mcp_config_path=config_path,
+        claude=claude,
         model=model,
         max_turns=max_turns,
+        timeout=timeout,
+        config_path=config_path,
     )
-    started = time.monotonic()
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=root,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return AgentRun(commit.sha[:12], arm.name, repeat, ok=False, reason="timeout")
-    except OSError as exc:
-        return AgentRun(commit.sha[:12], arm.name, repeat, ok=False, reason=f"could not start: {exc}")
-    trace = parse_stream(completed.stdout.splitlines())
-    elapsed_ms = int((time.monotonic() - started) * 1000)
-    if arm.mcp and trace.mcp_attached is False:
-        return AgentRun(
-            commit.sha[:12], arm.name, repeat, ok=False, reason="repoatlas did not attach"
-        )
-    if not trace.ok:
-        reason = trace.reason or f"exit {completed.returncode}"
-        tail = completed.stderr.strip().splitlines()[-1:] if completed.stderr else []
-        return AgentRun(
-            commit.sha[:12], arm.name, repeat, ok=False, reason=" ".join([reason, *tail])[:200]
-        )
+    if isinstance(outcome, str):
+        return AgentRun(commit.sha[:12], arm.name, repeat, ok=False, reason=outcome)
+    trace = outcome
     locations = parse_locations(trace.result_text)
     symbol_recall, file_recall, precision = score_locations(
         locations, wanted_ids, wanted_files, locator
@@ -683,7 +736,7 @@ def _run_once(
         tokens=trace.tokens,
         cost_usd=trace.cost_usd,
         turns=trace.turns,
-        duration_ms=trace.duration_ms or elapsed_ms,
+        duration_ms=trace.duration_ms,
         mcp_calls=trace.mcp_calls,
         tool_calls=dict(trace.tool_calls),
     )
