@@ -128,8 +128,40 @@ task the index earns nothing, and that agrees with everything published
 about it.
 
 `repoatlas sitebench` asks who uses a symbol, scored against the SCIP
-oracle rather than against this index. That is where the ceiling above
-says the difference lives, and it has not been run.
+oracle rather than against this index. That is where the ceiling says
+the difference lives. It does not.
+
+| fourteen symbols, one repeat | grep | with the index |
+| --- | ---: | ---: |
+| precision | 1.000 | 1.000 |
+| recall | 1.000 | 1.000 |
+| F1 | **1.000** | **1.000** |
+| turns | 6.3 | 20.4 |
+| tokens | 91,947 | 328,278 |
+| cost | $0.19 | $0.40 |
+
+Fourteen out of fourteen, both arms, every symbol. The tool is right
+where a name search is four-fifths right, and it does not matter: the
+agent with grep reads the eight or twenty-two lines the search returned,
+throws away the namesakes itself, and arrives at the same answer in a
+third of the turns.
+
+Two things are worth separating in that. The first is the measurement's
+own limit: these fourteen are the symbols `scip-php` can ground-truth,
+and the hardest of them returns twenty-two grep lines. Reading twenty-two
+lines is nothing. The symbols where a name search really fails, `client`
+at 1,121 lines, are the ones with no compiler-backed truth, so the
+experiment that would show a difference cannot be run on this stack.
+
+The second is that the cost is ours. The index arm spent 20.4 turns
+because it was told to: the prompt hint that suits localisation, "start
+with repo_map, then search_symbols, then find_references", is exactly
+wrong for a question one `find_references` answers, and the agent
+followed it, calling `get_symbol` 4.6 times and `search_symbols` 3.1
+times per run before getting there. It also has to hunt for a symbol id,
+because no tool output prints one. Neither of those would change the
+F1 column, both would change the cost column, and both are the index's
+fault rather than the agent's.
 
 ## Against the closest relative
 
@@ -178,15 +210,30 @@ truth it is exactly right where a name search is four-fifths right; and
 its resolved graph draws a better map than the name-matched graph that
 is the state of the art in an open-source tool, by about a sixth.
 
-Measured, and negative: an agent asked where a change goes does no
-better with the index than with grep, over twenty-four paired tasks, and
-takes four more turns and a fifth more tokens to arrive at the same
-answer. It used the index in every run; it just did not need it.
+Measured, and negative: on both questions that can be posed to an agent
+with ground truth, it does no better with the index than with grep.
+Where a change goes: 0.349 against 0.317 over twenty-four paired tasks,
+four more turns, a fifth more tokens. Who uses a symbol: identical and
+perfect for both, in three times the turns. In every one of those
+thirty-eight runs the agent did call the index. It did not need it.
 
 Not measured, and not measurable on this stack: whether the index helps
-on the cases where grep is worst, because those are the cases where the
-language declares nothing and no compiler-backed oracle exists to judge
-either tool. That is the honest edge of what can be known here.
+on the cases where grep is worst. Those are the cases where the language
+declares nothing, which is exactly why no compiler-backed oracle can
+judge them either, so the experiment does not exist. That is the honest
+edge of what can be known here, and it is where the whole remaining case
+for the index sits.
+
+What follows from all of it: the index is not what makes an agent find
+code on this stack, because reading is cheap and a capable agent filters
+a name search by itself. What it is good for is the answer given
+directly, to a person or a script, without an agent in the loop: the
+right call sites in 170 tokens instead of 331 noisy ones, a file's
+definitions for a fifteenth of reading it, a map that names three times
+as many files as the closest published alternative and includes the
+half of this repository written in Vue. Those are all measured. None of
+them needs an agent to be worth something, and the agent measurements
+say plainly that the agent is not where the worth is.
 
 [arXiv 2606.22417]: https://arxiv.org/abs/2606.22417
 [arXiv 2608.13568]: https://arxiv.org/abs/2608.13568
