@@ -242,6 +242,11 @@ before and after.
 
 ### 3.2 Let the agent say what it is looking for
 
+*Measured 2026-09-04 and corrected.* Whole-name matching scored 0.356
+against 0.370 for no steering on a real Laravel and Quasar repository:
+worse than nothing. Matching a word against the components of a name
+scores 0.477. See `docs/benchmarks/steering.md` for the five variants.
+
 *Done 2026-09-04.* `repo_map` takes `mention`: each word is matched to
 symbols by name and to files by stem, case-insensitively, and the walk
 restarts there with the focus weight. Words that match nothing are named

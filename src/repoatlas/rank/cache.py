@@ -16,6 +16,7 @@ unfocused one pays for nothing but the render.
 
 from __future__ import annotations
 
+import re
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -27,7 +28,34 @@ from .pagerank import RankedSymbol, RankOptions, SymbolGraph, rank_symbols
 if TYPE_CHECKING:  # pragma: no cover - the store imports this package's tokens
     from ..store.database import IndexStore
 
-__all__ = ["RankCache"]
+__all__ = ["MIN_COMPONENT", "RankCache", "mention_keys"]
+
+MIN_COMPONENT = 4
+"""Shortest word of a name that a mention may match on its own.
+
+Below this a component matches half the names in any project: `id`, `api`
+and `get` say nothing about which files a task touches.
+"""
+
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_SEPARATORS = re.compile(r"[^A-Za-z0-9]+")
+
+
+def mention_keys(name: str) -> set[str]:
+    """Everything a mention may be matched against, for one name.
+
+    The whole name, and the words it is made of. A task says "the client
+    report", and the file that answers it is `ClientsReportExport`; exact
+    matching sent that word to whatever local variable happened to be
+    spelled `client` instead, which measured worse than not steering at
+    all. See docs/benchmarks/steering.md.
+    """
+    keys = {name.lower()}
+    spaced = _CAMEL_BOUNDARY.sub(" ", name)
+    for piece in _SEPARATORS.split(spaced):
+        if len(piece) >= MIN_COMPONENT:
+            keys.add(piece.lower())
+    return keys
 
 
 @dataclass(slots=True)
@@ -39,10 +67,10 @@ class _Loaded:
     graph: SymbolGraph
     global_ranking: list[RankedSymbol] | None = None
     by_name: dict[str, list[str]] = field(default_factory=dict)
-    """Lower-cased symbol name to ids, for turning a mention into seeds."""
+    """Mention key to symbol ids: the whole name and the words in it."""
 
     by_stem: dict[str, list[str]] = field(default_factory=dict)
-    """Lower-cased file stem to paths, so a mention can name a file too."""
+    """Mention key to paths, so a mention can name a file too."""
 
 
 @dataclass(slots=True)
@@ -80,10 +108,12 @@ class RankCache:
             for symbol in snapshot.symbols.values():
                 if symbol.synthetic or symbol.local:
                     continue
-                loaded.by_name.setdefault(symbol.name.lower(), []).append(symbol.id)
+                for key in mention_keys(symbol.name):
+                    loaded.by_name.setdefault(key, []).append(symbol.id)
             for path in {symbol.path for symbol in snapshot.symbols.values()}:
-                stem = path.rsplit("/", 1)[-1].split(".", 1)[0].lower()
-                loaded.by_stem.setdefault(stem, []).append(path)
+                stem = path.rsplit("/", 1)[-1].split(".", 1)[0]
+                for key in mention_keys(stem):
+                    loaded.by_stem.setdefault(key, []).append(path)
             self._loaded = loaded
             self.loads += 1
             return loaded
@@ -97,11 +127,16 @@ class RankCache:
     def seeds_for(self, store: IndexStore, mentions: Iterable[str]) -> tuple[set[str], set[str], set[str]]:
         """Turn words into the symbols and files they name.
 
-        A mention matches a symbol by name, case-insensitively, and a file
-        by its stem, so `InvoiceExporter` seeds the class and `invoice`
-        seeds `invoice.ts`. What matched nothing is returned as well, so
-        the answer can say so instead of quietly ranking the whole
-        repository as if nothing had been asked.
+        A mention matches a symbol whose name it is, or whose name is
+        partly made of it, and a file the same way by stem: `invoice`
+        reaches `InvoiceExporter` and `invoice.ts` alike. Matching only
+        whole names measured *worse* than not steering at all on a real
+        project, because a task's word is usually a part of the name that
+        matters rather than the whole of it.
+
+        What matched nothing is returned as well, so the answer can say so
+        instead of quietly ranking the whole repository as if nothing had
+        been asked.
         """
         loaded = self._current(store)
         symbols: set[str] = set()

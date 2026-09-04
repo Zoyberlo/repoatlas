@@ -315,19 +315,27 @@ checks whether the files the commit touched are on it. This is the
 number every ranking judgement in `pagerank.py` was waiting for, and it
 is specific to whatever repository it is run on.
 
-On this repository's own last 22 qualifying commits at
-2000 tokens ([docs/benchmarks/localize-repoatlas.json](docs/benchmarks/localize-repoatlas.json)):
+It has been run on one: a private Laravel 10 and Quasar application,
+1,568 commits over three years, indexed as 363 files and 4,340 symbols.
+Over its 200 most recent qualifying commits at 2,000 tokens:
 
 | map | recall of touched files | first file listed was touched |
 | --- | ---: | ---: |
-| plain | 0.61 | 0.00 |
-| steered by the message's words | 0.67 | 0.46 |
+| plain | 0.37 | 0.19 |
+| steered by the message's words | 0.48 | 0.14 |
 
-Two caveats, stated: the index is of the current tree, so a file since
-renamed counts as a miss, and a commit message written after the fact
-says more than a task written before it, so these are ceilings. The
-measurement that matters is on a real Laravel or Vue repository with a
-long history, and the tool is ready for one.
+That measurement changed the code. Steering originally matched a word only
+against a *whole* symbol name, and scored 0.36, below not steering at all:
+"clients report fix" found a local variable spelled `client` and dragged
+the map away from `ClientsReportExport`. Matching a word against the
+*parts* of a name lifted recall to 0.48, better on 50 commits and worse on
+12. The cost is stated too: naming the right file first got worse, 0.19 to
+0.14. [docs/benchmarks/steering.md](docs/benchmarks/steering.md) has the
+five variants that were tried and what each scored.
+
+Two caveats: the index is of the current tree, so a file since renamed
+counts as a miss, and a commit message written after the fact says more
+than a task written before it.
 
 ## Serving it to an agent
 

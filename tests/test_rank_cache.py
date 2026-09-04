@@ -150,6 +150,37 @@ class TestMentions:
         assert "src/app.ts#Formatter" in symbols
         assert not unmatched
 
+    def test_a_word_reaches_the_names_it_is_part_of(self) -> None:
+        # The measurement that prompted this: a task says "client report",
+        # and the file that answers it is `ClientsReportExport`. Matching
+        # whole names only sent that word to whatever local variable was
+        # spelled `client`, and scored below not steering at all.
+        from repoatlas.rank.cache import mention_keys
+
+        assert "clientsreportexport" in mention_keys("ClientsReportExport")
+        assert "client" not in mention_keys("ClientsReportExport")
+        assert "clients" in mention_keys("ClientsReportExport")
+        assert "report" in mention_keys("ClientsReportExport")
+
+    def test_snake_and_kebab_names_break_up_too(self) -> None:
+        from repoatlas.rank.cache import mention_keys
+
+        assert mention_keys("send_invoice_job") >= {"send_invoice_job", "invoice", "send"}
+        assert mention_keys("user-card") >= {"user-card", "user", "card"}
+
+    def test_short_words_are_not_components(self) -> None:
+        # `id`, `api` and `get` are in half the names in any project and
+        # say nothing about which files a task touches.
+        from repoatlas.rank.cache import mention_keys
+
+        assert mention_keys("getUserId") == {"getuserid", "user"}
+
+    def test_a_component_match_seeds_the_symbol(self, store: IndexStore) -> None:
+        cache = RankCache()
+        symbols, _paths, unmatched = cache.seeds_for(store, ("greet",))
+        assert not unmatched
+        assert any(sid.endswith("User.greet") for sid in symbols)
+
     def test_a_mention_that_names_nothing_is_reported(self, store: IndexStore) -> None:
         answer = tools.repo_map(store, mention=("Nonesuch", "User"), cache=RankCache())
         assert "mentioned but not found: Nonesuch" in answer
