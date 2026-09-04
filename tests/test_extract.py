@@ -601,3 +601,122 @@ class TestTypesByCall:
             "a.php", b"<?php\nfunction f($m) { return $m instanceof \\App\\Models\\Schedule; }\n"
         )
         assert any(r.kind == "type" and r.name == "Schedule" for r in result.references)
+
+
+class TestSignaturesAndDocumentation:
+    """What a skeleton line says, measured on the user's stack.
+
+    On a real Laravel application every attributed controller action had
+    `#[Route(...)]` for a signature, and every PSR-12 wrapped method had
+    `public function show(` and nothing else.
+    """
+
+    PHP = (
+        b"<?php\nnamespace App;\n\n/** Doc for the class. */\n#[Route('/ads')]\n"
+        b"class AdController extends Controller\n{\n"
+        b"    /**\n     * Decline every ad whose schedules were declined.\n     *\n"
+        b"     * @param int $id the ad\n     */\n"
+        b"    #[Get('/{id}')]\n    public function show(\n        Request $request,\n"
+        b"        int $id,\n        AdService $service,\n    ): JsonResponse {\n"
+        b"        return response()->json([]);\n    }\n\n"
+        b"    private function helper(int $id): void {}\n}\n"
+    )
+
+    def test_a_php_attribute_is_a_prefix_not_the_signature(self) -> None:
+        result = extract("app/AdController.php", self.PHP)
+        by = {s.qualified_name: s for s in result.symbols if not s.synthetic}
+        assert by["AdController"].signature == "#[Route] class AdController extends Controller"
+        assert by["AdController.helper"].signature == "private function helper(int $id): void {}"
+
+    def test_a_wrapped_parameter_list_is_joined_and_cut_at_the_body(self) -> None:
+        result = extract("app/AdController.php", self.PHP)
+        show = next(s for s in result.symbols if s.qualified_name == "AdController.show")
+        assert show.signature == (
+            "#[Get] public function show(Request $request, int $id, AdService $service)"
+            ": JsonResponse {"
+        )
+
+    def test_a_docblock_becomes_documentation(self) -> None:
+        result = extract("app/AdController.php", self.PHP)
+        by = {s.qualified_name: s for s in result.symbols if not s.synthetic}
+        assert by["AdController"].documentation == "Doc for the class."
+        assert by["AdController.show"].documentation == (
+            "Decline every ad whose schedules were declined.\n\n@param int $id the ad"
+        )
+        assert by["AdController.helper"].documentation is None
+
+    TS = (
+        b"/** Doc for the class. */\n@Component({ x: 1 })\nexport class UserStore {\n"
+        b"  /** Doc for the field. */\n  @Prop({ type: String })\n  readonly label!: string;\n\n"
+        b"  /** Load the user from the API. */\n  @Log()\n  async load(\n    id: number,\n"
+        b"    force = false,\n  ): Promise<User> { return fetchUser(id); }\n\n"
+        b"  plain(): void {}\n}\n\n"
+        b"/** Make one. */\nexport const make = (\n  a: number,\n  b: number,\n): UserStore => {\n"
+        b"  return new UserStore();\n};\n"
+    )
+
+    def test_typescript_decorators_prefix_every_kind_of_member(self) -> None:
+        result = extract("src/store.ts", self.TS)
+        by = {s.qualified_name: s for s in result.symbols if not s.synthetic}
+        assert by["UserStore"].signature == "@Component export class UserStore {"
+        assert by["UserStore.label"].signature == "@Prop readonly label!: string;"
+        assert by["UserStore.load"].signature == (
+            "@Log async load(id: number, force = false): Promise<User> {"
+        )
+        assert by["UserStore.plain"].signature == "plain(): void {}"
+        assert by["make"].signature == "export const make = (a: number, b: number): UserStore => {"
+
+    def test_typescript_doc_comments_survive_decorators_and_export(self) -> None:
+        result = extract("src/store.ts", self.TS)
+        by = {s.qualified_name: s for s in result.symbols if not s.synthetic}
+        assert by["UserStore"].documentation == "Doc for the class."
+        assert by["UserStore.label"].documentation == "Doc for the field."
+        assert by["UserStore.load"].documentation == "Load the user from the API."
+        assert by["make"].documentation == "Make one."
+        assert by["UserStore.plain"].documentation is None
+
+    def test_a_decorator_is_inside_the_symbol_range(self) -> None:
+        # A body read from the range must include the decorator, or it is
+        # missing the line that says what the member is.
+        result = extract("src/store.ts", self.TS)
+        by = {s.qualified_name: s for s in result.symbols if not s.synthetic}
+        assert by["UserStore"].full_range.start.line == 1
+        assert by["UserStore.load"].full_range.start.line == 8
+        assert by["UserStore.label"].full_range.start.line == 4
+
+    PY = (
+        b"class Greeter:\n"
+        b'    """A greeter.\n\n    Longer text.\n    """\n\n'
+        b"    @property\n    def name(self) -> str:\n"
+        b'        """The greeter\'s display name."""\n        return self._name\n\n'
+        b"    @staticmethod\n    def build(\n        loud: bool = False,\n        *,\n"
+        b"        prefix: str = \"hi\",\n    ) -> \"Greeter\":\n        return Greeter()\n\n"
+        b"    def plain(self):\n        return 1\n"
+    )
+
+    def test_python_decorators_and_docstrings(self) -> None:
+        result = extract("a.py", self.PY)
+        by = {s.qualified_name: s for s in result.symbols if not s.synthetic}
+        assert by["Greeter"].signature == "class Greeter:"
+        assert by["Greeter"].documentation == "A greeter.\n\nLonger text."
+        assert by["Greeter.name"].signature == "@property def name(self) -> str:"
+        assert by["Greeter.name"].documentation == "The greeter\'s display name."
+        assert by["Greeter.name"].full_range.start.line == 6
+        assert by["Greeter.build"].signature == (
+            '@staticmethod def build(loud: bool = False, *, prefix: str = "hi") -> "Greeter":'
+        )
+        assert by["Greeter.plain"].signature == "def plain(self):"
+        assert by["Greeter.plain"].documentation is None
+
+    def test_a_single_line_declaration_is_kept_as_written(self) -> None:
+        result = extract("a.py", b"def greet(name: str) -> str:\n    return name\n")
+        assert result.symbols[0].signature == "def greet(name: str) -> str:"
+
+    def test_visibility_reads_past_the_decorator_prefix(self) -> None:
+        from repoatlas.model import declaration_of
+
+        assert declaration_of("#[Route] private function show(): void {") == (
+            "private function show(): void {"
+        )
+        assert declaration_of("@property def name(self):") == "def name(self):"
+        assert declaration_of("constructor(private svc: Svc) {}") == "constructor(private svc: Svc) {}"

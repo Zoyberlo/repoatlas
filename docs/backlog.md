@@ -408,6 +408,24 @@ being touched. Write-up: `docs/benchmarks/oracles.md`. Still open: 15, and
 a Laravel-specific rung for `$user->x` by naming convention, which no
 oracle can judge and so has not been written.
 
+*Status 2026-09-04, late:* two survey articles on token optimisation were
+fact-checked against their primary sources (most mechanics right, most
+numbers not; the "entropy compression destroys code syntax" argument is
+contradicted by the papers they cite, and is not to be used here). The
+one thing they got right that this index got wrong was the skeleton
+itself: on the real application a PHP `#[Route]` line was the signature
+of every attributed action, a PSR-12 wrapped method was `public function
+show(` and nothing more, decorators were dropped, and no docblock was
+ever extracted. Fixed: the signature runs from the name's line to the
+body's opening brace, joined and tidied; decorators and attributes lead
+it by name (`@property def name(self)`, `#[Route] class AdController`)
+and are inside the symbol's range; `Symbol.documentation` is the
+docstring or the `/** */` block above the declaration. On the real
+application no method signature ends in `(` any more (it was every
+wrapped one), 14% of symbols carry documentation, and the localisation
+benchmark is unchanged (0.188 / 0.310), which is the expected result: the
+lines cost about the same and now say what they are.
+
 | # | Item | Why first | Size |
 | ---: | --- | --- | --- |
 | 1 | Calibrate tokens per model, thread the estimator through the tools (1.1) | The budget is wrong by a third | half a day |

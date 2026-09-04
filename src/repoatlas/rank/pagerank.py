@@ -29,7 +29,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..model import EdgeKind, IndexSnapshot, Symbol, SymbolKind
+from ..model import EdgeKind, IndexSnapshot, Symbol, SymbolKind, declaration_of
 
 # Loaded by name so the type checker never follows the import: numpy is
 # optional, reached through an `Any`-typed handle, and absent on a core
@@ -83,7 +83,7 @@ def _is_private(symbol: Symbol) -> bool:
     if name.startswith("_") and not (name.startswith("__") and name.endswith("__")):
         return True
     signature = (symbol.signature or "").lstrip()
-    return signature.startswith(_PRIVATE_KEYWORDS)
+    return declaration_of(signature).startswith(_PRIVATE_KEYWORDS)
 
 
 # How much each kind of edge carries rank. Ordered by what the retrieval

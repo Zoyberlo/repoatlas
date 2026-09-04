@@ -13,6 +13,8 @@ crosses between them.
 from __future__ import annotations
 
 import functools
+import re
+import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -123,7 +125,7 @@ _CONSTRUCTOR_NAMES = frozenset({"__init__", "__construct", "constructor", "new"}
 
 # A declaration line longer than this is wrapping or generated. Truncating
 # keeps one map entry to roughly one line of a terminal.
-_MAX_SIGNATURE = 120
+_MAX_SIGNATURE = 160
 
 # A definition inside one of these is scope-local: a variable in a function
 # body, a nested helper closure. Real definitions, but not ones anybody
@@ -363,6 +365,9 @@ class _RawDefinition:
     hoist: bool = False
     """Belongs to the nearest enclosing type, not the nearest enclosing body."""
 
+    documentation: str | None = None
+    """The docstring or doc comment written for it, cleaned of its markers."""
+
 
 @functools.cache
 def _compiled_query(language: str) -> Query:
@@ -378,19 +383,199 @@ def _compiled_query(language: str) -> Query:
     return Query(get_language(language), query_source(language))
 
 
-def _declaration_line(lines: list[str], span: SourceRange) -> str:
-    """The source line a definition is declared on, trimmed.
+def _signature(
+    node: Node, decorators: list[Node], name_span: SourceRange, lines: list[str], language: str
+) -> str:
+    """The declaration as written, from the name's line to where the body starts.
 
     Stored so a map can be rendered from the index alone, without opening
-    the file. One line rather than the whole signature: a multi-line
-    parameter list adds bulk without telling a reader anything the name and
-    the first line do not, and the map is spent in tokens.
+    the file. It once was the first line of the node, which on a real
+    Laravel application made a route attribute the signature of every
+    controller action, and made `public function show(` the whole of a
+    PSR-12 wrapped method. Now: decorators and attributes come first, by
+    name only (`@property`, `#[Route]`), then the declaration line, joined
+    with the lines its parameter list and return type spill onto, cut at
+    the opening brace of the body. A declaration that fits on one line is
+    kept exactly as that line.
     """
-    index = span.start.line
-    if index >= len(lines):
+    start = name_span.start.line
+    if start >= len(lines):
         return ""
-    text = lines[index].strip()
+    body, owner = _body_of(node)
+    last = start
+    if body is not None:
+        for child in owner.children:
+            if child.start_byte < body.start_byte:
+                last = max(last, child.end_point.row)
+        last = min(last, len(lines) - 1, start + _MAX_SIGNATURE_LINES)
+    if last == start:
+        text = lines[start].strip()
+    else:
+        tail = lines[last]
+        if body is not None and body.start_point.row == last:
+            tail = tail[: body.start_point.column + 1]
+        pieces = [lines[i].strip() for i in range(start, last)] + [tail.strip()]
+        text = _tidy_signature(" ".join(piece for piece in pieces if piece))
+    names = [_decorator_name(decorator, language) for decorator in decorators]
+    if names:
+        text = " ".join(name for name in names if name) + " " + text
     return text if len(text) <= _MAX_SIGNATURE else text[: _MAX_SIGNATURE - 1] + "…"
+
+
+# A parameter list longer than this many lines is a generated file or a
+# joke, and the signature stops there rather than swallowing it.
+_MAX_SIGNATURE_LINES = 12
+
+_SPACE_RUNS = re.compile(r"\s+")
+_AFTER_OPEN = re.compile(r"\(\s+")
+_BEFORE_CLOSE = re.compile(r"\s*,?\s*\)")
+_BEFORE_COMMA = re.compile(r"\s+,")
+
+
+def _tidy_signature(text: str) -> str:
+    """One line out of several: single spaces, no space inside the parentheses.
+
+    PSR-12 and black leave a trailing comma before the closing parenthesis
+    of a wrapped list; joined onto one line it is noise, and goes.
+    """
+    text = _SPACE_RUNS.sub(" ", text)
+    text = _AFTER_OPEN.sub("(", text)
+    text = _BEFORE_CLOSE.sub(")", text)
+    text = _BEFORE_COMMA.sub(",", text)
+    return text.strip()
+
+
+def _body_of(node: Node) -> tuple[Node | None, Node]:
+    """The body node a declaration's signature stops at, and the node that owns it.
+
+    A function assigned to a name, `const f = (a, b) => {`, keeps its body
+    on the arrow function, not on the declarator the query captured.
+    """
+    body = node.child_by_field_name("body")
+    if body is not None:
+        return body, node
+    value = node.child_by_field_name("value")
+    if value is not None:
+        inner = value.child_by_field_name("body")
+        if inner is not None:
+            return inner, value
+    return None, node
+
+
+# Where each grammar keeps the decorators of a declaration: Python wraps
+# the definition in `decorated_definition`; TypeScript hangs them off a
+# field, or puts them beside a method or a class; PHP nests an
+# `attribute_list` inside the declaration.
+_DECORATOR_NODES = frozenset({"decorator"})
+_ATTRIBUTE_LIST = "attribute_list"
+
+
+def _decorator_nodes(node: Node) -> list[Node]:
+    """Every decorator or attribute written on ``node``, in source order."""
+    found: list[Node] = []
+    parent = node.parent
+    if parent is not None and parent.type == "decorated_definition":
+        found.extend(child for child in parent.named_children if child.type in _DECORATOR_NODES)
+    sibling = node.prev_named_sibling
+    while sibling is not None and sibling.type in _DECORATOR_NODES:
+        found.append(sibling)
+        sibling = sibling.prev_named_sibling
+    for child in node.named_children:
+        if child.type in _DECORATOR_NODES:
+            found.append(child)
+        elif child.type == _ATTRIBUTE_LIST:
+            for group in child.named_children:
+                found.extend(attr for attr in group.named_children if attr.type == "attribute")
+    unique = {found_node.start_byte: found_node for found_node in found}
+    return [unique[start] for start in sorted(unique)]
+
+
+def _decorator_name(node: Node, language: str) -> str:
+    """`@property`, `@Component`, `#[Route]`: the decorator without its arguments."""
+    if node.type == "attribute":
+        name = node.child_by_field_name("name") or next(iter(node.named_children), None)
+        text = (name.text or b"").decode("utf-8", errors="replace") if name is not None else ""
+        return f"#[{text.rsplit(chr(92), 1)[-1]}]" if text else ""
+    text = (node.text or b"").decode("utf-8", errors="replace").strip()
+    head = text.split("(", 1)[0].strip()
+    return head if head.startswith("@") else ""
+
+
+def _documentation(node: Node, decorators: list[Node], language: str) -> str | None:
+    """The docstring or the doc comment written for ``node``, cleaned.
+
+    Python keeps it inside the body as the first statement; PHP and the
+    JavaScript family write a `/** ... */` comment just before the
+    declaration, before its decorators, and before the `export` that may
+    wrap a class. Only a comment that ends on the line above counts: one
+    separated by blank lines describes something else.
+    """
+    if language == "python":
+        body = node.child_by_field_name("body")
+        first = next(iter(body.named_children), None) if body is not None else None
+        if first is not None and first.type == "expression_statement":
+            first = next(iter(first.named_children), None)
+        if first is not None and first.type == "string":
+            content = next((c for c in first.named_children if c.type == "string_content"), None)
+            raw = (content.text if content is not None else first.text) or b""
+            return _clean_doc(raw.decode("utf-8", errors="replace"), string=content is None)
+        return None
+    first_node = decorators[0] if decorators and decorators[0].start_byte < node.start_byte else node
+    # The comment sits before the statement, and the statement may wrap
+    # the captured node: `export const make = ...` captures the
+    # declarator, two levels down on the same line.
+    outer = first_node
+    parent = first_node.parent
+    while (
+        parent is not None
+        and parent.type not in _SCOPE_BODIES
+        and parent.start_point.row == outer.start_point.row
+    ):
+        outer = parent
+        parent = outer.parent
+    sibling = outer.prev_named_sibling
+    if sibling is None or sibling.type != "comment":
+        return None
+    text = (sibling.text or b"").decode("utf-8", errors="replace")
+    if not text.startswith("/**") or sibling.end_point.row < outer.start_point.row - 1:
+        return None
+    return _clean_doc(text)
+
+
+# Nodes that hold a sequence of declarations: the climb stops below them.
+_SCOPE_BODIES = frozenset(
+    {"program", "module", "class_body", "block", "declaration_list", "statement_block", "object"}
+)
+_DOC_STAR = re.compile(r"^\s*\*\s?")
+_MAX_DOCUMENTATION = 1000
+
+
+def _clean_doc(text: str, *, string: bool = False) -> str | None:
+    """Comment markers, leading stars and quotes gone; paragraphs kept."""
+    text = text.strip()
+    if string:
+        text = text.lstrip("rRuUbBfF")
+        for quote in ('"""', "'''", '"', "'"):
+            if text.startswith(quote) and text.endswith(quote) and len(text) >= 2 * len(quote):
+                text = text[len(quote) : -len(quote)]
+                break
+    else:
+        if text.startswith("/**"):
+            text = text[3:]
+        if text.endswith("*/"):
+            text = text[:-2]
+        text = "\n".join(_DOC_STAR.sub("", line) for line in text.splitlines())
+    head, _, rest = text.partition("\n")
+    lines = [head.strip(), *textwrap.dedent(rest).splitlines()] if rest else [head.strip()]
+    kept: list[str] = []
+    for line in lines:
+        line = line.rstrip()
+        if line or (kept and kept[-1]):
+            kept.append(line)
+    cleaned = "\n".join(kept).strip()
+    if not cleaned:
+        return None
+    return cleaned if len(cleaned) <= _MAX_DOCUMENTATION else cleaned[: _MAX_DOCUMENTATION - 1] + "…"
 
 
 def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
@@ -484,6 +669,17 @@ def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
                     # A query that captures a node not containing its own
                     # identifier is a bug in the query, not in the source.
                     full_span = name_span
+                decorators = _decorator_nodes(nodes[0])
+                if decorators:
+                    # A decorator is part of what was declared: `@property`
+                    # changes what `def name` is, and a body read without
+                    # it is missing the line that matters.
+                    first = to_range(decorators[0])
+                    if (first.start.line, first.start.character) < (
+                        full_span.start.line,
+                        full_span.start.character,
+                    ):
+                        full_span = SourceRange(start=first.start, end=full_span.end)
                 key = (
                     name_span.start.line,
                     name_span.start.character,
@@ -499,8 +695,9 @@ def _collect(tree: Tree, language: str, lines: list[str]) -> _Collected:
                         kind,
                         name_span,
                         full_span,
-                        _declaration_line(lines, full_span),
+                        _signature(nodes[0], decorators, name_span, lines, language),
                         hoist=capture_name == "definition.attribute",
+                        documentation=_documentation(nodes[0], decorators, language),
                     )
             elif capture_name.startswith(_REFERENCE_PREFIX):
                 # Several patterns may capture one token. `user.greet()`
@@ -604,6 +801,7 @@ def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
                     container_id=container.id,
                     qualified_name=qualified,
                     signature=definition.signature or None,
+                    documentation=definition.documentation,
                 )
             )
             continue
@@ -633,6 +831,7 @@ def _assign_ids(path: str, raw: list[_RawDefinition]) -> list[Symbol]:
             container_id=container.id if container is not None else None,
             qualified_name=qualified,
             signature=definition.signature or None,
+            documentation=definition.documentation,
             local=is_local,
         )
         symbols.append(symbol)

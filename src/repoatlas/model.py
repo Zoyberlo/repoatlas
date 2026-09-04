@@ -14,6 +14,7 @@ before comparison.
 from __future__ import annotations
 
 import enum
+import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 
@@ -381,3 +382,17 @@ class IndexSnapshot:
             if n:
                 counts[f"edges.{kind.value}"] = n
         return counts
+
+
+_DECORATOR_PREFIX = re.compile(r"^(?:(?:@[\w.$]+|#\[[^\]]*\])\s+)+")
+
+
+def declaration_of(signature: str) -> str:
+    """A signature without the decorators the extractor put in front of it.
+
+    `@property def name(self)` and `#[Route] private function show()` carry
+    their decorators as a prefix so a map can show what kind of thing a
+    member is; anything that reads the declaration itself, a visibility
+    keyword or a return type, wants the text after them.
+    """
+    return _DECORATOR_PREFIX.sub("", signature, count=1)
