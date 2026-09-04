@@ -341,11 +341,14 @@ class Resolver:
         # evidence rather than inference and ranks with a resolved import.
         if reference.kind in _CONVENTION_KINDS:
             identifier = _as_identifier(reference)
-            # An imported name follows its import. A convention is how a
-            # framework finds what nothing imported, so consulting it over
-            # an explicit import would answer a question nobody asked, and
-            # answer it wrongly wherever two files share a name.
-            if identifier is None or not self._is_imported(path, identifier):
+            # An imported name follows its import — but only when the import
+            # leads somewhere. A bundler alias this resolver does not know
+            # about would otherwise silence the convention as well, and the
+            # reference would resolve to nothing at all. That is what a
+            # Quasar project's `src/components/X.vue` did before the alias
+            # tables were read per project: the import was there, it did not
+            # resolve, and the convention was never asked.
+            if identifier is None or not self._import_resolves(path, identifier):
                 resolved = self._by_convention(path, reference)
                 if resolved is not None:
                     return resolved, ResolutionTier.IMPORT_MAP
@@ -429,9 +432,24 @@ class Resolver:
         self.stats.unresolved += 1
         return None, ResolutionTier.FUZZY
 
-    def _is_imported(self, path: str, name: str) -> bool:
+    def _import_resolves(self, path: str, name: str) -> bool:
+        """Whether ``name`` was imported from a file this index covers.
+
+        An import to a package, or through an alias nothing here knows,
+        answers no: the name is not spoken for, and a framework convention
+        may still say where it lives.
+        """
         file_imports = self.imports.get(path)
-        return file_imports is not None and file_imports.binding_for(name) is not None
+        if file_imports is None:
+            return False
+        found = file_imports.binding_for(name)
+        if found is None:
+            return False
+        statement, _binding = found
+        return (
+            self._resolve_module(path, statement.module, statement.relative_level)
+            is not None
+        )
 
     def _by_convention(self, path: str, reference: Reference) -> Symbol | None:
         """Ask each plugin what file this conventional name refers to."""

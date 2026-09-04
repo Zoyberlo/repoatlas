@@ -16,9 +16,15 @@ that does not falls through to weaker evidence instead of inventing a link.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Protocol
+
+# Where a project's own configuration may sit. Shared with framework
+# detection because it is the same question: a repository is often
+# several projects, and each keeps its settings at its own root.
+from ..plugins.registry import project_directories
 
 __all__ = [
     "ComposerResolver",
@@ -70,7 +76,14 @@ class NodeResolver:
     """
 
     known_files: frozenset[str]
-    base_url: str = ""
+    base_urls: tuple[str, ...] = ()
+    """Where a bare specifier is resolved from, one entry per project.
+
+    A repository is often several: a Quasar front end keeps its own
+    `jsconfig.json`, and reading only the repository root found none of its
+    aliases and left every aliased import unresolved.
+    """
+
     aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     EXTENSIONS = (
@@ -127,8 +140,10 @@ class NodeResolver:
                 found = self._probe(_normalise(PurePosixPath(candidate)))
                 if found is not None:
                     return found
-        if self.base_url:
-            found = self._probe(_normalise(PurePosixPath(self.base_url) / module))
+        for base in self.base_urls:
+            found = self._probe(
+                _normalise(PurePosixPath(base) / module) if base else module
+            )
             if found is not None:
                 return found
         # A bare specifier with no alias is a package, not a file here.
@@ -212,38 +227,55 @@ class ComposerResolver:
         return None
 
 
-def _read_tsconfig(root: Path) -> tuple[str, dict[str, tuple[str, ...]]]:
-    """Read ``baseUrl`` and ``paths``, tolerating comments and trailing commas.
+def _read_tsconfig(
+    root: Path, directories: Iterable[str] = ("",)
+) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
+    """Read every project's ``baseUrl`` and ``paths`` into one alias table.
 
     ``tsconfig.json`` is JSON with comments by convention, which the standard
-    parser rejects, so a failed parse means "no aliases" rather than an error:
-    path aliases are an optimisation for the top rung, not a requirement.
+    parser rejects, so a failed parse means "no aliases" rather than an
+    error: path aliases are an optimisation for the top rung, not a
+    requirement.
+
+    Both names are read, and `jsconfig.json` is not an afterthought: a
+    Quasar application has only that one, and it is where `src/*` and
+    `components/*` are declared. Targets are rewritten relative to the
+    repository, so a front end in `frontend/` contributes
+    `frontend/src/*` and one alias table serves the whole walk.
     """
-    for name in ("tsconfig.json", "jsconfig.json"):
-        config_path = root / name
-        if not config_path.is_file():
-            continue
-        try:
-            raw = config_path.read_text(encoding="utf-8-sig")
-        except OSError:
-            continue
-        try:
-            data = json.loads(_strip_json_comments(raw))
-        except json.JSONDecodeError:
-            continue
-        options = data.get("compilerOptions") or {}
-        base_url = str(options.get("baseUrl") or "").strip("./")
-        raw_paths = options.get("paths") or {}
-        aliases: dict[str, tuple[str, ...]] = {}
-        for pattern, targets in raw_paths.items():
-            if isinstance(targets, list):
-                prefix = base_url + "/" if base_url else ""
-                aliases[pattern] = tuple(
-                    _normalise(PurePosixPath(prefix + str(target).lstrip("./")))
-                    for target in targets
-                )
-        return base_url, aliases
-    return "", {}
+    bases: list[str] = []
+    aliases: dict[str, list[str]] = {}
+    for where in directories:
+        for name in ("tsconfig.json", "jsconfig.json"):
+            config_path = (root / where / name) if where else (root / name)
+            if not config_path.is_file():
+                continue
+            try:
+                raw = config_path.read_text(encoding="utf-8-sig")
+            except OSError:
+                continue
+            try:
+                data = json.loads(_strip_json_comments(raw))
+            except json.JSONDecodeError:
+                continue
+            options = data.get("compilerOptions") or {}
+            declared = str(options.get("baseUrl") or "").strip("./")
+            base = _normalise(PurePosixPath(where) / declared) if where else declared
+            if base not in bases:
+                bases.append(base)
+            for pattern, targets in (options.get("paths") or {}).items():
+                if not isinstance(targets, list):
+                    continue
+                for target in targets:
+                    prefix = base + "/" if base else ""
+                    resolved = _normalise(
+                        PurePosixPath(prefix + str(target).lstrip("./"))
+                    )
+                    aliases.setdefault(pattern, []).append(resolved)
+            break
+    return tuple(bases), {
+        pattern: tuple(dict.fromkeys(targets)) for pattern, targets in aliases.items()
+    }
 
 
 def _strip_json_comments(text: str) -> str:
@@ -322,8 +354,8 @@ def resolver_for(
 ) -> ModuleResolver | None:
     """Build the resolver for a language, reading its project configuration."""
     if language in ("typescript", "tsx", "javascript", "vue"):
-        base_url, aliases = _read_tsconfig(root)
-        return NodeResolver(known_files=known_files, base_url=base_url, aliases=aliases)
+        bases, aliases = _read_tsconfig(root, project_directories(known_files))
+        return NodeResolver(known_files=known_files, base_urls=bases, aliases=aliases)
     if language == "python":
         return PythonResolver(known_files=known_files)
     if language == "php":

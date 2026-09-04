@@ -147,7 +147,9 @@ class TestNodeResolver:
         assert resolver.resolve("@lib/thing", from_path="src/main.ts") == "src/lib/thing.ts"
 
     def test_follows_base_url(self) -> None:
-        resolver = NodeResolver(known_files=frozenset({"src/thing.ts"}), base_url="src")
+        resolver = NodeResolver(
+            known_files=frozenset({"src/thing.ts"}), base_urls=("src",)
+        )
         assert resolver.resolve("thing", from_path="app/main.ts") == "src/thing.ts"
 
     def test_reads_tsconfig_from_a_project(self, tmp_path: Path) -> None:

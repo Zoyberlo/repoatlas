@@ -584,6 +584,119 @@ class TestMonorepoLayouts:
         ]
 
 
+class TestCustomComponentsInAMonorepo:
+    """A front end's own components, imported the way a bundler allows.
+
+    Every case here comes from one real Quasar application. Its components
+    live in `frontend/src/components`, its aliases are declared in
+    `frontend/jsconfig.json`, and six of them resolved to nothing because
+    the alias table was read from the repository root, where there is no
+    such file.
+    """
+
+    def quasar(self, root: Path, *, config: str = "jsconfig.json") -> None:
+        write(root, "package.json", json.dumps({"dependencies": {"dompurify": "^3"}}))
+        write(root, "frontend/package.json", json.dumps({"dependencies": {"quasar": "^2"}}))
+        write(
+            root,
+            f"frontend/{config}",
+            json.dumps(
+                {
+                    "compilerOptions": {
+                        "baseUrl": ".",
+                        "paths": {
+                            "src/*": ["src/*"],
+                            "components/*": ["src/components/*"],
+                        },
+                    }
+                }
+            ),
+        )
+        write(
+            root,
+            "frontend/src/pages/IndexPage.vue",
+            "<script setup>\n"
+            "import LeftDrawer from 'src/components/LeftDrawer.vue'\n"
+            "import AdCard from 'components/ads/AdCard.vue'\n"
+            "import Relative from '../components/Relative.vue'\n"
+            "</script>\n"
+            "<template>\n"
+            "  <LeftDrawer />\n"
+            "  <AdCard />\n"
+            "  <Relative />\n"
+            "</template>\n",
+        )
+        for name in ("LeftDrawer", "Relative"):
+            write(root, f"frontend/src/components/{name}.vue", "<template><div/></template>\n")
+        write(root, "frontend/src/components/ads/AdCard.vue", "<template><div/></template>\n")
+
+    def test_an_alias_declared_in_a_subproject_resolves(self, tmp_path: Path) -> None:
+        self.quasar(tmp_path)
+        targets = edge_targets(tmp_path)
+        assert targets[("frontend/src/pages/IndexPage.vue", 7)] == (
+            "frontend/src/components/LeftDrawer.vue#<module>"
+        )
+
+    def test_a_nested_alias_resolves_too(self, tmp_path: Path) -> None:
+        self.quasar(tmp_path)
+        targets = edge_targets(tmp_path)
+        assert targets[("frontend/src/pages/IndexPage.vue", 8)] == (
+            "frontend/src/components/ads/AdCard.vue#<module>"
+        )
+
+    def test_a_relative_import_still_resolves(self, tmp_path: Path) -> None:
+        self.quasar(tmp_path)
+        targets = edge_targets(tmp_path)
+        assert targets[("frontend/src/pages/IndexPage.vue", 9)] == (
+            "frontend/src/components/Relative.vue#<module>"
+        )
+
+    def test_tsconfig_is_read_the_same_way(self, tmp_path: Path) -> None:
+        self.quasar(tmp_path, config="tsconfig.json")
+        targets = edge_targets(tmp_path)
+        assert targets[("frontend/src/pages/IndexPage.vue", 7)] == (
+            "frontend/src/components/LeftDrawer.vue#<module>"
+        )
+
+    def test_an_unknown_alias_falls_back_to_the_convention(self, tmp_path: Path) -> None:
+        # No config at all, so `~/components/Widget.vue` resolves nowhere.
+        # The import is real, but it leads nowhere this index covers, so the
+        # framework convention must still be allowed to answer.
+        write(tmp_path, "frontend/package.json", json.dumps({"dependencies": {"vue": "^3"}}))
+        write(
+            tmp_path,
+            "frontend/src/pages/A.vue",
+            "<script setup>\n"
+            "import Widget from '~/components/Widget.vue'\n"
+            "</script>\n"
+            "<template><Widget /></template>\n",
+        )
+        write(tmp_path, "frontend/src/components/Widget.vue", "<template><div/></template>\n")
+        targets = edge_targets(tmp_path)
+        assert targets[("frontend/src/pages/A.vue", 4)] == (
+            "frontend/src/components/Widget.vue#<module>"
+        )
+
+    def test_a_resolvable_import_still_wins_over_the_convention(self, tmp_path: Path) -> None:
+        # The safety net must not become a licence to ignore an import that
+        # does resolve: two files share a name, and the imported one wins.
+        write(tmp_path, "frontend/package.json", json.dumps({"dependencies": {"vue": "^3"}}))
+        write(
+            tmp_path,
+            "frontend/src/pages/A.vue",
+            "<script setup>\n"
+            "import Shadow from '../widgets/Shadow.vue'\n"
+            "</script>\n"
+            "<template><Shadow /></template>\n",
+        )
+        write(tmp_path, "frontend/src/components/Shadow.vue", "<template><div/></template>\n")
+        write(tmp_path, "frontend/src/widgets/Shadow.vue", "<template><div/></template>\n")
+        targets = edge_targets(tmp_path)
+        assert targets[("frontend/src/pages/A.vue", 4)] == (
+            "frontend/src/widgets/Shadow.vue#<module>"
+        )
+
+
 class TestStoreAgreement:
     def test_the_store_resolves_conventions_the_same_way(self, tmp_path: Path) -> None:
         # The store and the batch builder are two paths to one answer. An

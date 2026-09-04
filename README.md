@@ -519,7 +519,11 @@ returns it alongside.
 The Vue row is the one a bundler makes true. Quasar and its neighbours
 auto-import components, so a tag with no import beside it still names a
 file, at whatever depth it sits. A tag that *was* imported follows its
-import instead, because a convention is for finding what nothing imported.
+import instead, because a convention is for finding what nothing imported
+— unless that import leads nowhere this index covers, in which case the
+convention is asked after all. Path aliases are read from every project's
+own `tsconfig.json` or `jsconfig.json`, not just the repository root's,
+because that is where a Quasar application declares `src/*`.
 
 Two frameworks can claim the same reference kind, and in a Laravel back end
 with a Quasar front end they do: both write `component`. Each rule names the
