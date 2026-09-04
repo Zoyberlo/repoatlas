@@ -69,6 +69,27 @@ cannot resolve a call through an untyped variable, so `$ad->client()` has
 no compiler-backed truth at all, and the cases where grep is worst are
 exactly the cases no oracle on this stack can judge.
 
+## The edges nobody else has
+
+A SCIP indexer for PHP reads PHP. `scip-typescript` pointed at this
+front end opens 24 of its 91 files and skips every `.vue`. Neither reads
+a Blade template, a router that names a page in a string, or
+`view('users.index')`. On this repository that is not a rounding error:
+
+| | |
+| --- | ---: |
+| edges from a Vue component into the JavaScript it imports | 1,040 |
+| edges the other way | 39 |
+| PHP into Blade | 3 |
+| component tags resolved to a file in the repository | 73 |
+| dynamic `import(...)` resolved | 37 |
+
+The 1,450 component tags left alone are Quasar's own `q-btn` and
+`q-input`, which are outside the repository and correctly nobody's. The
+two halves of the monorepo have no edges between them at all, which is
+also true: they talk over HTTP, and an index should not invent a call
+where there is a fetch.
+
 ## What an agent does with it
 
 Two harnesses, both posing real work from the repository's own history
