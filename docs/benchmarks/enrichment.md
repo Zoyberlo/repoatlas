@@ -146,6 +146,57 @@ The rule that falls out, and the reason `--dry-run` exists: **write a
 producer for a language when its framework invents members that belong to
 the repository.** Laravel does. Vue does not.
 
+## Does an agent need it?
+
+Two of this project's benchmarks cannot answer that, and knowing why
+saved a run. `agentbench` asks which files a change touches, which is
+driven by the map, and the map moved by one file of fifty-five at 2,000
+tokens. `sitebench` scores against `scip-php`, and **none** of the added
+edges sits at a site that oracle resolves — 0 of 620 — which is the same
+fact that makes them worth having and makes that benchmark blind to them.
+
+What did move is `find_references` on a model: 117 uses to 376.
+
+So the question has to be the one those edges answer. Six columns whose
+true set is small and whose name is common, put to an agent with grep,
+a shell and a local checkout:
+
+| question | true sites | answered | hit | precision | recall |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `Schedule.id` | 8 | 25 | 7 | 0.28 | 0.88 |
+| `User.id` | 14 | 25 | 7 | 0.28 | 0.50 |
+| `Schedule.status` | 4 | 25 | 1 | 0.04 | 0.25 |
+| `Schedule.date` | 13 | 25 | 4 | 0.16 | 0.31 |
+| `Client.balance` | 13 | 25 | 2 | 0.08 | 0.15 |
+| `Ad.files` | 8 | 25 | 8 | 0.32 | 1.00 |
+| **mean** | | | | **0.19** | **0.51** |
+
+An agent with grep answers the cap every time and is right about a fifth
+of the time. It is not that the model is careless: `status` appears on
+four other models and in four hundred lines of this repository, and
+nothing in the text says which `$x->status` is a `Schedule`.
+
+### What this does and does not prove
+
+The reference set is larastan's, so scoring the *index* arm against it
+would be circular and is not done here. The index returns those sites by
+construction; that is not a result.
+
+The grep arm's score is not circular — grep has never seen the reference
+— and the reference is small enough to read. For `Schedule.status` it is
+four lines, `$schedule->status` in a command, a controller, a report and
+a service, and they are correct.
+
+So the claim this supports is precise: **the enrichment answers a
+question an agent with grep answers badly**, and its answers are
+corroborated three independent ways — 94.7% to 99.0% by the files' own
+text and inheritance, 0 contradictions against the compiler-backed
+oracle, and a hand-checkable reference set.
+
+It does not prove the index's recall is complete. larastan resolves 60.8%
+of member sites on this application, so sites it could not type are
+missing from both the index and the reference.
+
 ## What it costs, and the one caveat
 
 The edges carry their own tier, `type_engine` at 0.98, one rung below
