@@ -254,6 +254,35 @@ scores 0.028 where the ranked map scores 0.309, eleven times worse. That
 is the measurement of "what if we dropped the graph", and it is not
 close.
 
+### Does ranking only matter when the budget is tight?
+
+The obvious objection: an agent has a 200,000-token context, so ranking
+is a trick for small budgets and will stop mattering as they grow. It is
+answerable offline, deterministically, at no cost. Symbol recall over 120
+commits, the same index, the same renderer, four budgets:
+
+| tokens | unranked skeleton | grep | ranked map | map ÷ skeleton | map − skeleton |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 500 | 0.016 | 0.061 | 0.145 | 9.1× | +0.129 |
+| 2,000 | 0.034 | 0.117 | 0.289 | 8.4× | +0.255 |
+| 8,000 | 0.166 | 0.280 | 0.444 | 2.7× | +0.278 |
+| 32,000 | 0.485 | 0.460 | 0.844 | 1.7× | **+0.359** |
+
+Half the objection holds and half does not. The *ratio* collapses, from
+nine times to under two, so ranking is indeed worth most when there is
+least room. But the *absolute* gap grows at every step, and at 32,000
+tokens — a sixth of a context window, spent entirely on one map — the
+ranked map still names 0.359 more of the changed symbols than the same
+index dumped in path order. There is no budget at which the skeleton
+catches up.
+
+The same table says something less comfortable about resolution.
+aider's name-matched graph, ranked and rendered identically, scores 0.147,
+0.268, 0.444 and 0.842. It ties the resolved graph at 8,000 and at
+32,000, and beats it at 500. Resolution's advantage on the map exists in
+a narrow band around 2,000 tokens and nowhere else. The graph earns its
+place; the *edges* earn theirs on `find_references`, not here.
+
 So the graph earns one thing and it is not resolution: it is the ability
 to answer *within a budget* when nothing has told you where to look.
 Without it there are two options, dump or refuse, and Serena does both.
