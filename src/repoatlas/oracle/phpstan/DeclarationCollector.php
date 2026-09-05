@@ -35,33 +35,33 @@ final class DeclarationCollector implements Collector
                 return null;
             }
             $fqn = $node->namespacedName?->toString() ?? $node->name->toString();
-            return [$this->at($node->name, $this->classKind($node), $node->name->toString(), '', $fqn)];
+            return [$this->at($scope, $node->name, $this->classKind($node), $node->name->toString(), '', $fqn)];
         }
         $container = $this->container($scope);
         if ($node instanceof Node\Stmt\ClassMethod) {
             $kind = strtolower($node->name->toString()) === '__construct' ? 'constructor' : 'method';
-            return [$this->at($node->name, $kind, $node->name->toString(), $container)];
+            return [$this->at($scope, $node->name, $kind, $node->name->toString(), $container)];
         }
         if ($node instanceof Node\Stmt\Function_) {
             $fqn = $node->namespacedName?->toString() ?? $node->name->toString();
-            return [$this->at($node->name, 'function', $node->name->toString(), '', $fqn)];
+            return [$this->at($scope, $node->name, 'function', $node->name->toString(), '', $fqn)];
         }
         if ($node instanceof Node\Stmt\Property) {
             $records = [];
             foreach ($node->props as $property) {
-                $records[] = $this->at($property->name, 'property', $property->name->toString(), $container);
+                $records[] = $this->at($scope, $property->name, 'property', $property->name->toString(), $container);
             }
             return $records === [] ? null : $records;
         }
         if ($node instanceof Node\Stmt\ClassConst) {
             $records = [];
             foreach ($node->consts as $constant) {
-                $records[] = $this->at($constant->name, 'constant', $constant->name->toString(), $container);
+                $records[] = $this->at($scope, $constant->name, 'constant', $constant->name->toString(), $container);
             }
             return $records === [] ? null : $records;
         }
         if ($node instanceof Node\Stmt\EnumCase) {
-            return [$this->at($node->name, 'constant', $node->name->toString(), $container)];
+            return [$this->at($scope, $node->name, 'constant', $node->name->toString(), $container)];
         }
         return null;
     }
@@ -87,6 +87,28 @@ final class DeclarationCollector implements Collector
     }
 
     /**
+     * The file a node is really in, which is not always the one being analysed.
+     *
+     * PHPStan analyses a trait's body once per class that uses it, with the
+     * scope's file set to the *using class*. The nodes are still the
+     * trait's, so their line numbers belong to the trait's file, and
+     * pairing the two produced declarations at line 263 of four unrelated
+     * files. On an application with shared traits that was 62,323 sites
+     * whose target could not be placed.
+     */
+    private function fileOf(Scope $scope): string
+    {
+        $trait = $scope->getTraitReflection();
+        if ($trait !== null) {
+            $file = $trait->getFileName();
+            if ($file !== null) {
+                return $file;
+            }
+        }
+        return $scope->getFile();
+    }
+
+    /**
      * A definition, with the name the resolver on the other side will use.
      *
      * `fqn` is what a resolved reference joins on: `App\Ad::save` for a
@@ -99,6 +121,7 @@ final class DeclarationCollector implements Collector
      * @return array<string, mixed>
      */
     private function at(
+        Scope $scope,
         Node $node,
         string $kind,
         string $name,
@@ -107,6 +130,7 @@ final class DeclarationCollector implements Collector
     ): array {
         return [
             'kind' => 'def',
+            'file_of' => $this->fileOf($scope),
             'symbol_kind' => $kind,
             'name' => $name,
             'container' => $container,

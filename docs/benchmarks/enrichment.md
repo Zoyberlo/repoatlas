@@ -24,29 +24,24 @@ PHPStan with larastan does see it. `repoatlas phpstan` runs the collector
 
 ## What it added
 
-The application's backend, 11,586 member and call reference sites:
+Two applications on the same stack, member and call reference sites in
+the backend:
 
-| | resolved | share |
-| --- | ---: | ---: |
-| the cascade alone | 1,098 | 9.5% |
-| **with the type engine folded in** | **1,708** | **14.7%** |
+| | sites | resolved before | after | added |
+| --- | ---: | ---: | ---: | ---: |
+| 363 files | 11,586 | 1,098 (9.5%) | **1,711 (14.8%)** | +613, **+56%** |
+| 1,832 files | 60,338 | 19,391 (32.1%) | **22,994 (38.1%)** | +3,603, **+18.6%** |
 
-610 sites newly resolved, **+56% on what the index had**. 627 edges were
-added; 615 of them point at a member nothing declares.
+The larger application gains less in relative terms because it starts
+better typed — 32.1% against 9.5% — which is the expected shape: the
+enrichment fills in what declarations do not say, so a codebase that
+declares more has less left to fill.
 
-What they are is exactly the category that was missing:
-
-| newly resolved | count |
-| --- | ---: |
-| `id` | 81 |
-| `dates` | 33 |
-| `name` | 28 |
-| `heim_dates` | 25 |
-| `phone` | 24 |
-| `email`, `file`, `balance_due` | 23 each |
-
-and what they point at is the models that own them: `Ad` 259, `User` 136,
-`Invoice` 81, `Schedule` 69, `Client` 32.
+What it fills in is the same category both times. On the small one:
+`id` 81, `dates` 33, `name` 28, `phone` 24, `balance_due` 23, pointing at
+`Ad` 259, `User` 136, `Invoice` 81. On the large one: `id` 504, `field`
+247, `finance_report_id` 141, `new_value` 116, pointing at
+`ChangeHistory` 637, `FinanceReport` 479, `ChangeLog` 441.
 
 ## Whether they are right, with no oracle to ask
 
@@ -54,40 +49,52 @@ There is no ground truth for these. That is the point of them: an
 Eloquent column is precisely what `scip-php` does not report, so the
 oracle that grades every other edge in this index has nothing to say.
 
-So the check has to be independent of both producers, and the file's own
-text is: PHP names what it uses, and a site resolved to `App\Models\Ad`
-in a file that never mentions `Ad` is a claim the file contradicts.
+So the check is independent of both producers. PHP names what it uses, so
+a site resolved to `App\Models\Ad` in a file that never mentions `Ad` is
+a claim the file contradicts — unless the type came from a parent, which
+the index's own inheritance edges can follow.
 
-**621 of 627 (99.0%)** land in a file that names the target class. The
-six that do not are all `User`, in files that reach it through
-`auth()->user()` or a container binding and so never import it — correct
-resolutions that this check cannot credit. It is a bound on the damage
-rather than a proof: if the enrichment were noise, this number would not
-be 99%.
+| | 363 files | 1,832 files |
+| --- | ---: | ---: |
+| the site's own file names the target | 99.0% | 90.8% |
+| a class it inherits from names it | 0.0% | 4.0% |
+| **explained** | **99.0%** | **94.7%** |
 
-## What it lets you ask
+The remainder is `User`, `DocumentTemplate`, `ChangeHistoryService` —
+classes reached through `auth()->user()` or a container binding and named
+nowhere, which this check cannot credit and which are very likely
+correct. It bounds the damage rather than proving the answer: noise would
+not score 95%.
 
-"Which code reads this column" is the question the new edges answer, and
-it is one a text search answers badly, because a column name is an
-ordinary English word that also appears in migrations, blade templates,
-other models' columns and comments. Lines a reader would have to look
-through, either way:
+## Three bugs this found, which are the interesting part
 
-| column | sites the index names | lines `grep -w` returns | ratio |
-| --- | ---: | ---: | ---: |
-| `name` | 28 | 849 | **30.3×** |
-| `email` | 23 | 407 | 17.7× |
-| `id` | 81 | 1,062 | 13.1× |
-| `phone` | 24 | 258 | 10.8× |
-| `dates` | 33 | 275 | 8.3× |
-| `heim_dates` | 25 | 82 | 3.3× |
+The first run on the larger application reported 68,604 targets it could
+not place, against 4,573 it could. That ratio was the bug report.
 
-This is a cost ratio, not precision and recall. Grading the index's
-answers against larastan would be circular, since larastan produced them,
-and grep's extra lines are not all wrong — some are the same column on a
-different model, which is a different question with the same spelling.
-What the table says is how much a reader wades through, and it is the
-same kind of claim as the 7× already measured for `find_references`.
+**A trait is analysed once per class that uses it.** PHPStan sets the
+scope's file to the *using class* while the nodes keep the trait's line
+numbers, so declarations landed at line 263 of four unrelated files, one
+of which is 57 lines long. `Scope::getTraitReflection()` says where the
+node really is. Fixing it collapsed 22,887 reported declarations to
+5,553, because the duplicates had been the same trait counted once per
+user.
+
+**The same mismatch happens without traits.** Evaluating
+`OtherClass::SOME_CONSTANT` pulls the other class's declaration node into
+this file's scope. There is no reflection call that undoes that, so the
+join stopped trusting spans: a site already carries the declaring class's
+own file, from reflection, and a member name inside one file is
+unambiguous enough. The declaration records are now the fallback, and a
+record whose span points outside its own file is rejected rather than
+followed.
+
+**Duplicate detection on the line was not enough.** Matching an existing
+edge by `(path, line)` alone skipped whole lines, which threw away 173
+edges on the small application. Matching on the exact byte column
+recovered those — and on the large one it went the other way, moving
+79,675 sites from "new" to "already known". Without it the enrichment
+would have written tens of thousands of duplicate edges into a store
+whose reference counts are read by every ranking in the project.
 
 ## Does it generalise?
 

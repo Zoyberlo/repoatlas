@@ -44,7 +44,18 @@ final class SiteCollector implements Collector
     public function processNode(Node $node, Scope $scope): ?array
     {
         $record = $this->site($node, $scope);
-        return $record === null ? null : [$record];
+        if ($record === null) {
+            return null;
+        }
+        // A trait's body is analysed once per class that uses it, with the
+        // scope's file set to the using class while the nodes keep the
+        // trait's line numbers. Recording the file the node is really in
+        // is the difference between a placeable site and one at line 263
+        // of a file that has no line 263.
+        $trait = $scope->getTraitReflection();
+        $file = $trait !== null ? $trait->getFileName() : null;
+        $record['file_of'] = $file ?? $scope->getFile();
+        return [$record];
     }
 
     /**

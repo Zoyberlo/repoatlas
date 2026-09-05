@@ -50,7 +50,11 @@ final class DumpRule implements Rule
             foreach ($byFile as $file => $groups) {
                 foreach ($groups as $records) {
                     foreach ($records as $record) {
-                        $record['path'] = $file;
+                        // The collectors record the file a node is really
+                        // in, which for a trait body is not the file being
+                        // analysed. The grouping key is the fallback.
+                        $record['path'] = $record['file_of'] ?? $file;
+                        unset($record['file_of']);
                         $line = json_encode($record, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                         if ($line !== false) {
                             fwrite($handle, $line . "\n");

@@ -1152,6 +1152,9 @@ def _cmd_enrich(args: argparse.Namespace) -> int:
     print(f"  already in the index: {result.already_known}")
     print(f"  target outside it:    {result.outside_index}")
     print(f"  target unplaceable:   {result.unplaceable}")
+    print(f"    no symbol at the declaration: {result.no_target_symbol}")
+    print(f"    nothing encloses the site:    {result.no_source_symbol}")
+    print(f"    site and target are one:      {result.self_edge}")
     # The dry run is how a language decides whether a producer is worth
     # writing: what matters is not how much the engine resolves but how
     # much of it lands on something the index holds.

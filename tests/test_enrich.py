@@ -176,7 +176,17 @@ class TestWhatItRefuses:
     def test_a_target_in_vendor_is_not_navigation(
         self, store: IndexStore, project: Path, tmp_path: Path
     ) -> None:
-        site = column_site(project, **{"class": "Illuminate\\Support\\Carbon"})
+        # A real vendor record names the vendor file too. Overriding only
+        # the class would leave the join hunting for Carbon inside the
+        # repository, which is a different failure with a different count.
+        site = column_site(
+            project,
+            **{
+                "class": "Illuminate\\Support\\Carbon",
+                "file": "/elsewhere/vendor/nesbot/carbon/src/Carbon.php",
+                "magic": False,
+            },
+        )
         result = enrich_from_phpstan(
             store, dump(tmp_path / "d.jsonl", [site]), phpstan_root=project
         )

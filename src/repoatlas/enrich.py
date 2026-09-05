@@ -70,8 +70,18 @@ class EnrichmentResult:
     outside_index: int = 0
     """Resolved, but the target is in vendor or otherwise unindexed."""
 
-    unplaceable: int = 0
-    """The target is in the repository but no symbol sits where it should."""
+    no_target_symbol: int = 0
+    """The target's file is indexed but no symbol sits at the declaration."""
+
+    no_source_symbol: int = 0
+    """Nothing of ours encloses the use site."""
+
+    self_edge: int = 0
+    """The use site and the declaration are the same symbol."""
+
+    @property
+    def unplaceable(self) -> int:
+        return self.no_target_symbol + self.no_source_symbol + self.self_edge
 
     added: int = 0
     magic_added: int = 0
@@ -87,6 +97,9 @@ class EnrichmentResult:
             "already_known": self.already_known,
             "outside_index": self.outside_index,
             "unplaceable": self.unplaceable,
+            "no_target_symbol": self.no_target_symbol,
+            "no_source_symbol": self.no_source_symbol,
+            "self_edge": self.self_edge,
             "added": self.added,
             "magic_added": self.magic_added,
             "top_files": dict(
@@ -143,7 +156,21 @@ def enrich_from_facts(
         found, character = offsets[inner].at(offset)
         return character if found == line else 0
 
-    # Declarations first: they are what a resolved site has to land on, and
+    # What each indexed file declares, by name. The primary join, because
+    # it needs no line arithmetic: a site says which file its target's
+    # class lives in and what the member is called, and a name inside one
+    # file is about as unambiguous as this gets. The declaration records
+    # are the fallback, and they have to be, because a producer can
+    # mis-attribute one — PHPStan evaluates another class's constant while
+    # analysing this file, and the node it hands over carries that other
+    # file's line numbers with this file's scope.
+    by_name: dict[str, dict[str, list[Symbol]]] = {}
+    for symbol in store.symbols():
+        if symbol.synthetic:
+            continue
+        by_name.setdefault(symbol.path, {}).setdefault(symbol.name, []).append(symbol)
+
+    # Declarations second: they are what a resolved site has to land on, and
     # the dump gives them with the same byte offsets as the sites.
     declarations: dict[str, tuple[str, int]] = {}
     for record in records:
@@ -181,17 +208,24 @@ def enrich_from_facts(
         if (path, line, character) in known:
             result.already_known += 1
             continue
-        target = _target(record, declarations)
-        if target is None:
-            result.outside_index += 1
-            continue
-        destination = _at(store, *target)
+        destination = _destination(store, record, relative, declarations, by_name)
         if destination is None:
-            result.unplaceable += 1
+            if _target(record, declarations) is None and not relative(
+                str(record.get("file", ""))
+            ):
+                result.outside_index += 1
+            else:
+                result.no_target_symbol += 1
             continue
         source = _at(store, path, line)
-        if source is None or source.id == destination.id:
-            result.unplaceable += 1
+        if source is None:
+            result.no_source_symbol += 1
+            continue
+        if source.id == destination.id:
+            # `$this->helper()` inside `helper` itself, and every site the
+            # index files under the class rather than the method. An edge
+            # from a symbol to itself is not a reference anyone follows.
+            result.self_edge += 1
             continue
         key = (path, line, character, destination.id)
         if key in seen:
@@ -216,6 +250,44 @@ def enrich_from_facts(
             store.add_edges(edges)
         store.bump_generation()
     return result
+
+
+def _destination(
+    store: IndexStore,
+    record: dict[str, Any],
+    relative: Any,
+    declarations: dict[str, tuple[str, int]],
+    by_name: dict[str, dict[str, list[Symbol]]],
+) -> Symbol | None:
+    """The symbol a resolved site reaches, by the most reliable route first."""
+    owner_file = relative(str(record.get("file", "")))
+    name = str(record.get("name", ""))
+    if owner_file is not None and not record.get("magic"):
+        # The declaring class's own file, from reflection, and the member's
+        # name. Nothing here can be thrown off by a mis-attributed span.
+        candidates = by_name.get(owner_file, {}).get(name, [])
+        if len(candidates) == 1:
+            return candidates[0]
+        if candidates:
+            # Several things in one file answer to the name; prefer one
+            # whose container is the class the site named.
+            owner = str(record.get("class", "")).rsplit("\\", 1)[-1]
+            for candidate in candidates:
+                container = (
+                    store.symbol(candidate.container_id) if candidate.container_id else None
+                )
+                if container is not None and container.name == owner:
+                    return candidate
+            return candidates[0]
+    placed = _target(record, declarations)
+    if placed is None:
+        return None
+    found = _at(store, *placed)
+    if found is None:
+        return None
+    # A declaration record whose span points outside its own file is one of
+    # the mis-attributed ones; taking it would invent an edge.
+    return found if found.path == placed[0] else None
 
 
 def _target(
