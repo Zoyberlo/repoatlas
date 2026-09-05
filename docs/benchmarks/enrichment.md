@@ -176,26 +176,59 @@ of the time. It is not that the model is careless: `status` appears on
 four other models and in four hundred lines of this repository, and
 nothing in the text says which `$x->status` is a `Schedule`.
 
+Repeated on the 1,832-file application, six columns chosen across a
+range of difficulty — the noise column is how many `grep -w` lines the
+name returns for each site the type engine attributes:
+
+| question | noise | true | answered | hit | precision | recall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `ReportTemplateGroup.id` | 439× | 9 | 23 | 9 | 0.39 | 1.00 |
+| `ClientCompany.name` | 359× | 11 | 25 | 9 | 0.36 | 0.82 |
+| `Note.additional_fields` | 30× | 7 | 24 | 7 | 0.29 | 1.00 |
+| `ContactInfo.client_company_id` | 29× | 11 | 18 | 11 | 0.61 | 1.00 |
+| `FinanceReport.financial_type` | 11× | 14 | 25 | 14 | 0.56 | 1.00 |
+| `ChangeLog.source_page` | 4× | 13 | 25 | 13 | 0.52 | 1.00 |
+| **mean** | | | | | **0.46** | **0.97** |
+
 ### What this does and does not prove
 
-The reference set is larastan's, so scoring the *index* arm against it
-would be circular and is not done here. The index returns those sites by
-construction; that is not a result.
+Less than it first appears, and the difference matters.
 
-The grep arm's score is not circular — grep has never seen the reference
-— and the reference is small enough to read. For `Schedule.status` it is
-four lines, `$schedule->status` in a command, a controller, a report and
-a service, and they are correct.
+Recall is 0.97 on the larger application against 0.51 on the smaller, so
+"grep misses them" is not a finding that replicated. What did replicate
+is that the agent answers two to three times as many locations as the
+type engine attributes to that model.
 
-So the claim this supports is precise: **the enrichment answers a
-question an agent with grep answers badly**, and its answers are
-corroborated three independent ways — 94.7% to 99.0% by the files' own
-text and inheritance, 0 contradictions against the compiler-backed
-oracle, and a hand-checkable reference set.
+Reading those extras is what settles it, and they are three different
+things. For `ChangeLog.source_page`, of twelve:
 
-It does not prove the index's recall is complete. larastan resolves 60.8%
-of member sites on this application, so sites it could not type are
-missing from both the index and the reference.
+- `'source_page' => 'client_company_form'` — an array key in a payload
+  that is later mass-assigned. Not a member access on a `ChangeLog`, but
+  a human asking "what writes this column" would want it.
+- `'source_page' => $change->source_page` — a genuine read the engine did
+  not type.
+- `$entry->source_page` in a test — genuine, and outside the analysed
+  directory, since only `app/` was given to PHPStan.
+
+So the reference is incomplete by construction, the agent's precision is
+understated, and **this experiment does not establish that the enrichment
+beats grep at the agent level.** What it establishes is that the two
+answer different questions. The index answers "member accesses a type
+engine can attribute to this model", exactly and only. An agent with grep
+answers "everything that looks like this column", which is a superset
+containing array keys, tests and untyped receivers.
+
+Which is more useful depends on the task. For "what breaks if I rename
+this column", the superset is right. For "which code reads a `Schedule`'s
+status rather than some other model's", the index's answer is the one
+asked for, and the `Schedule.status` case — four correct lines against
+twenty-five answered — is where that shows.
+
+The honest summary is that the *offline* result stands on its own and
+does not need this: 56% and 18.6% more resolved references, corroborated
+94.7% to 99.0% by the files themselves, contradicting the compiler-backed
+oracle nowhere. Whether an agent converts that is, as everywhere else in
+this project, not yet demonstrated.
 
 ## What it costs, and the one caveat
 
