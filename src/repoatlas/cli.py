@@ -376,6 +376,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     phpstan.add_argument("--format", choices=("text", "json"), default="text")
 
+    enrich = subcommands.add_parser(
+        "enrich",
+        help="fold a type engine's answers into an index that could not infer them",
+    )
+    enrich.add_argument("store", type=Path, help="the index to add edges to")
+    enrich.add_argument("--phpstan", type=Path, required=True, help="a phpstan dump")
+    enrich.add_argument(
+        "--phpstan-root",
+        type=Path,
+        required=True,
+        help="the directory phpstan analysed; its paths are relative to this",
+    )
+    enrich.add_argument(
+        "--prefix",
+        default="",
+        help="where that directory sits in the indexed repository, e.g. backend",
+    )
+    enrich.add_argument(
+        "--dry-run", action="store_true", help="report what would be added, add nothing"
+    )
+    enrich.add_argument("--format", choices=("text", "json"), default="text")
+
     compare = subcommands.add_parser("compare", help="score a candidate index against an oracle")
     compare.add_argument(
         "candidate", type=Path, help="a SCIP index, or a repository to parse"
@@ -1096,6 +1118,44 @@ def _cmd_phpstan(args: argparse.Namespace) -> int:
     return _EXIT_OK
 
 
+def _cmd_enrich(args: argparse.Namespace) -> int:
+    """Add what a type engine resolved and the cascade could not."""
+    from .enrich import enrich_from_phpstan
+    from .store import IndexStore
+
+    if not args.store.exists():
+        raise SystemExit(f"repoatlas: no index at {args.store}")
+    with IndexStore(args.store) as store:
+        before = store.counts().get("edges", 0)
+        try:
+            result = enrich_from_phpstan(
+                store,
+                args.phpstan,
+                phpstan_root=args.phpstan_root,
+                prefix=args.prefix,
+                dry_run=args.dry_run,
+            )
+        except PhpStanError as exc:
+            raise SystemExit(f"repoatlas: {exc}") from None
+        after = store.counts().get("edges", 0)
+    if args.format == "json":
+        print(json.dumps({**result.as_dict(), "edges_before": before, "edges_after": after}, indent=2))
+        return _EXIT_OK
+    print(f"sites in the dump:  {result.sites}")
+    print(f"  resolved:         {result.resolved}")
+    print(f"  already in the index: {result.already_known}")
+    print(f"  target outside it:    {result.outside_index}")
+    print(f"  target unplaceable:   {result.unplaceable}")
+    verb = "would add" if args.dry_run else "added"
+    print(
+        f"{verb}: {result.added} edge(s), {result.magic_added} of them to a member "
+        "nothing declares"
+    )
+    if not args.dry_run:
+        print(f"edges: {before} -> {after}")
+    return _EXIT_OK
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
     candidate, site_shapes = _load_candidate(args.candidate)
     oracle = _load(args.oracle, args.candidate if args.candidate.is_dir() else None)
@@ -1150,6 +1210,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "serve": _cmd_serve,
         "verify-oracle": _cmd_verify_oracle,
         "phpstan": _cmd_phpstan,
+        "enrich": _cmd_enrich,
         "compare": _cmd_compare,
     }
     # The subparser is declared required with a fixed set of names, so

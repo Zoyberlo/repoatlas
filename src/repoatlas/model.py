@@ -147,6 +147,17 @@ class ResolutionTier(enum.Enum):
     """
 
     ORACLE = ("oracle", 1.00)
+    TYPE_ENGINE = ("type_engine", 0.98)
+    """A type inference engine agreed, without a compiler having compiled it.
+
+    PHPStan with larastan knows what an untyped receiver holds and what an
+    Eloquent model's columns are, which is more than any SCIP indexer on
+    this stack sees. It is not ground truth the way a compiler's own index
+    is — an inference can be wrong where a compilation cannot — so it sits
+    a rung below ORACLE rather than sharing it, and a report can tell the
+    two apart.
+    """
+
     IMPORT_MAP = ("import_map", 0.95)
     SAME_MODULE = ("same_module", 0.90)
     IMPORT_SUFFIX = ("import_suffix", 0.85)
