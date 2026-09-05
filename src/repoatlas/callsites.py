@@ -100,6 +100,7 @@ def select_tasks(
     min_sites: int = 3,
     max_sites: int = 40,
     min_collisions: int = 1,
+    min_external: int = 0,
 ) -> list[CallSiteTask]:
     """Symbols worth asking about, hardest for grep first.
 
@@ -107,6 +108,12 @@ def select_tasks(
     reading exercise. Between those, the ones ordered first are the ones
     whose name is used elsewhere for something else, because that is
     where a name search stops being an answer.
+
+    ``min_external`` requires that many uses to sit outside the symbol's
+    own file. Without it, ranking by name collisions alone picks the
+    variable a hundred test files each call `report`: twenty tasks whose
+    every use is in the file that declares them, which asks nothing of a
+    reviewer who has that file in the diff.
     """
     from .eval.facts import reference_facts
 
@@ -139,6 +146,10 @@ def select_tasks(
         }
         if not (min_sites <= len(sites) <= max_sites):
             continue
+        if min_external:
+            outside = sum(1 for site in sites if site[0] != symbol.path)
+            if outside < min_external:
+                continue
         shared = collisions.get(symbol.name, 1)
         if shared < min_collisions:
             continue

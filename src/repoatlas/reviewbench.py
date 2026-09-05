@@ -325,7 +325,11 @@ def run_reviewbench(
             raise HistoryError(
                 f"unknown arm {name!r}; choose from {', '.join(REVIEW_ARMS)}"
             )
-    tasks = select_tasks(oracle, root, limit=limit)
+    # Two uses outside the declaring file, at least: a reviewer already
+    # has that file in the diff, so a symbol used only within it asks
+    # nothing. Selecting on that beats dropping afterwards, which on the
+    # larger application discarded all twenty tasks and ran nothing.
+    tasks = select_tasks(oracle, root, limit=limit, min_external=2)
     if not tasks:
         raise HistoryError("no symbol in this oracle has enough use sites to ask about")
 
