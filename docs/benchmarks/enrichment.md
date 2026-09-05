@@ -89,6 +89,56 @@ different model, which is a different question with the same spelling.
 What the table says is how much a reader wades through, and it is the
 same kind of claim as the 7× already measured for `find_references`.
 
+## Does it generalise?
+
+The mechanism does. `repoatlas enrich --facts` takes JSON Lines from any
+producer that can say "the member at this byte range resolves to this
+class, declared in this file"; PHPStan is the first, not the only one the
+format admits.
+
+Whether it *pays* for a given language is a separate question with a
+number, and `--dry-run` answers it before anything is built. What matters
+is not how much a type engine resolves but how much of that lands inside
+the repository. For PHP with larastan the split was 627 in and 3,918 out.
+
+### The frontend of the same application does not have this prize
+
+The measurement first, since it is what settles it. Member and call sites
+the index cannot resolve, on the 1,832-file application:
+
+| what the unresolved name is | share |
+| --- | ---: |
+| nothing in the repository carries it | 44.8% |
+| a JavaScript builtin (`map`, `filter`, `then`, …) | 16.9% |
+| a Vue framework member (`$refs`, `$route`, `$q`, …) | 4.8% |
+| a repository symbol carries the same name | 33.6% |
+
+Two thirds of it is npm and the browser. A TypeScript type engine would
+resolve those correctly and point them at `node_modules`, which this
+index does not hold and should not — an edge into a file nobody will open
+is not navigation, and that is the same 86% that made the PHP number 583
+rather than 4,272.
+
+The last row is a loose upper bound, not a prize. Probing the largest
+category, `this.x` inside components, the picture is that the extraction
+is already doing its job: one component with 92 unresolved `this.x` had
+128 symbols indexed — its component, 86 methods, 34 `data()` fields — and
+84 of the 92 were `$refs`, `$route`, `$nextTick`, `$bus`, `$emit`. Of the
+5,226 unresolved `this.x` across the frontend, resolving them through the
+files each component actually imports reaches 207, and inspection shows
+most of those are coincidence: `ToolBar.vue`'s `this.loading` matching a
+`loading` in an unrelated component.
+
+So the asymmetry is not about PHP and JavaScript. It is that Eloquent
+invents members **that belong to the repository's own models**, from the
+repository's own migrations, while Vue and Quasar's `$refs` and `$q`
+belong to the framework. One is a gap in what the index knows about its
+own code; the other is the boundary of what it should hold at all.
+
+The rule that falls out, and the reason `--dry-run` exists: **write a
+producer for a language when its framework invents members that belong to
+the repository.** Laravel does. Vue does not.
+
 ## What it costs, and the one caveat
 
 The edges carry their own tier, `type_engine` at 0.98, one rung below

@@ -381,12 +381,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="fold a type engine's answers into an index that could not infer them",
     )
     enrich.add_argument("store", type=Path, help="the index to add edges to")
-    enrich.add_argument("--phpstan", type=Path, required=True, help="a phpstan dump")
     enrich.add_argument(
-        "--phpstan-root",
+        "--facts",
         type=Path,
         required=True,
-        help="the directory phpstan analysed; its paths are relative to this",
+        help="resolution facts as JSON Lines, from any type engine; "
+        "`repoatlas phpstan` writes them for PHP",
+    )
+    enrich.add_argument(
+        "--facts-root",
+        type=Path,
+        required=True,
+        help="the directory the producer analysed; its paths are relative to this",
     )
     enrich.add_argument(
         "--prefix",
@@ -1120,7 +1126,7 @@ def _cmd_phpstan(args: argparse.Namespace) -> int:
 
 def _cmd_enrich(args: argparse.Namespace) -> int:
     """Add what a type engine resolved and the cascade could not."""
-    from .enrich import enrich_from_phpstan
+    from .enrich import enrich_from_facts
     from .store import IndexStore
 
     if not args.store.exists():
@@ -1128,10 +1134,10 @@ def _cmd_enrich(args: argparse.Namespace) -> int:
     with IndexStore(args.store) as store:
         before = store.counts().get("edges", 0)
         try:
-            result = enrich_from_phpstan(
+            result = enrich_from_facts(
                 store,
-                args.phpstan,
-                phpstan_root=args.phpstan_root,
+                args.facts,
+                facts_root=args.facts_root,
                 prefix=args.prefix,
                 dry_run=args.dry_run,
             )
@@ -1146,6 +1152,9 @@ def _cmd_enrich(args: argparse.Namespace) -> int:
     print(f"  already in the index: {result.already_known}")
     print(f"  target outside it:    {result.outside_index}")
     print(f"  target unplaceable:   {result.unplaceable}")
+    # The dry run is how a language decides whether a producer is worth
+    # writing: what matters is not how much the engine resolves but how
+    # much of it lands on something the index holds.
     verb = "would add" if args.dry_run else "added"
     print(
         f"{verb}: {result.added} edge(s), {result.magic_added} of them to a member "

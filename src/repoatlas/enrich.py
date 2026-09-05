@@ -1,5 +1,30 @@
 """Fold a type engine's answers into an index that could not infer them.
 
+The format is one JSON object per line and deliberately not PHP-shaped,
+because the mechanism is not: any tool that can say "the member at this
+byte range resolves to this class, declared in this file" can feed it.
+
+    {"kind": "call"|"property"|"static_call"|"constant"|"new"|"def",
+     "path": "<absolute path>", "line": <0-based>,
+     "start": <byte offset>, "end": <byte offset>,
+     "name": "<member or class name>",
+     "resolved": true|false, "class": "<owning class>",
+     "file": "<where that class lives>", "magic": true|false,
+     "fqn": "<Class::member>"}          # `def` records only
+
+`def` records place a declaration; the rest are use sites. A site joins to
+a declaration through `fqn`, and a `magic` site — one whose member has no
+declaration anywhere — falls back to the class that owns it.
+
+Whether a producer is worth writing for a given language is a question
+with a number, and `--dry-run` answers it: what matters is not how much
+the engine resolves but how much of that lands inside the repository.
+For PHP with larastan the split was 627 in and 3,918 out. Measured the
+same way, this stack's frontend has no such prize — two thirds of what it
+cannot resolve is npm and the browser, and a type engine would resolve it
+into `node_modules`, which is not navigation. See
+docs/benchmarks/enrichment.md.
+
 The cascade resolves a member through its receiver, and on a Laravel
 application the receiver usually has no declared type: `$ad->client()`
 says nothing a parser can follow, and `$ad->balance_due` names a column
@@ -30,7 +55,7 @@ from .model import Edge, EdgeKind, ResolutionTier, SourceRange, Symbol
 from .oracle.phpstan import _EDGE_KINDS, PhpStanError, _Offsets
 from .store import IndexStore
 
-__all__ = ["EnrichmentResult", "enrich_from_phpstan"]
+__all__ = ["EnrichmentResult", "enrich_from_facts", "enrich_from_phpstan"]
 
 
 @dataclass(slots=True)
@@ -70,24 +95,24 @@ class EnrichmentResult:
         }
 
 
-def enrich_from_phpstan(
+def enrich_from_facts(
     store: IndexStore,
     dump: Path | str,
     *,
-    phpstan_root: Path | str,
+    facts_root: Path | str,
     prefix: str = "",
     dry_run: bool = False,
 ) -> EnrichmentResult:
     """Add the edges a type engine resolved and the cascade could not.
 
-    ``phpstan_root`` is the directory PHPStan analysed, which is what its
-    absolute paths are relative to; ``prefix`` is where that directory
+    ``facts_root`` is the directory the producer analysed, which is what
+    its absolute paths are relative to; ``prefix`` is where that directory
     sits inside the indexed repository, so a backend analysed on its own
     still lands on ``backend/...`` paths. Both are needed because the
     analysis is often run over a copy, and guessing between the two roots
     silently produces an enrichment that matches nothing.
     """
-    root = Path(phpstan_root).resolve()
+    root = Path(facts_root).resolve()
     cleaned = prefix.strip("/")
     records = _records(Path(dump))
 
@@ -238,3 +263,22 @@ def _records(dump: Path) -> list[dict[str, Any]]:
         if isinstance(record, dict):
             records.append(record)
     return records
+
+
+def enrich_from_phpstan(
+    store: IndexStore,
+    dump: Path | str,
+    *,
+    phpstan_root: Path | str,
+    prefix: str = "",
+    dry_run: bool = False,
+) -> EnrichmentResult:
+    """The PHP producer's spelling of :func:`enrich_from_facts`.
+
+    Kept because PHPStan is the first producer and the one with a
+    measured result, and because a caller that already knows it is holding
+    a phpstan dump should not have to translate the argument names.
+    """
+    return enrich_from_facts(
+        store, dump, facts_root=phpstan_root, prefix=prefix, dry_run=dry_run
+    )
