@@ -257,9 +257,36 @@ close.
 ### Does ranking only matter when the budget is tight?
 
 The obvious objection: an agent has a 200,000-token context, so ranking
-is a trick for small budgets and will stop mattering as they grow. It is
-answerable offline, deterministically, at no cost. Symbol recall over 120
-commits, the same index, the same renderer, four budgets:
+is a trick for small budgets and will stop mattering as they grow.
+
+Before the measurement, the arithmetic, because a budget in tokens means
+nothing without the size of the thing being summarised:
+
+| repository | files | full skeleton | 2,000 tokens is | 32,000 is |
+| --- | ---: | ---: | ---: | ---: |
+| the test application | 363 | 59,126 | 3.4% | **54%** |
+| a larger one on the same stack | 1,832 | **510,281** | **0.39%** | 6.3% |
+
+That is the flaw in reading the table below as a budget sweep. On a
+59,000-token repository the 32,000 row is not "a generous budget", it is
+*showing half the repository*, and of course an unranked dump nearly
+catches up when it is showing half of everything. On a real application
+of 1,832 files there is no such regime: the whole skeleton is 510,000
+tokens, two and a half times a 200,000-token context, so "give the agent
+everything" is not an option that exists.
+
+There is a second ceiling, from the client rather than the model. Claude
+Code warns at 10,000 tokens per tool result and truncates at 25,000, so a
+32,000-token map is one the client cuts in the middle. About 8,000 is the
+real upper bound for a single answer.
+
+So the honest reading is the reverse of the objection: the bigger and
+more realistic the repository, the smaller the fraction any budget buys,
+and the small-fraction end of this table is where ranking is worth nine
+times rather than two.
+
+Symbol recall over 120 commits, the same index, the same renderer, four
+budgets:
 
 | tokens | unranked skeleton | grep | ranked map | map ÷ skeleton | map − skeleton |
 | ---: | ---: | ---: | ---: | ---: | ---: |
