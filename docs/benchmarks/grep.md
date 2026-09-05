@@ -343,14 +343,48 @@ the map covers six percent of the repository. On the small application
 the same comparison read 1.08× at 2,000 tokens and a tie above it, which
 is why measuring on one repository is not measuring.
 
+### And the agent does not convert it
+
+The ablation, 44 commits walked and 32 scored, three arms with identical
+tools and 2,000 tokens of context in front of the same question. Paired
+on the task, 95% bootstrap:
+
+| paired difference, symbol recall | point | interval | W/L |
+| --- | ---: | ---: | ---: |
+| skeleton → **map** (the graph) | **−0.029** | [−0.105, +0.051] | 4/7 |
+| grep → map | +0.050 | [−0.004, +0.117] | 7/3 |
+| grep → **skeleton** | **+0.079** | **[+0.019, +0.145]** | 8/2 |
+
+One of those clears zero, and it is not the graph. Handing the agent
+2,000 tokens of repository outline beats handing it nothing, by 0.079
+symbol recall on eight tasks against two. *Ranking* that outline moves
+the point estimate the wrong way and loses more tasks than it wins.
+
+Offline, on this same repository at this same budget, the two contexts
+score 0.034 and 0.289. The map contains eight times as much of the
+answer and the agent ends up in the same place, because it does not
+read the context and stop: it reads it, then greps, and grep recovers
+what a bad outline missed. The map's informational advantage is real and
+the agent spends it on fewer turns rather than on better answers — 14.2
+turns against grep's 16.9, 275,000 tokens against 299,000, the cheapest
+arm of the three.
+
+That is a negative result for the ranked map as *agent context* on a
+363-file repository, and it is stated here as such.
+
+What it does not settle is the case the previous section measured. On
+this repository an unranked outline at 2,000 tokens still contains 0.034
+of the answer, which is little but not nothing, and an agent with grep
+can climb out of little. On the 1,832-file application the same outline
+contains **0.000** at every budget up to 32,000 tokens. Whether an agent
+can climb out of nothing as easily as it climbs out of little is the
+experiment that decides whether the graph earns its place, and it has not
+been run.
+
 So the graph earns one thing and it is not resolution: it is the ability
-to answer *within a budget* when nothing has told you where to look.
-Without it there are two options, dump or refuse, and Serena does both.
-Whether that ability converts into a better agent is still unproven —
-n=24 gave 0.349 against grep's 0.317 with a confidence interval crossing
-zero, and this n=8 gives nothing at all. If a properly powered run puts
-this level with Serena on localisation, the graph is not paying for
-itself and should go.
+to answer *within a budget* when nothing has told you where to look. What
+it has not yet earned is a better answer from an agent that also has
+grep.
 
 ## What the published comparisons say
 
