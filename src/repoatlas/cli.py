@@ -62,7 +62,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -71,6 +73,7 @@ from . import __version__
 from .eval.compare import ComparisonOptions, compare_snapshots
 from .eval.report import to_json, to_markdown
 from .model import IndexSnapshot
+from .oracle.phpstan import PhpStanError, read_phpstan, run_phpstan
 from .oracle.scip import ScipError, cross_check, read_scip
 
 if TYPE_CHECKING:  # pragma: no cover - imported only for type checking
@@ -324,6 +327,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="walk the filesystem instead of asking git which files are tracked",
     )
 
+    phpstan = subcommands.add_parser(
+        "phpstan",
+        help="resolve a PHP project with PHPStan, as an oracle and a type source",
+    )
+    phpstan.add_argument("root", type=Path, help="the PHP project to analyse")
+    phpstan.add_argument(
+        "--work",
+        type=Path,
+        help="scratch directory for the generated config and cache "
+        "(default: a temporary one; nothing is written into the project)",
+    )
+    phpstan.add_argument(
+        "--out", type=Path, help="write the dump here instead of leaving it in --work"
+    )
+    phpstan.add_argument("--phpstan", help="the phpstan executable")
+    phpstan.add_argument(
+        "--larastan",
+        type=Path,
+        help="path to larastan's extension.neon, for Eloquent's undeclared columns",
+    )
+    phpstan.add_argument(
+        "--paths",
+        nargs="*",
+        default=(),
+        help="directories under the root to analyse (default: the usual Laravel ones)",
+    )
+    phpstan.add_argument("--level", type=int, default=0)
+    phpstan.add_argument("--memory-limit", default="2G")
+    phpstan.add_argument("--timeout", type=int, default=3600)
+    phpstan.add_argument(
+        "--read",
+        type=Path,
+        help="read an existing dump instead of running phpstan",
+    )
+    phpstan.add_argument("--format", choices=("text", "json"), default="text")
+
     compare = subcommands.add_parser("compare", help="score a candidate index against an oracle")
     compare.add_argument(
         "candidate", type=Path, help="a SCIP index, or a repository to parse"
@@ -382,10 +421,18 @@ def _build(root: Path, *, use_git: bool = True) -> BuildResult:
         raise SystemExit(f"repoatlas: {exc}") from None
 
 
-def _load(path: Path) -> IndexSnapshot:
-    """Read a SCIP index, or parse a directory into one."""
+def _load(path: Path, root: Path | None = None) -> IndexSnapshot:
+    """Read a SCIP index or a PHPStan dump, or parse a directory into one."""
     if path.is_dir():
         return _build(path).snapshot
+    if path.suffix.lower() in (".jsonl", ".ndjson"):
+        # A PHPStan dump holds absolute paths, so it needs to be told which
+        # root they are relative to; the candidate's is the right one, since
+        # the comparison is only meaningful over the same tree.
+        try:
+            return read_phpstan(path, root or path.parent).snapshot
+        except PhpStanError as exc:
+            raise SystemExit(f"repoatlas: {exc}") from None
     try:
         return read_scip(path)
     except FileNotFoundError:
@@ -966,9 +1013,57 @@ def _load_candidate(
     return build.snapshot, shapes
 
 
+def _cmd_phpstan(args: argparse.Namespace) -> int:
+    """Resolve a PHP project with a type engine, and say what it found.
+
+    Two uses, and the summary is written for both. As an oracle it grades
+    this index on the half `scip-php` cannot see. As a type source it says
+    what a receiver holds where nothing declares it, which is the largest
+    category this index leaves unresolved on a Laravel application.
+    """
+    root = args.root.resolve()
+    with tempfile.TemporaryDirectory(prefix="repoatlas-phpstan-") as temporary:
+        work = args.work.resolve() if args.work else Path(temporary)
+        try:
+            if args.read is not None:
+                dump = args.read
+            else:
+                dump = run_phpstan(
+                    root,
+                    work,
+                    phpstan=args.phpstan,
+                    paths=tuple(args.paths),
+                    level=args.level,
+                    larastan=args.larastan,
+                    memory_limit=args.memory_limit,
+                    timeout=args.timeout,
+                )
+            result = read_phpstan(dump, root)
+        except PhpStanError as exc:
+            raise SystemExit(f"repoatlas: {exc}") from None
+        if args.out is not None:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(dump, args.out)
+    if args.format == "json":
+        print(json.dumps(result.as_dict(), indent=2))
+    else:
+        print(f"definitions: {result.definitions}")
+        print(f"sites:       {result.sites}")
+        print(
+            f"resolved:    {result.resolved} ({result.resolution_rate:.1%}), "
+            f"{result.linked} of them onto a definition in these files"
+        )
+        print(
+            f"undeclared:  {result.magic} resolved to a member nothing writes down"
+        )
+        if args.out is not None:
+            print(f"wrote {args.out}")
+    return _EXIT_OK
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
     candidate, site_shapes = _load_candidate(args.candidate)
-    oracle = _load(args.oracle)
+    oracle = _load(args.oracle, args.candidate if args.candidate.is_dir() else None)
     options = ComparisonOptions(
         policy=args.policy,
         case_fold_paths=args.fold_case,
@@ -1019,6 +1114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "localize": _cmd_localize,
         "serve": _cmd_serve,
         "verify-oracle": _cmd_verify_oracle,
+        "phpstan": _cmd_phpstan,
         "compare": _cmd_compare,
     }
     # The subparser is declared required with a fixed set of names, so

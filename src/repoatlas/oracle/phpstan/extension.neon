@@ -1,0 +1,17 @@
+parameters:
+	bootstrapFiles:
+		- bootstrap.php
+
+services:
+	-
+		class: RepoAtlas\PhpStan\SiteCollector
+		tags:
+			- phpstan.collector
+	-
+		class: RepoAtlas\PhpStan\DeclarationCollector
+		tags:
+			- phpstan.collector
+	-
+		class: RepoAtlas\PhpStan\DumpRule
+		tags:
+			- phpstan.rules.rule
