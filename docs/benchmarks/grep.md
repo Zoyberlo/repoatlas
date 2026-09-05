@@ -215,6 +215,54 @@ matching that name is, by construction, the same 0.78 as grep, because it
 *is* grep with a file-level index. That is the whole of the difference,
 and it is the whole of the case for the extra machinery.
 
+## What the graph is for
+
+An LSP has no map. Serena, which is one, has no ranking of any kind:
+`pagerank` and `rank` appear nowhere in its sources, and when an answer
+does not fit it refuses rather than fits, capping a reply at 150,000
+characters and telling the caller to change the query. Its
+`get_symbols_overview` will dump a directory's symbols, unranked. That is
+a real difference in kind, and the localisation benchmark shows what it
+costs.
+
+| 8 commits, three arms | grep | this index | Serena |
+| --- | ---: | ---: | ---: |
+| symbol recall | 0.379 | 0.379 | 0.441 |
+| file recall | 1.000 | 0.750 | 0.875 |
+| turns | 17.1 | 17.9 | 15.4 |
+| tokens | 320,853 | 338,783 | 262,487 |
+| **server calls** | — | **4.5** | **0.0** |
+
+**Eight commits per arm, not the planned forty-four**: the run stopped on
+a spend limit, and at that size none of the first four rows means
+anything. The last row does, because it is not a score but a count, and
+it is 0 out of 8: given a question about which files a change touches,
+the agent with Serena attached never called Serena once. It went to
+`Bash`, `Grep` and `Read`, 14.4 calls a run between them. A symbol server
+has nothing to say to "what is this repository built around", so the
+agent did not ask. The published ablation saw the same thing from the
+other side: a graph tool went unused in 58% of trials, and on localisation
+specifically 0–6% of the time.
+
+The index arm was called 4.5 times a run, and three of those were
+`file_outline` with `repo_map` behind it — the orientation half, the half
+that only exists because there is a ranked graph to draw it from.
+
+What ranking is worth, at the same budget, is the first row of the table
+in the previous section: an unranked skeleton of the same repository
+scores 0.028 where the ranked map scores 0.309, eleven times worse. That
+is the measurement of "what if we dropped the graph", and it is not
+close.
+
+So the graph earns one thing and it is not resolution: it is the ability
+to answer *within a budget* when nothing has told you where to look.
+Without it there are two options, dump or refuse, and Serena does both.
+Whether that ability converts into a better agent is still unproven —
+n=24 gave 0.349 against grep's 0.317 with a confidence interval crossing
+zero, and this n=8 gives nothing at all. If a properly powered run puts
+this level with Serena on localisation, the graph is not paying for
+itself and should go.
+
 ## What the published comparisons say
 
 | study | task | index versus grep |
