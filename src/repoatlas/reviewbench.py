@@ -55,11 +55,52 @@ __all__ = [
 # makes the two arms differ by the index alone.
 _NO_SHELL = ("Read",)
 
+# What "no checkout" has to mean, spelled out, because `--allowedTools`
+# alone does not withhold anything: the first run of this benchmark had
+# the read arm reaching for Bash and grepping with it, and scoring 1.000.
+_WITHHELD = (
+    # Anything that runs a command, searches a tree, or spawns something
+    # that can. The list is explicit rather than "everything but Read"
+    # because ToolSearch has to stay: it is how the MCP tools are loaded,
+    # and denying it would cripple the arm under test instead of the
+    # baseline. Twice now a hole here has invalidated a run — Bash first,
+    # then Monitor, which takes a shell command of its own.
+    "Bash",
+    "Grep",
+    "Glob",
+    "LS",
+    "Task",
+    "Agent",
+    "Monitor",
+    "Workflow",
+    "Skill",
+    "WebSearch",
+    "WebFetch",
+    "Edit",
+    "Write",
+    "NotebookEdit",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "RemoteTrigger",
+    "SendMessage",
+    "ScheduleWakeup",
+    "PushNotification",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "TaskOutput",
+    "TaskStop",
+    "ListAgents",
+    "Artifact",
+)
+
 REVIEW_ARMS: dict[str, Arm] = {
     "read": Arm(
         name="read",
         server=None,
         allowed_tools=_NO_SHELL,
+        denied_tools=_WITHHELD,
         hint=(
             "You have no shell and no search: there is no checkout. You may read "
             "a file with Read if you can work out its path."
@@ -69,6 +110,7 @@ REVIEW_ARMS: dict[str, Arm] = {
         name="index",
         server="repoatlas",
         allowed_tools=(*_NO_SHELL, "mcp__repoatlas__*"),
+        denied_tools=_WITHHELD,
         hint=(
             "You have no shell and no search: there is no checkout. An MCP server "
             "called repoatlas is attached, with an index of this repository: symbol "

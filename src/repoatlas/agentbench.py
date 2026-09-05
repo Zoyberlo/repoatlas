@@ -75,7 +75,18 @@ class Arm:
     """The MCP server to attach, or ``None`` for the arm that has only a shell."""
 
     allowed_tools: tuple[str, ...]
-    hint: str
+    denied_tools: tuple[str, ...] = ()
+    """Tools this arm must not have, whatever it asks for.
+
+    `--allowedTools` pre-approves; it does not withhold. Under
+    `--permission-mode dontAsk` an arm listing only `Read` still reached
+    for `Bash` three times a run and grepped with it, which turned a
+    benchmark about having no shell into a benchmark about having one.
+    Withholding takes `--disallowedTools`, and it is checked rather than
+    trusted: every run records which tools it called.
+    """
+
+    hint: str = ""
     context: str = ""
     """What to put in the prompt before the task: ``map``, ``skeleton``, or nothing.
 
@@ -256,6 +267,11 @@ def claude_command(
         str(max_turns),
         "--allowedTools",
         ",".join(arm.allowed_tools),
+        *(
+            ["--disallowedTools", ",".join(arm.denied_tools)]
+            if arm.denied_tools
+            else []
+        ),
     ]
     if model:
         command += ["--model", model]

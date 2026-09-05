@@ -56,6 +56,31 @@ class TestTheArms:
             assert "Glob" not in allowed
             assert not any(tool.startswith("Bash") for tool in allowed)
 
+    def test_the_shell_is_withheld_and_not_merely_left_off_the_list(self) -> None:
+        # `--allowedTools` pre-approves; it does not withhold. The first
+        # run of this benchmark had the read arm calling Bash three times
+        # a run, grepping with it, and scoring 1.000.
+        from repoatlas.agentbench import claude_command
+
+        for name in ("read", "index"):
+            arm = REVIEW_ARMS[name]
+            assert "Bash" in arm.denied_tools
+            command = claude_command(
+                "claude", "p", arm, mcp_config_path=None, model=None, max_turns=5
+            )
+            assert "--disallowedTools" in command
+            denied = command[command.index("--disallowedTools") + 1]
+            for tool in ("Bash", "Grep", "Glob"):
+                assert tool in denied.split(",")
+
+    def test_the_reference_arm_keeps_its_shell(self) -> None:
+        from repoatlas.agentbench import claude_command
+
+        command = claude_command(
+            "claude", "p", REVIEW_ARMS["grep"], mcp_config_path=None, model=None, max_turns=5
+        )
+        assert "--disallowedTools" not in command
+
     def test_file_reading_is_held_constant_so_only_the_index_differs(self) -> None:
         read, index = REVIEW_ARMS["read"], REVIEW_ARMS["index"]
         assert "Read" in read.allowed_tools and "Read" in index.allowed_tools
