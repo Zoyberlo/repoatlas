@@ -65,6 +65,30 @@ resolutions that this check cannot credit. It is a bound on the damage
 rather than a proof: if the enrichment were noise, this number would not
 be 99%.
 
+## What it lets you ask
+
+"Which code reads this column" is the question the new edges answer, and
+it is one a text search answers badly, because a column name is an
+ordinary English word that also appears in migrations, blade templates,
+other models' columns and comments. Lines a reader would have to look
+through, either way:
+
+| column | sites the index names | lines `grep -w` returns | ratio |
+| --- | ---: | ---: | ---: |
+| `name` | 28 | 849 | **30.3×** |
+| `email` | 23 | 407 | 17.7× |
+| `id` | 81 | 1,062 | 13.1× |
+| `phone` | 24 | 258 | 10.8× |
+| `dates` | 33 | 275 | 8.3× |
+| `heim_dates` | 25 | 82 | 3.3× |
+
+This is a cost ratio, not precision and recall. Grading the index's
+answers against larastan would be circular, since larastan produced them,
+and grep's extra lines are not all wrong — some are the same column on a
+different model, which is a different question with the same spelling.
+What the table says is how much a reader wades through, and it is the
+same kind of claim as the 7× already measured for `find_references`.
+
 ## What it costs, and the one caveat
 
 The edges carry their own tier, `type_engine` at 0.98, one rung below
