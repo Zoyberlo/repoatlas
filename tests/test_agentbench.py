@@ -226,3 +226,40 @@ class TestArms:
             [_event(type="system", subtype="init", mcp_servers=[{"name": "serena", "status": "failed"}])]
         )
         assert trace.mcp_attached is False
+
+
+class TestTheAblationArms:
+    """The two arms that answer "is the graph worth anything".
+
+    Both get the same budget of context in front of the same task with the
+    same tools; one is ranked by the graph and one is not. A tool-shaped
+    arm cannot answer this, because a run where the agent never called the
+    tool has measured the agent, not the tool.
+    """
+
+    def test_both_get_the_same_tools_as_grep_and_no_server(self) -> None:
+        for name in ("map", "skeleton"):
+            arm = ARMS[name]
+            assert arm.server is None and not arm.mcp
+            assert arm.allowed_tools == ARMS["grep"].allowed_tools
+
+    def test_only_the_ranking_differs(self) -> None:
+        assert ARMS["map"].context == "map"
+        assert ARMS["skeleton"].context == "skeleton"
+        assert ARMS["grep"].context == ""
+
+    def test_the_context_goes_before_the_task(self) -> None:
+        prompt = task_prompt("fix the invoice total", ARMS["map"], "src/a.py:\n  1 def f")
+        assert prompt.startswith("src/a.py:")
+        assert prompt.index("src/a.py") < prompt.index("fix the invoice total")
+
+    def test_an_arm_without_context_is_unchanged_by_the_new_parameter(self) -> None:
+        assert task_prompt("subject", ARMS["grep"]) == task_prompt(
+            "subject", ARMS["grep"], "   "
+        )
+
+    def test_nothing_is_rendered_when_no_arm_asked_for_it(self) -> None:
+        from repoatlas.agentbench import _contexts
+
+        assert _contexts(None, None, None, ("grep", "repoatlas"), 2000) == {}
+

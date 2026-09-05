@@ -61,6 +61,7 @@ comparison runs in CI without a parser toolchain. Only ``index``, and
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import shutil
 import sys
@@ -163,6 +164,18 @@ def build_parser() -> argparse.ArgumentParser:
     agentbench.add_argument("--max-files", type=int, default=8)
     agentbench.add_argument("--timeout", type=int, default=900, help="seconds per run")
     agentbench.add_argument("--out", type=Path, help="write the JSON result here")
+    agentbench.add_argument(
+        "--resume",
+        type=Path,
+        help="a previous --out --with-runs file; its scored runs are kept and not "
+        "paid for again, which is how a walk survives a usage window",
+    )
+    agentbench.add_argument(
+        "--budget",
+        type=int,
+        default=2000,
+        help="tokens of context for the map and skeleton arms",
+    )
     agentbench.add_argument(
         "--with-runs", action="store_true", help="include every run in the JSON"
     )
@@ -583,6 +596,8 @@ def _cmd_agentbench(args: argparse.Namespace) -> int:
     import tempfile
 
     from .agentbench import AgentRun, iter_arms, run_agentbench
+
+    _AGENT_RUN_FIELDS = {field.name for field in dataclasses.fields(AgentRun)}
     from .localize import HistoryError
 
     root: Path = args.root.resolve()
@@ -594,6 +609,21 @@ def _cmd_agentbench(args: argparse.Namespace) -> int:
         state = f"recall {run.symbol_recall:.2f}, {run.tokens} tokens" if run.ok else run.reason
         print(f"{run.sha} {run.arm:>9} #{run.repeat}: {state}", file=sys.stderr)
 
+    earlier: list[AgentRun] = []
+    if args.resume is not None and args.resume.exists():
+        earlier = [
+            AgentRun(
+                **{
+                    key: value
+                    for key, value in row.items()
+                    if key in _AGENT_RUN_FIELDS and key != "tool_calls"
+                },
+                tool_calls=dict(row.get("tool_calls") or {}),
+            )
+            for row in json.loads(args.resume.read_text(encoding="utf-8")).get("runs", [])
+            if row.get("ok")
+        ]
+        print(f"resuming past {len(earlier)} scored run(s)", file=sys.stderr)
     try:
         result = run_agentbench(
             root,
@@ -607,10 +637,15 @@ def _cmd_agentbench(args: argparse.Namespace) -> int:
             max_files=args.max_files,
             timeout=args.timeout,
             serena=args.serena,
+            budget=args.budget,
+            done={(run.sha, run.arm, run.repeat) for run in earlier},
             progress=progress,
         )
     except HistoryError as exc:
         raise SystemExit(f"repoatlas: {exc}") from None
+    # The resumed runs are part of the answer, not history: put them back
+    # before anything is scored or written.
+    result.runs = [*earlier, *result.runs]
     if args.format == "json" or args.out:
         payload = json.dumps(result.as_dict(include_runs=args.with_runs), indent=2) + "\n"
         if args.out:

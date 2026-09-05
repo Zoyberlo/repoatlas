@@ -40,9 +40,12 @@ from .localize import (
     _git,
     _Locator,
     _prepare_clone,
+    _seed_index,
     _touched_symbols,
     commit_cases,
+    skeleton_prefix,
 )
+from .rank import MapOptions, RankOptions, rank_symbols, render_map
 from .store import IndexStore, update_store
 
 __all__ = [
@@ -73,6 +76,15 @@ class Arm:
 
     allowed_tools: tuple[str, ...]
     hint: str
+    context: str = ""
+    """What to put in the prompt before the task: ``map``, ``skeleton``, or nothing.
+
+    The tool-shaped arms answer "does an agent given this index do better".
+    These answer a narrower question the tool-shaped ones cannot, because
+    an agent that never calls a tool tells you nothing about the tool: put
+    the same number of tokens in front of it either way, ranked by the
+    graph or not ranked at all, and the difference is the graph.
+    """
 
     @property
     def mcp(self) -> bool:
@@ -120,6 +132,34 @@ ARMS: dict[str, Arm] = {
             "resolved references. Its tools can answer this without reading whole "
             "files."
         ),
+    ),
+    # The ablation. Same tools as grep, same task, and the same number of
+    # tokens of context in front of it either way: `map` is what the ranked
+    # graph draws, `skeleton` is the same repository listed in path order
+    # with no ranking at all, which is what is left if the graph goes.
+    # Offline the two score 0.309 and 0.028 symbol recall; whether an agent
+    # converts that is the whole question, and the tool-shaped arms cannot
+    # answer it, because an agent that never calls a tool has measured
+    # nothing about the tool.
+    "map": Arm(
+        name="map",
+        server=None,
+        allowed_tools=_READ_ONLY_TOOLS,
+        hint=(
+            "A ranked map of this repository, drawn around the words of the task, "
+            "is above. Use Grep, Glob and Read to confirm and extend it."
+        ),
+        context="map",
+    ),
+    "skeleton": Arm(
+        name="skeleton",
+        server=None,
+        allowed_tools=_READ_ONLY_TOOLS,
+        hint=(
+            "An outline of this repository is above. Use Grep, Glob and Read to "
+            "confirm and extend it."
+        ),
+        context="skeleton",
     ),
     # Serena is the closest thing anyone ships to what this project does, and
     # the usual recommendation for Claude Code, so it gets an arm rather than
@@ -170,12 +210,18 @@ _ANSWER_RULES = (
 )
 
 
-def task_prompt(subject: str, arm: Arm) -> str:
-    """The task as the agent sees it: the commit subject, posed as a change to locate."""
+def task_prompt(subject: str, arm: Arm, context: str = "") -> str:
+    """The task as the agent sees it: the commit subject, posed as a change to locate.
+
+    An arm with a context prefix gets it first, before the task, because
+    that is where a map would be if the agent had asked for one, and
+    because a wall of paths after the question reads as an afterthought.
+    """
+    preamble = f"{context.rstrip()}\n\n" if context.strip() else ""
     return (
-        "You are localising a change in this repository. Find the files and, where "
-        "you can, the functions, methods or classes that would have to change for "
-        f"this task:\n\n{subject.strip()}\n\n{arm.hint} {_ANSWER_RULES}"
+        f"{preamble}You are localising a change in this repository. Find the files "
+        "and, where you can, the functions, methods or classes that would have to "
+        f"change for this task:\n\n{subject.strip()}\n\n{arm.hint} {_ANSWER_RULES}"
     )
 
 
@@ -476,6 +522,9 @@ class AgentBenchResult:
     runs: list[AgentRun] = field(default_factory=list)
     walked: int = 0
     tasks: int = 0
+    skipped: int = 0
+    """Runs a resumed walk did not pay for again, because they were scored."""
+
     stopped: str = ""
     """Why the walk ended early, when it did."""
 
@@ -526,6 +575,7 @@ class AgentBenchResult:
             "arms": list(self.arms),
             "walked": self.walked,
             "tasks": self.tasks,
+            "skipped": self.skipped,
             "stopped": self.stopped,
             "excluded": len(self.excluded()),
             "per_arm": {
@@ -630,6 +680,8 @@ def run_agentbench(
     max_files: int = 8,
     timeout: int = 900,
     serena: str | None = None,
+    budget: int = 2000,
+    done: set[tuple[str, str, int]] | None = None,
     progress: Any = None,
 ) -> AgentBenchResult:
     """Run every task through every arm and score the answers.
@@ -668,6 +720,7 @@ def run_agentbench(
                 result.tasks += 1
                 wanted_files = {snapshot.symbols[item].path for item in wanted_ids}
                 locator = _Locator(snapshot)
+                contexts = _contexts(store, snapshot, commit, chosen, budget)
                 for arm_name in chosen:
                     arm = ARMS[arm_name]
                     arm_config = config_path.with_name(f"{config_path.name}.{arm_name}.json")
@@ -681,6 +734,12 @@ def run_agentbench(
                             encoding="utf-8",
                         )
                     for repeat in range(1, repeats + 1):
+                        if done and (commit.sha[:12], arm_name, repeat) in done:
+                            # Resuming after a limit: this one is already
+                            # scored, and re-running it would pay twice for
+                            # an answer that is already on disk.
+                            result.skipped += 1
+                            continue
                         run = _run_once(
                             root,
                             commit,
@@ -694,6 +753,7 @@ def run_agentbench(
                             wanted_ids=wanted_ids,
                             wanted_files=wanted_files,
                             locator=locator,
+                            context=contexts.get(arm.context, ""),
                         )
                         result.runs.append(run)
                         if progress is not None:
@@ -706,6 +766,45 @@ def run_agentbench(
     finally:
         _git(root, "checkout", "--quiet", "--detach", head, check=False)
     return result
+
+
+def _contexts(
+    store: IndexStore,
+    snapshot: Any,
+    commit: Commit,
+    chosen: Sequence[str],
+    budget: int,
+) -> dict[str, str]:
+    """Render whatever the chosen arms want in front of the task.
+
+    Both are drawn at the same budget from the same index at the same
+    commit, so the only difference between them is the ranking, which is
+    the thing being measured. Rendering is skipped entirely when no arm
+    asked for it, because ranking a hundred thousand symbols is seconds
+    and most runs do not need it.
+    """
+    wanted = {ARMS[name].context for name in chosen} - {""}
+    if not wanted:
+        return {}
+    contexts: dict[str, str] = {}
+    if "skeleton" in wanted:
+        contexts["skeleton"] = skeleton_prefix(snapshot, budget)
+    if "map" in wanted:
+        by_name, by_stem = _seed_index(snapshot.symbols.values(), store.languages())
+        seeds: set[str] = set()
+        seed_paths: set[str] = set()
+        for word in commit.mentions:
+            key = word.strip().lower()
+            seeds.update(by_name.get(key, ()))
+            seed_paths.update(by_stem.get(key, ()))
+        ranked = rank_symbols(
+            snapshot,
+            focus_paths=seed_paths,
+            focus_symbols=seeds,
+            options=RankOptions(),
+        )
+        contexts["map"] = render_map(ranked, MapOptions(budget=budget)).text
+    return contexts
 
 
 def _run_command(
@@ -774,10 +873,11 @@ def _run_once(
     wanted_ids: set[str],
     wanted_files: set[str],
     locator: _Locator,
+    context: str = "",
 ) -> AgentRun:
     outcome = _run_command(
         root,
-        task_prompt(commit.subject, arm),
+        task_prompt(commit.subject, arm, context),
         arm,
         claude=claude,
         model=model,
