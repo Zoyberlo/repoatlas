@@ -268,6 +268,13 @@ commits, the same index, the same renderer, four budgets:
 | 8,000 | 0.166 | 0.280 | 0.444 | 2.7× | +0.278 |
 | 32,000 | 0.485 | 0.460 | 0.844 | 1.7× | **+0.359** |
 
+Serena is not a row here because it renders no map at all, so there is
+nothing to score. Its nearest equivalent, `get_symbols_overview` over a
+directory, is an unranked symbol listing, which is what the skeleton
+column is — so that column is Serena's ceiling on this question by
+construction rather than by measurement, and its real behaviour is worse,
+because past 150,000 characters it refuses instead of truncating.
+
 Half the objection holds and half does not. The *ratio* collapses, from
 nine times to under two, so ranking is indeed worth most when there is
 least room. But the *absolute* gap grows at every step, and at 32,000
@@ -282,6 +289,23 @@ aider's name-matched graph, ranked and rendered identically, scores 0.147,
 32,000, and beats it at 500. Resolution's advantage on the map exists in
 a narrow band around 2,000 tokens and nowhere else. The graph earns its
 place; the *edges* earn theirs on `find_references`, not here.
+
+Which raises the fair question of whether the cheaper thing is the better
+buy. On the test application a cold index is 2.34 seconds, of which
+resolution is 0.509 — 22%, half a second, no reason to drop anything. The
+real price is code: 1,782 lines of resolution against aider's 867-line
+repo map entire. For a map, aider's answer costs a tenth as much and
+scores the same above 2,000 tokens, and saying otherwise would be
+dishonest.
+
+The catch is that the row above is aider's *ranking* running on this
+project's extraction. aider's own tag queries cover 32 languages plus a
+fallback set of 28, and `vue` is in neither; a language with no query file
+returns nothing at all. On this Laravel and Quasar application aider's
+real map named 13 files — 12 PHP, one JavaScript, **zero `.vue`** —
+against 39 here including ten `.vue`. So on this stack aider is not
+cheaper and equal. It is cheaper and blind to the half of the repository
+the frontend lives in.
 
 So the graph earns one thing and it is not resolution: it is the ability
 to answer *within a budget* when nothing has told you where to look.
