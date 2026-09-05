@@ -285,8 +285,8 @@ more realistic the repository, the smaller the fraction any budget buys,
 and the small-fraction end of this table is where ranking is worth nine
 times rather than two.
 
-Symbol recall over 120 commits, the same index, the same renderer, four
-budgets:
+Symbol recall over 120 commits of the 59,000-token application, the same
+index, the same renderer, four budgets:
 
 | tokens | unranked skeleton | grep | ranked map | map ÷ skeleton | map − skeleton |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -295,44 +295,53 @@ budgets:
 | 8,000 | 0.166 | 0.280 | 0.444 | 2.7× | +0.278 |
 | 32,000 | 0.485 | 0.460 | 0.844 | 1.7× | **+0.359** |
 
-Serena is not a row here because it renders no map at all, so there is
-nothing to score. Its nearest equivalent, `get_symbols_overview` over a
-directory, is an unranked symbol listing, which is what the skeleton
-column is — so that column is Serena's ceiling on this question by
-construction rather than by measurement, and its real behaviour is worse,
-because past 150,000 characters it refuses instead of truncating.
+The ratio collapses and the absolute gap grows, so on that repository the
+answer is already "ranking never stops paying". But every row of it is
+contaminated by the coverage problem above, and the same sweep on the
+1,832-file application says something much less equivocal. 32 commits
+scored of 60 walked:
 
-Half the objection holds and half does not. The *ratio* collapses, from
-nine times to under two, so ranking is indeed worth most when there is
-least room. But the *absolute* gap grows at every step, and at 32,000
-tokens — a sixth of a context window, spent entirely on one map — the
-ranked map still names 0.359 more of the changed symbols than the same
-index dumped in path order. There is no budget at which the skeleton
-catches up.
+| tokens | % of repo | unranked skeleton | grep | name-matched | **ranked map** | file recall, map |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 500 | 0.10% | **0.000** | 0.000 | 0.042 | **0.067** | 0.154 |
+| 2,000 | 0.39% | **0.000** | 0.004 | 0.082 | **0.131** | 0.363 |
+| 8,000 | 1.57% | **0.000** | 0.027 | 0.225 | **0.345** | 0.817 |
+| 32,000 | 6.27% | **0.000** | 0.212 | 0.434 | **0.542** | 0.891 |
 
-The same table says something less comfortable about resolution.
-aider's name-matched graph, ranked and rendered identically, scores 0.147,
-0.268, 0.444 and 0.842. It ties the resolved graph at 8,000 and at
-32,000, and beats it at 500. Resolution's advantage on the map exists in
-a narrow band around 2,000 tokens and nowhere else. The graph earns its
-place; the *edges* earn theirs on `find_references`, not here.
+The skeleton column is zero at every budget, including 32,000 tokens.
+Not "worse": zero. Path order is arbitrary with respect to the task, and
+an arbitrary six percent of a 1,832-file repository contains none of what
+these 32 commits went on to change. On a small repository an unranked
+dump degrades gracefully, because half of everything contains most
+things. On a real one it does not degrade, it simply misses, and "give
+the agent the outline instead of a map" stops being a cheaper option and
+becomes no option.
 
-Which raises the fair question of whether the cheaper thing is the better
-buy. On the test application a cold index is 2.34 seconds, of which
-resolution is 0.509 — 22%, half a second, no reason to drop anything. The
-real price is code: 1,782 lines of resolution against aider's 867-line
-repo map entire. For a map, aider's answer costs a tenth as much and
-scores the same above 2,000 tokens, and saying otherwise would be
-dishonest.
+At 8,000 tokens — the largest a single Claude Code tool result can be
+without a warning — the ranked map names 34.5% of the changed symbols and
+81.7% of the changed files. The same tokens spent on an outline name
+nothing.
 
-The catch is that the row above is aider's *ranking* running on this
-project's extraction. aider's own tag queries cover 32 languages plus a
-fallback set of 28, and `vue` is in neither; a language with no query file
-returns nothing at all. On this Laravel and Quasar application aider's
-real map named 13 files — 12 PHP, one JavaScript, **zero `.vue`** —
-against 39 here including ten `.vue`. So on this stack aider is not
-cheaper and equal. It is cheaper and blind to the half of the repository
-the frontend lives in.
+### What this corrects about resolution
+
+An earlier version of this document, measured on the small application
+only, said resolution's advantage over aider's name-matched graph "exists
+in a narrow band around 2,000 tokens and nowhere else". That was an
+artefact of the repository, not a property of the method. Ranked and
+rendered identically on the larger one, the resolved graph beats the
+name-matched graph at every budget:
+
+| tokens | name-matched | resolved | ratio |
+| ---: | ---: | ---: | ---: |
+| 500 | 0.042 | 0.067 | 1.61× |
+| 2,000 | 0.082 | 0.131 | 1.60× |
+| 8,000 | 0.225 | 0.345 | 1.53× |
+| 32,000 | 0.434 | 0.542 | 1.25× |
+
+Half again as much recall at every realistic budget, narrowing only once
+the map covers six percent of the repository. On the small application
+the same comparison read 1.08× at 2,000 tokens and a tie above it, which
+is why measuring on one repository is not measuring.
 
 So the graph earns one thing and it is not resolution: it is the ability
 to answer *within a budget* when nothing has told you where to look.
