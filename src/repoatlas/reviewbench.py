@@ -200,8 +200,17 @@ class ReviewRun:
     """One agent, one hunk, one arm."""
 
     name: str
-    arm: str
-    ok: bool
+    path: str = ""
+    line: int = 0
+    """Where the hunk's declaration is.
+
+    A name alone does not identify a task: two `apply` methods on
+    different classes are two questions, and an analysis keyed on the name
+    silently keeps one of them.
+    """
+
+    arm: str = ""
+    ok: bool = False
     reason: str = ""
     precision: float = 0.0
     recall: float = 0.0
@@ -218,6 +227,8 @@ class ReviewRun:
     def as_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "path": self.path,
+            "line": self.line,
             "arm": self.arm,
             "ok": self.ok,
             "reason": self.reason,
@@ -294,7 +305,9 @@ class ReviewBenchResult:
             lines.append("")
             lines.append("excluded:")
             for run in excluded[:8]:
-                lines.append(f"  {run.name} {run.arm}: {run.reason[:70]}")
+                lines.append(
+                    f"  {run.name} ({run.path}:{run.line}) {run.arm}: {run.reason[:60]}"
+                )
         if self.stopped:
             lines.append(f"stopped: {self.stopped[:80]}")
         return "\n".join(lines) + "\n"
@@ -383,11 +396,15 @@ def run_reviewbench(
 
 def _score(task: CallSiteTask, arm: str, outcome: RunTrace | str) -> ReviewRun:
     if isinstance(outcome, str):
-        return ReviewRun(name=task.name, arm=arm, ok=False, reason=outcome)
+        return ReviewRun(
+            name=task.name, path=task.path, line=task.line, arm=arm, ok=False, reason=outcome
+        )
     answered = _answers(outcome.result_text)
     precision, recall, f1 = score_sites(answered, task)
     return ReviewRun(
         name=task.name,
+        path=task.path,
+        line=task.line,
         arm=arm,
         ok=True,
         precision=precision,
