@@ -340,6 +340,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="walk the filesystem instead of asking git which files are tracked",
     )
 
+    reviewbench = subcommands.add_parser(
+        "reviewbench",
+        help="review a diff with no checkout to grep, with and without the index",
+    )
+    reviewbench.add_argument("root", type=Path, help="the repository the oracle indexed")
+    reviewbench.add_argument("oracle", type=Path, help="a SCIP index, for ground truth")
+    reviewbench.add_argument(
+        "--store", type=Path, help="the index to serve; built beside the oracle by default"
+    )
+    reviewbench.add_argument("--arms", default="read,index")
+    reviewbench.add_argument("--limit", type=int, default=14, help="symbols to ask about")
+    reviewbench.add_argument("--claude", default="claude")
+    reviewbench.add_argument("--model")
+    reviewbench.add_argument("--max-turns", type=int, default=30)
+    reviewbench.add_argument("--timeout", type=int, default=900)
+    reviewbench.add_argument("--out", type=Path)
+    reviewbench.add_argument("--with-runs", action="store_true")
+    reviewbench.add_argument("--format", choices=("text", "json"), default="text")
+
     phpstan = subcommands.add_parser(
         "phpstan",
         help="resolve a PHP project with PHPStan, as an oracle and a type source",
@@ -1124,6 +1143,54 @@ def _cmd_phpstan(args: argparse.Namespace) -> int:
     return _EXIT_OK
 
 
+def _cmd_reviewbench(args: argparse.Namespace) -> int:
+    """Ask the reviewer's question where there is no shell to answer it with."""
+    from .localize import HistoryError
+    from .reviewbench import ReviewRun, run_reviewbench
+    from .store import IndexStore, update_store
+
+    root: Path = args.root.resolve()
+    oracle = _load(args.oracle)
+    store_path = args.store or args.oracle.with_suffix(".reviewbench.db")
+    with IndexStore(store_path) as store:
+        update_store(root, store, use_git=True)
+
+    def progress(run: ReviewRun) -> None:
+        state = (
+            f"F1 {run.f1:.2f} (P {run.precision:.2f} R {run.recall:.2f})"
+            if run.ok
+            else run.reason[:70]
+        )
+        print(f"{run.name[:24]:<24} {run.arm:>10}: {state}", file=sys.stderr)
+
+    try:
+        result = run_reviewbench(
+            root,
+            oracle,
+            store_path,
+            arms=tuple(name.strip() for name in args.arms.split(",") if name.strip()),
+            limit=args.limit,
+            claude=args.claude,
+            model=args.model,
+            max_turns=args.max_turns,
+            timeout=args.timeout,
+            progress=progress,
+        )
+    except HistoryError as exc:
+        raise SystemExit(f"repoatlas: {exc}") from None
+    if args.format == "json" or args.out:
+        payload = json.dumps(result.as_dict(include_runs=args.with_runs), indent=2) + "\n"
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(payload, encoding="utf-8")
+            print(f"wrote {args.out}", file=sys.stderr)
+        else:
+            print(payload, end="")
+    if args.format == "text":
+        print(result.as_text(), end="")
+    return _EXIT_OK
+
+
 def _cmd_enrich(args: argparse.Namespace) -> int:
     """Add what a type engine resolved and the cascade could not."""
     from .enrich import enrich_from_facts
@@ -1222,6 +1289,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "serve": _cmd_serve,
         "verify-oracle": _cmd_verify_oracle,
         "phpstan": _cmd_phpstan,
+        "reviewbench": _cmd_reviewbench,
         "enrich": _cmd_enrich,
         "compare": _cmd_compare,
     }
