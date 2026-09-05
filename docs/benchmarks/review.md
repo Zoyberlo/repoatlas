@@ -74,7 +74,79 @@ That effect was not registered in advance, so it is a hypothesis this run
 produced rather than a claim it establishes. It is stated separately for
 that reason.
 
-## The caveat that decides what to do next
+## The same benchmark on a 1,832-file application
+
+The caveat above was the prediction: 363 files is small enough that
+reading 28 of them is a viable strategy. On the larger application it
+should not be, and the oracle for it was built with `scip-php` — this
+index scores 1.000 on definitions and 0.991 F1 on references against it,
+so it is sound.
+
+Fourteen symbols, chosen for having at least two uses outside their own
+file: methods called `row`, `value`, `section`, `notes`, `message`, with
+three to thirty-four external uses each and between 338 and 2,979 lines
+of `grep -w` noise.
+
+**Five of fourteen `read` runs never answered.** They exhausted thirty
+turns reading files — 50.3 files per task — and produced nothing. That is
+the collapse the prediction called for, and it lands in the exclusions
+rather than in the scores, so the scores have to account for it: an agent
+asked a question that produces no answer has failed at it, and scoring
+the attempt as absent hands the arm a free pass on exactly the tasks it
+could not do.
+
+| all 14 tasks, unanswered counted as 0 | read | **index** | grep (has a checkout) |
+| --- | ---: | ---: | ---: |
+| answered | 9/14 | **13/14** | 14/14 |
+| F1 | 0.503 | **0.839** | 0.868 |
+| turns | 51.3 | **15.2** | 7.9 |
+| tokens | 688,011 | **137,849** | 166,679 |
+| cost | $1.228 | **$0.324** | $0.337 |
+
+Paired on the task, 95% bootstrap:
+
+| | point | interval | W/L |
+| --- | ---: | ---: | ---: |
+| **F1, read → index** | **+0.337** | **[+0.129, +0.565]** | **6/0** |
+| F1, grep → index | −0.029 | [−0.071, +0.000] | 0/2 |
+| F1, read → grep | +0.365 | [+0.153, +0.587] | 8/0 |
+
+**The registered threshold is met.** The index's advantage over
+file-reading alone excludes zero, on six tasks better and none worse. It
+is the first time in this project that a pre-registered accuracy
+threshold has been.
+
+And the second row matters as much: against an agent that *does* have a
+checkout, the index arm's difference crosses zero. Without a tree to
+search, at a third of the turns, it answers as well as grep does with
+one, for the same money.
+
+### What is a choice here, stated as one
+
+Counting an unanswered task as zero is a decision, and the result depends
+on it. Over the nine tasks `read` did finish, its F1 is 0.782 and the
+paired difference is +0.190 [0.000, 0.444], which crosses zero. Both
+numbers are in this document because they answer different questions: the
+first is "how good is a reviewer with no index", the second is "how good
+is it when it manages to answer at all".
+
+The first is the one a reviewer cares about, which is why the threshold
+was tested against it.
+
+## What this changes and what it does not
+
+On the small application the same benchmark showed no accuracy difference
+at all — `read` scored 0.958 there. So the effect is a function of
+repository size, and that is the finding rather than a caveat on it:
+brute-force reading works at 363 files and stops working at 1,832. Nine
+of this project's benchmarks were run in a setting where grep was
+available and every one tied; this is the setting where it is not, and it
+is the one where the index earns its place.
+
+Fourteen tasks on one PHP backend is thin, and the effect should be
+confirmed on another repository before it is built on.
+
+## The caveat that decided this run
 
 This repository is 363 files. Brute-force reading is a viable strategy at
 that size, which is why the `read` arm's accuracy held up at all. On the
