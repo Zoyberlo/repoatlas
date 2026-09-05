@@ -372,19 +372,63 @@ arm of the three.
 That is a negative result for the ranked map as *agent context* on a
 363-file repository, and it is stated here as such.
 
-What it does not settle is the case the previous section measured. On
-this repository an unranked outline at 2,000 tokens still contains 0.034
-of the answer, which is little but not nothing, and an agent with grep
-can climb out of little. On the 1,832-file application the same outline
-contains **0.000** at every budget up to 32,000 tokens. Whether an agent
-can climb out of nothing as easily as it climbs out of little is the
-experiment that decides whether the graph earns its place, and it has not
-been run.
+### Climbing out of nothing
 
-So the graph earns one thing and it is not resolution: it is the ability
-to answer *within a budget* when nothing has told you where to look. What
-it has not yet earned is a better answer from an agent that also has
-grep.
+The obvious escape was that this repository is too small: an unranked
+outline at 2,000 tokens still contains 0.034 of the answer, and an agent
+with grep can climb out of little. On the 1,832-file application the same
+outline contains **0.000** at every budget to 32,000 tokens. So the
+ablation was repeated there, at 8,000 tokens — the largest a single tool
+result can be — where the map holds 0.345 and the outline holds nothing.
+44 commits walked, 24 scored, 72 runs, none excluded.
+
+| skeleton → map, paired | 363 files, 2,000 tok, n=32 | 1,832 files, 8,000 tok, n=24 |
+| --- | ---: | ---: |
+| symbol recall | −0.029 | −0.033 |
+| file recall | +0.016 | −0.042 |
+| symbol recall@5 | −0.016 | **+0.075** |
+| file recall@5 | −0.010 | **+0.076** |
+| turns | −0.81 | −0.92 |
+
+Every interval crosses zero. Plain recall is negative on both
+repositories. The one encouraging pair, the top-five columns on the large
+application, is the sign that ranking should show — putting the right
+answers first is what ranking is *for* — but it did not replicate on the
+small one, where the same two numbers are −0.016 and −0.010, and on its
+own repository it only reaches [−0.009, +0.183] and [+0.000, +0.174].
+Pooling two experiments that disagree in direction to manufacture an
+interval would be dishonest, so they are printed apart.
+
+The decisive datum is not in that table. On the large application the
+agent handed an outline worth **0.000** offline scored **0.592** symbol
+recall, the best of the three arms, against the map's 0.560. An agent's
+answer is nearly independent of the quality of the context it was
+handed, because it does not read the context and stop: it reads it, then
+greps, and grep recovers everything the outline missed. Ten times the
+information in the blob, and the same answer out.
+
+### The verdict this document committed to in advance
+
+It said: if a properly powered run puts this level with an alternative,
+the graph is not paying for itself and should go. Two repositories, two
+budgets, 56 paired tasks, and the ranked map does not beat an unranked
+dump of the same size on any measure. That is worse than the stated
+threshold, not better, and the honest reading is that **the ranked map,
+as context for a localisation agent that also has grep, does not earn its
+place.**
+
+Three things that verdict does not cover, and they are where the index's
+measured wins actually are. It does not touch `find_references`, which is
+1.000 F1 against `rg -w`'s 0.847 at half the tokens on the symbols an
+oracle can check. It does not touch the token ratios, 4× to 15× against
+reading the equivalent. And it is measured under the condition most
+favourable to grep: a local checkout, a shell, and a question — which
+files does this change touch — that a text search is genuinely good at.
+
+What it does mean is that the map should stop being the headline. The
+graph costs half a second of index time and about 1,800 lines, and on
+this evidence it buys ordering that does not survive replication and
+turns that do not clear zero.
 
 ## What the published comparisons say
 
