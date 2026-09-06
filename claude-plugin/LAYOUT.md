@@ -51,6 +51,40 @@ Verified on Windows with Node 24: the self-test passes 22 of 22, and a
 live payload against a path rule exits 2 with the rule's message while an
 unrelated path exits 0.
 
+## The rules this repository runs on itself
+
+`.claude/agent-guard.json` carries nine, and every one names the failure it
+came from rather than the principle. Two block:
+
+- **client CI** — pipelines and deployment scripts of anything under
+  `~/projects` are off limits entirely. A broken pipeline costs the user a
+  working day; no experiment run against their code is worth that.
+- **client writes** — those trees are read, indexed and benchmarked
+  against, never written to. Copies go under `~/ra-scratch/`.
+
+Seven warn while the log decides:
+
+| rule | what it came from |
+| --- | --- |
+| `piped-test-gate` | `pytest \| tail && git commit` reads the *pipe's* exit code. Committed a failing suite three times. |
+| `heredoc-escapes` | a heredoc turns `
+` into a real newline. Broke a test module and a library function four times. |
+| `scratch-in-tmp` | WSL wiped `/tmp` mid-session and destroyed two SCIP oracles and every result file. |
+| `pkill-self-match` | `pkill -f` matches the shell holding the pattern. A waiter loop never exited; an inline `pkill` killed its own shell. |
+| `benchmark-docs-by-hand` | every figure in `docs/benchmarks/` names the run behind it. |
+| `own-ci` | the suite CI runs is what every measurement is checked by. |
+
+Check them before trusting them:
+
+```bash
+node claude-plugin/plugins/agent-guard/scripts/check.js --cases .claude/agent-guard.cases.json
+```
+
+Twenty cases, nine live, none dead. The client-CI rule failed its own
+cases on the first attempt — the separator after the repository name was
+consumed twice, so a workflow at a repository root never matched. That is
+exactly what the checker is for.
+
 ## What is deliberately not here
 
 The rules and knowledge base of the application this was developed
