@@ -65,6 +65,14 @@ _PATH = re.compile(r"^[^\s:]+\.[A-Za-z]{1,10}$", re.MULTILINE)
 MAX_SITES = 12
 MAX_TARGETS = 6
 
+# What `--verbose` raises them to, and what it drops: the silence rule.
+# Not a setting anyone should run day to day — it exists so a benchmark
+# can ask how much accuracy is available at any price, before asking what
+# the price should be. If speaking always scores worse than speaking
+# rarely, that is an answer rather than a bug.
+LOUD_SITES = 40
+LOUD_TARGETS = 12
+
 SEARCH_TOOLS = frozenset({"Grep"})
 
 
@@ -167,12 +175,16 @@ def _tail(path: str) -> str:
     return path.replace("\\", "/").rsplit("/", 1)[-1]
 
 
-def advise(store: Any, hook: HookInput) -> str:
+def advise(store: Any, hook: HookInput, *, verbose: bool = False) -> str:
     """What the index can add to this search, or an empty string.
 
-    Empty is the common case and the intended one.
+    Empty is the common case and the intended one. ``verbose`` removes
+    that: it answers every search the index knows anything about, with
+    higher limits, for measuring the accuracy ceiling.
     """
-    symbols = [s for s in store.symbols_named(hook.pattern, limit=MAX_TARGETS + 1) if not s.synthetic]
+    max_targets = LOUD_TARGETS if verbose else MAX_TARGETS
+    max_sites = LOUD_SITES if verbose else MAX_SITES
+    symbols = [s for s in store.symbols_named(hook.pattern, limit=max_targets + 1) if not s.synthetic]
     if not symbols:
         return ""
 
@@ -184,7 +196,7 @@ def advise(store: Any, hook: HookInput) -> str:
 
     groups: list[tuple[Any, list[Any]]] = []
     unprinted = 0
-    for symbol in symbols[:MAX_TARGETS]:
+    for symbol in symbols[:max_targets]:
         edges = _uses(store.edges_to(symbol.id))
         groups.append((symbol, edges))
         for edge in edges:
@@ -197,22 +209,22 @@ def advise(store: Any, hook: HookInput) -> str:
                 unprinted += 1
 
     ambiguous = len(symbols) > 1
-    if not ambiguous and unprinted == 0:
+    if not ambiguous and unprinted == 0 and not verbose:
         # The search already said everything the index could. Saying it
         # again is the cost with none of the benefit.
         return ""
 
     total = sum(len(edges) for _, edges in groups)
-    if total == 0 and not ambiguous:
+    if total == 0 and not ambiguous and not verbose:
         return ""
 
     lines_out: list[str] = []
-    more = " (more not listed)" if len(symbols) > MAX_TARGETS else ""
+    more = " (more not listed)" if len(symbols) > max_targets else ""
     lines_out.append(
-        f"repoatlas: `{hook.pattern}` names {len(symbols[:MAX_TARGETS])} "
+        f"repoatlas: `{hook.pattern}` names {len(symbols[:max_targets])} "
         f"indexed symbol(s){more}. Resolved uses, by which one they reach:"
     )
-    budget = MAX_SITES
+    budget = max_sites
     for symbol, edges in sorted(groups, key=lambda pair: -len(pair[1])):
         where = f"{symbol.path}:{symbol.name_range.start.line + 1}"
         label = symbol.qualified_name or symbol.name
@@ -225,7 +237,7 @@ def advise(store: Any, hook: HookInput) -> str:
         budget -= min(len(edges), budget)
         if budget <= 0:
             break
-    hidden = total - min(total, MAX_SITES)
+    hidden = total - min(total, max_sites)
     if hidden > 0:
         lines_out.append(f"  ... {hidden} further use(s) not listed")
     if ambiguous:
@@ -246,7 +258,7 @@ def _provenance(store: Any) -> str:
     return f"(index of {root}; re-index if it is behind)"
 
 
-def run_hook(raw: str, named: Path | None = None) -> str:
+def run_hook(raw: str, named: Path | None = None, *, verbose: bool = False) -> str:
     """The whole hook, from stdin text to stdout text. Never raises."""
     try:
         payload = json.loads(raw)
@@ -266,7 +278,7 @@ def run_hook(raw: str, named: Path | None = None) -> str:
         return ""
     try:
         with IndexStore(path) as store:
-            message = advise(store, hook)
+            message = advise(store, hook, verbose=verbose)
     except Exception:  # a hook must never break the session it runs in
         return ""
     if not message:
@@ -281,13 +293,13 @@ def run_hook(raw: str, named: Path | None = None) -> str:
     )
 
 
-def main(store: Path | None = None) -> int:
+def main(store: Path | None = None, *, verbose: bool = False) -> int:
     """Entry point for `repoatlas hook`."""
     try:
         raw = sys.stdin.read()
     except (OSError, ValueError):
         return 0
-    output = run_hook(raw, store)
+    output = run_hook(raw, store, verbose=verbose)
     if output:
         sys.stdout.write(output)
     return 0

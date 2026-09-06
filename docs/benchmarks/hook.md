@@ -125,5 +125,50 @@ repository.** Registered before running it:
 > Separately, the result here is confirmed only if a second run on *this*
 > application also puts the interval above zero.
 
+## The ceiling run, registered before it was started
+
+The strategy the caveats above point at is: find out how much accuracy
+exists at any price, then walk down towards a price. That ordering is the
+right way round, because making an accurate thing cheaper is a far easier
+problem than making a cheap thing accurate — but it only makes sense if
+there is a gap worth walking down.
+
+Nobody knows the gap. grep scores 0.464 and the hook 0.556, and the
+ceiling of this task is certainly well below 1.000: the ground truth is
+"which symbols did this commit change", and the agent sees only the commit
+subject. Renames, incidental edits and reformatting are not inferable from
+a subject line at all.
+
+So a third arm, `ceiling`, gets everything at once — the ranked map in its
+prompt, the MCP index tools, a hook that answers every search rather than
+only the ones grep could not, and fifteen extra turns. It attributes
+nothing on purpose. The question is only whether the gap is large enough
+to be worth an ablation.
+
+**What it does not include is the enrichment**, and that is a real
+limitation rather than an oversight. Folding a type engine's answers in
+was worth +18.6% more resolved references on this same application and has
+never been tested at the agent level. It is left out because larastan
+boots the Laravel application to analyse it, a scratch clone has no `.env`
+or `storage/` to boot from, and the harness re-indexes at every commit, so
+it would mean twenty-four bootable checkouts. The `ceiling` arm therefore
+measures a **lower bound** on the ceiling.
+
+Registered before the run:
+
+> **Headroom.** There is a gap worth optimising if `ceiling` beats `grep`
+> on symbol recall with an interval excluding zero *and* a point estimate
+> of at least +0.19, which is twice what the hook alone achieved. If
+> `ceiling`'s advantage instead falls inside the hook's own interval, the
+> hook is at or near what this task allows and the work should turn from
+> adding to trimming.
+>
+> **Confirmation.** The +0.093 of the run above is confirmed only if
+> `hook` minus `grep` again excludes zero on this second sample.
+>
+> **The arm may lose.** More context can distract; `ceiling` scoring below
+> `hook` is a result about the balance, not a failure of the run, and it
+> would say the trimming should start immediately.
+
 Raw runs are kept outside this repository, since they carry a client
 project's commit subjects and paths: `hookbench-2026-09-06.json`.

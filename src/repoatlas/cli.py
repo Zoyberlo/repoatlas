@@ -155,6 +155,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="the index to answer from; defaults to .repoatlas/index.db",
     )
+    hook.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "answer every search rather than only the ones a text search "
+            "could not have answered; for measuring a ceiling, not for daily use"
+        ),
+    )
 
     search = subcommands.add_parser("search", help="find a symbol in a stored index")
     search.add_argument("store", type=Path, help="the SQLite index to read")
@@ -551,7 +559,7 @@ def _cmd_hook(args: argparse.Namespace) -> int:
     """Run the PostToolUse hook: payload on stdin, JSON or nothing on stdout."""
     from .hook import main as hook_main
 
-    return hook_main(args.store)
+    return hook_main(args.store, verbose=args.verbose)
 
 
 def _cmd_index(args: argparse.Namespace) -> int:

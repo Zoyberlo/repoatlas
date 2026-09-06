@@ -87,6 +87,19 @@ class Arm:
     """
 
     hooks: bool = False
+    loud: bool = False
+    """Whether the hook answers every search rather than only the ones grep
+    could not have answered. For the ceiling arm only."""
+
+    extra_turns: int = 0
+    """Turns granted on top of --max-turns.
+
+    An arm that is being asked how much accuracy exists at any price must
+    not be stopped by a budget the cheaper arms share. It makes the arm
+    incomparable on cost, which is the point: cost comes back in the
+    ablation, once there is something to ablate.
+    """
+
     """Whether to attach the PostToolUse hook that answers a search.
 
     The tool-shaped arms measured whether an agent *given* the index does
@@ -167,6 +180,27 @@ ARMS: dict[str, Arm] = {
         allowed_tools=_READ_ONLY_TOOLS,
         hooks=True,
         hint="Use Grep, Glob and Read to find them.",
+    ),
+    # Everything at once, to find out whether there is a ceiling worth
+    # walking down towards. The enrichment, the index tools, the ranked map,
+    # a hook that answers every search, and twice the turns. It attributes
+    # nothing — that is deliberate. The question it answers is whether the
+    # gap between grep and a maximally equipped agent is large enough to be
+    # worth optimising, and if the answer is no, no ablation was needed.
+    "ceiling": Arm(
+        name="ceiling",
+        server="repoatlas",
+        allowed_tools=(*_READ_ONLY_TOOLS, "mcp__repoatlas__*"),
+        hooks=True,
+        loud=True,
+        extra_turns=15,
+        context="map",
+        hint=(
+            "A ranked map of this repository is above, an MCP server called "
+            "repoatlas is attached with a resolved index of it, and every "
+            "search you run is annotated with which definition each hit "
+            "belongs to. Use all of it, plus Grep, Glob and Read."
+        ),
     ),
     # The ablation. Same tools as grep, same task, and the same number of
     # tokens of context in front of it either way: `map` is what the ranked
@@ -289,7 +323,7 @@ def claude_command(
         "--permission-mode",
         "dontAsk",
         "--max-turns",
-        str(max_turns),
+        str(max_turns + arm.extra_turns),
         "--allowedTools",
         ",".join(arm.allowed_tools),
         *(
@@ -361,7 +395,7 @@ def mcp_config(
     }
 
 
-def hook_settings(store: Path) -> dict[str, Any]:
+def hook_settings(store: Path, *, loud: bool = False) -> dict[str, Any]:
     """A settings file declaring the PostToolUse hook, for one arm.
 
     Passed with `--settings`, which applies on top of nothing else here:
@@ -372,11 +406,12 @@ def hook_settings(store: Path) -> dict[str, Any]:
     not live where a project's would, and a hook that quietly answered from
     some other index would produce a number about the wrong thing.
     """
+    loudly = " --verbose" if loud else ""
     executable = shutil.which("repoatlas")
     if executable:
-        command = f'"{executable}" hook --store "{store}"'
+        command = f'"{executable}" hook --store "{store}"{loudly}'
     else:
-        command = f'"{sys.executable}" -m repoatlas hook --store "{store}"'
+        command = f'"{sys.executable}" -m repoatlas hook --store "{store}"{loudly}'
     return {
         "hooks": {
             "PostToolUse": [
@@ -800,7 +835,8 @@ def run_agentbench(
                     )
                     if arm.hooks:
                         settings_file.write_text(
-                            json.dumps(hook_settings(store_path)), encoding="utf-8"
+                            json.dumps(hook_settings(store_path, loud=arm.loud)),
+                            encoding="utf-8",
                         )
                     if arm.mcp:
                         arm_config.write_text(
