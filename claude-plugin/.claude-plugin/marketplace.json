@@ -1,0 +1,20 @@
+{
+  "name": "zoyberlo-plugins",
+  "owner": {
+    "name": "Mykola"
+  },
+  "description": "Local plugins for enforcing project rules across repositories.",
+  "plugins": [
+    {
+      "name": "agent-guard",
+      "source": "./plugins/agent-guard",
+      "displayName": "Agent Guard",
+      "description": "Blocks tool calls that violate rules declared in the project's .claude/agent-guard.json.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Mykola"
+      },
+      "category": "quality"
+    }
+  ]
+}

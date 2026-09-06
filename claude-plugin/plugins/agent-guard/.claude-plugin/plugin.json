@@ -1,0 +1,16 @@
+{
+  "name": "agent-guard",
+  "displayName": "Agent Guard",
+  "version": "0.1.0",
+  "description": "Enforces a project's hard rules mechanically. A PreToolUse hook blocks edits that violate rules declared in the project's own .claude/agent-guard.json, so a rule holds whether or not the model read the docs.",
+  "author": {
+    "name": "Mykola"
+  },
+  "license": "MIT",
+  "keywords": [
+    "hooks",
+    "guardrails",
+    "rules",
+    "pretooluse"
+  ]
+}

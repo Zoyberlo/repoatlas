@@ -1,0 +1,4 @@
+{
+  "_note": "Rules this repository enforces mechanically. A rule written in prose is advisory; one here is enforced by a PreToolUse hook whether or not anything was read. Add candidates with \"action\": \"warn\" first and let .claude/agent-guard.log decide whether they earn a block.",
+  "rules": []
+}

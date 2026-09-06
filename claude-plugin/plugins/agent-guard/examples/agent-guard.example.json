@@ -1,0 +1,32 @@
+{
+  "rules": [
+    {
+      "id": "example-path-only",
+      "path": "/backend/resources/views/",
+      "message": "Blocks any Edit or Write whose file path contains this substring. Paths are normalised to forward slashes first, so the same rule matches Windows, UNC and POSIX paths."
+    },
+    {
+      "id": "example-path-and-content",
+      "path": "/backend/app/Models/",
+      "content": "disable_delete",
+      "message": "Conditions are ANDed: this fires only for a model file whose diff also mentions disable_delete. Use this when a blanket path ban would be too wide."
+    },
+    {
+      "id": "example-regex",
+      "pathRegex": "/(config|bootstrap)/.*\\.php$",
+      "message": "pathRegex, commandRegex and contentRegex take a JavaScript regular expression as a string. Remember that a backslash must be doubled inside JSON."
+    },
+    {
+      "id": "example-bash-command",
+      "tools": ["Bash"],
+      "commandRegex": "\\bgit\\s+(add|commit|push|checkout)\\b",
+      "message": "Rules default to Edit and Write. Declare tools explicitly to guard Bash — this one covers the 'print the git command, do not run it' convention."
+    },
+    {
+      "id": "example-warn-not-block",
+      "action": "warn",
+      "path": "/frontend/src/utils/",
+      "message": "action 'warn' prints this and records a WARN line in .claude/agent-guard.log, but lets the call through. Start a candidate rule here, read the log after a week, and promote it to blocking once it has earned it."
+    }
+  ]
+}
