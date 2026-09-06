@@ -54,8 +54,10 @@ unrelated path exits 0.
 ## What is deliberately not here
 
 The rules and knowledge base of the application this was developed
-against are **not** in this repository. They are business documents of a
-client codebase, and this repository is public. They sit outside it, at
+against are **not** in this repository. This repository is private, so
+that is not the reason: they are a client codebase's business documents,
+and a private repository under a different account is still a different
+repository. They sit outside it, at
 `A:/Projects/reference/client-agent-docs/`, as a reference to design
 against — the shapes are worth copying, the contents are not ours to
-publish.
+move.
