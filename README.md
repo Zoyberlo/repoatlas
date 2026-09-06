@@ -128,18 +128,30 @@ like ("the button on the report page that clears it doesn't work") shares
 nothing with the code. That comparison is built and registered in
 [wording.md](docs/benchmarks/wording.md) and has not been run.
 
-One result arrived before any agent did. Nineteen requests were written
+That comparison has now been run in English, and it is a tie again:
+grep 0.274, the hook 0.290, paired +0.017 [−0.052, +0.101], three wins to
+three losses over sixteen tasks with two repeats each.
+
+**What it did measure is much larger than anything else here.** Only the
+sentence changed, and grep's symbol recall fell from 0.464 to **0.274**,
+file recall from 0.958 to **0.737**, turns rose from 17.3 to 24.1, tokens
+roughly doubled, and eight runs hit the turn cap where the commit-subject
+runs lost none. Asking in a person's words instead of the developer's
+halves accuracy and doubles cost — and the index does nothing about it,
+because both arms fall together.
+
+Two things fell out of writing the requests at all. Nineteen were written
 deliberately in user language — "square" for cell, "box" for field — and
-**not one came out unanchored**: the code is English and so is the user, so
-an overlap survives every attempt to avoid it. The same nineteen in
-Ukrainian are unanchored nineteen times out of nineteen, because the
-codebase contains no Ukrainian.
+**not one came out unanchored**: the code is English and so is the user. The
+same nineteen in Ukrainian are unanchored nineteen times out of nineteen,
+because the codebase contains no Ukrainian. That set is written and not yet
+run.
 
 | report | what it settles |
 | --- | --- |
 | [grep.md](docs/benchmarks/grep.md) | every head-to-head, including the map ablation that falsified the ranked map |
 | [hook.md](docs/benchmarks/hook.md) | the tenth comparison: answering a search rather than offering a tool |
-| [wording.md](docs/benchmarks/wording.md) | why every one of the ten was measured in grep's best case |
+| [wording.md](docs/benchmarks/wording.md) | user wording halves accuracy and doubles cost, for both arms alike |
 | [review.md](docs/benchmarks/review.md) | the one setting the index wins, across three repositories |
 | [enrichment.md](docs/benchmarks/enrichment.md) | +56% and +18.6% more resolved references from a type engine |
 | [phpstan.md](docs/benchmarks/phpstan.md) | what PHPStan and larastan see that no SCIP indexer does |

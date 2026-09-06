@@ -85,13 +85,93 @@ requests" without the English set agreeing.** On its own it can only say
 > of eight. So no wording result counts until it has been run twice and
 > held. One run is a hypothesis here, not a finding.
 
+## The English run
+
+6 September 2026. Nineteen wordings posed, eighteen scored, sixteen paired
+in both arms after exclusions, **two repeats each** and averaged per task —
+because the previous positive result on this harness was destroyed by
+single-run variance and averaging is the direct answer to that.
+
+```bash
+repoatlas agentbench <app> --prompts wordings-en.json --arms grep,hook \n  --commits 44 --repeats 2 --out enbench.json --with-runs
+```
+
+| symbol recall, repeats averaged | grep | hook | paired delta |
+| --- | ---: | ---: | --- |
+| all sixteen tasks | 0.274 | 0.290 | +0.017 [−0.052, +0.101] W3/L3 |
+| `precise` (n=4) | 0.325 | 0.325 | **+0.000 [0.000, 0.000]** W0/L0 |
+| `domain` (n=12) | 0.257 | 0.279 | +0.022 [−0.071, +0.133] W3/L3 |
+
+Three wins, three losses, ten ties. Nothing.
+
+### Against the registered prediction
+
+The lexical-anchor account said the advantage should be larger in `domain`
+than in `precise`. Nominally it is: +0.022 against +0.000. Reading that as
+support would be dishonest — there is no advantage in either stratum to
+compare, the `domain` interval is three wins against three losses, and
+`precise` has four tasks. **Not supported, and not falsified either.** The
+comparison had no power to decide.
+
+### The result that is not about the index
+
+The same repository, the same commits, the same arms — and only the
+sentence changed:
+
+| | commit subjects | user wordings |
+| --- | ---: | ---: |
+| grep, symbol recall | 0.464 | **0.274** |
+| grep, file recall | 0.958 | **0.737** |
+| turns | 17.3 | 24.1 |
+| tokens | 399,269 | 745,227 |
+| runs lost to the turn cap | 0 | **8** |
+
+**Asking in a person's words instead of the developer's halves accuracy and
+roughly doubles cost.** Eight runs hit the thirty-turn ceiling and were
+excluded; the commit-subject runs lost none. That is by far the largest
+effect measured anywhere in this project, and the index does nothing about
+it: both arms fall together.
+
+It also means every earlier comparison was run on the easy half of the
+distribution — which was the suspicion that prompted this, now with a
+number on it.
+
+### A correction
+
+After the tenth comparison failed to reproduce, this project explained it
+by saying injected context is a branch point and therefore variance. On
+this run that explanation does not hold: `grep` scored identically twice on
+10 of 16 tasks with a mean swing of 0.093, and `hook` on 9 of 13 with a
+mean swing of **0.057**. The arm carrying the extra context was the steadier
+of the two. The earlier explanation was a guess made after the fact and
+should not be repeated.
+
+### Cost
+
+| repeats averaged | grep | hook | paired delta |
+| --- | ---: | ---: | --- |
+| tokens | 745,227 | 615,481 | −129,746 [−345,723, +34,323] W8/L8 |
+| turns | 24.1 | 21.6 | −2.5 [−8.0, +1.5] W9/L7 |
+| dollars | $1.019 | $1.042 | +$0.023 [−0.148, +0.225] |
+
+Cheaper on average and evenly split on wins, so no cost claim survives
+either.
+
+### What weakens this run
+
+Sixteen paired tasks, and eight runs excluded — five from `hook`, three
+from `grep` — so the exclusions are not symmetric. The turn cap of thirty
+was binding, which is a real hazard: a cap that truncates both arms could
+hide a difference that only shows with more turns. The account hit its
+spend limit again on the final run. And `precise` at n=4 cannot support any
+comparison at all.
+
 ## Status
 
-Not run. The account hit its monthly spend limit partway through the
-ceiling run, which is also why that one scored nine tasks instead of
-twenty-four. The prompt sets are written and sitting outside this
-repository, next to the raw runs, since they describe a client
-application's features: `wordings-en.json`, `wordings-ua.json`.
+The English set is run, above. The Ukrainian set is written and not run.
+The prompt sets sit outside this repository, next to the raw runs, since
+they describe a client application's features: `wordings-en.json`,
+`wordings-ua.json`, `enbench-2026-09-06.json`.
 
 ```bash
 repoatlas agentbench <app> --prompts wordings-en.json --stratum domain \
