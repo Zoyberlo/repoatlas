@@ -1,0 +1,99 @@
+[
+  {
+    "label": "a blocked directory",
+    "expect": "example-path-only",
+    "verdict": "block",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "/p/backend/resources/views/invoice.blade.php"
+      }
+    }
+  },
+  {
+    "label": "a lookalike that must not fire",
+    "expect": null,
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "/p/backend/app/Services/views-helper.php"
+      }
+    }
+  },
+  {
+    "label": "path and content together",
+    "expect": "example-path-and-content",
+    "verdict": "block",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "/p/backend/app/Models/Order.php",
+        "content": "disable_delete"
+      }
+    }
+  },
+  {
+    "label": "the same path without the content",
+    "expect": null,
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "/p/backend/app/Models/Order.php",
+        "content": "protected $fillable = [];"
+      }
+    }
+  },
+  {
+    "label": "a regex rule, proven by a case",
+    "expect": "example-regex",
+    "verdict": "block",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "/p/config/database.php"
+      }
+    }
+  },
+  {
+    "label": "the same directory, not a php file",
+    "expect": null,
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "/p/config/database.yml"
+      }
+    }
+  },
+  {
+    "label": "state-changing git",
+    "expect": "example-bash-command",
+    "verdict": "block",
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "git commit -m 'x'"
+      }
+    }
+  },
+  {
+    "label": "read-only git",
+    "expect": null,
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "git log --oneline -5"
+      }
+    }
+  },
+  {
+    "label": "a warn rule warns rather than blocks",
+    "expect": "example-warn-not-block",
+    "verdict": "warn",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "/p/frontend/src/utils/format.js"
+      }
+    }
+  }
+]

@@ -13,6 +13,43 @@ harness before the tool call happens — whether or not anything was read.
 
 Install once, then every repo declares its own rules. A project without that file is unaffected.
 
+## Checking that the rules are alive
+
+A rule whose path was mistyped, or whose directory has since been renamed,
+never fires — and nothing says so. It sits in the file looking like coverage
+while the behaviour it was written to stop goes unstopped. That is worse than
+having written no rule at all, because somebody believes it is there.
+
+```bash
+node scripts/check.js                                   # this project's rules
+node scripts/check.js --project /path/to/repo
+node scripts/check.js --cases .claude/agent-guard.cases.json
+```
+
+Each rule is fired through `guard.js` itself, so this checks the engine's real
+behaviour rather than a second implementation of the matching that could drift
+from it. A rule whose own conditions do not match it is reported `DEAD`; one
+that a different rule intercepts first is `SHADOWED`; a regex rule is
+`unprovable` until a case proves it, because a regex cannot be inverted into a
+probe and guessing would report a live rule as dead.
+
+Cases are also where a rule proves it stays *off* the paths it should not
+touch, which is usually the harder half:
+
+```json
+[
+  { "label": "state-changing git", "expect": "git-writes", "verdict": "block",
+    "payload": { "tool_name": "Bash", "tool_input": { "command": "git commit -m x" } } },
+  { "label": "read-only git", "expect": null,
+    "payload": { "tool_name": "Bash", "tool_input": { "command": "git log" } } }
+]
+```
+
+`expect: null` asserts silence. Exit is non-zero if any rule is dead or any
+case disagrees, so this belongs in CI next to the linters.
+
+See [`examples/agent-guard.cases.example.json`](examples/agent-guard.cases.example.json).
+
 ## Rule format
 
 ```json
