@@ -111,10 +111,26 @@ class TestQuotedNumbers:
         quoted = f"Expected calibration error {measured.calibration.expected_error:.3f}"
         assert quoted in readme, f"README should quote: {quoted}"
 
-    def test_the_test_count_matches(self, readme: str) -> None:
-        # Counting the collected tests here would count this one twice over,
-        # so the check is only that a number is quoted at all and is not
-        # obviously stale by an order of magnitude.
-        match = re.search(r"pytest\s+# (\d+) tests", readme)
+    def test_the_test_count_matches(self, readme: str, request) -> None:
+        # This used to check only that *a* number was quoted, and the README
+        # sat at 635 while the suite grew to 968 — a check that looked alive
+        # and was not. The running session already knows its own collected
+        # count, so ask it, and hold the README to it exactly, the way every
+        # other number on this page is held.
+        match = re.search(r"\((\d+) tests\)", readme)
         assert match, "the README should say how many tests there are"
-        assert 100 <= int(match.group(1)) <= 100_000
+        quoted = int(match.group(1))
+
+        config = request.config
+        selected = bool(config.option.keyword or config.option.markexpr)
+        whole_suite = not selected and list(config.args) in ([], ["tests"])
+        if not whole_suite:
+            # A subset was asked for, so the session's count is not the
+            # suite's. Fall back to the loose bound rather than fail a run
+            # that never claimed to be complete.
+            assert 100 <= quoted <= 100_000
+            return
+        assert quoted == len(request.session.items), (
+            f"README says {quoted} tests; this run collected "
+            f"{len(request.session.items)}"
+        )

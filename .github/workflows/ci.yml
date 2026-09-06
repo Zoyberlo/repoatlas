@@ -1,9 +1,27 @@
+# What runs on every push, and what does not.
+#
+# This matrix used to be three operating systems by two Python versions on
+# every push. The run history says that was too much: across 61 runs, four
+# failed, and macOS was never once the job that caught something. Two were
+# lint, one broke on every platform at once, and one was Windows-only.
+# macOS also bills at ten times the Linux rate.
+#
+# Development happens on Windows with a WSL Ubuntu beside it, so those two
+# platforms are covered before a push ever happens; `python scripts/check.py`
+# runs the same gates locally in about a minute. What CI adds is the part a
+# local gate cannot: it runs when someone forgets. That is what caught the
+# two lint failures, and it is the whole reason these jobs still exist.
+#
+# The wider matrix is not deleted, only taken off the push path. Run it from
+# the Actions tab before anything that matters, or when the project is close
+# enough to done that other people's machines start to count.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -11,14 +29,13 @@ concurrency:
 
 jobs:
   test:
-    name: ${{ matrix.os }} / Python ${{ matrix.python }}
-    runs-on: ${{ matrix.os }}
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # The harness must behave identically on every platform a developer
-        # might index from, including Windows path separators and casing.
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Not an OS matrix any more, but pyproject claims >=3.11, and the
+        # floor is worth holding to: it is the cheapest tier there is.
         python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -37,8 +54,48 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
       - name: Ruff
         run: ruff check .
       - name: Mypy
         run: mypy
+
+  rules:
+    name: guard rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # The hook's own behaviour: matching, precedence, what a malformed
+      # rule does to the rules beside it.
+      - name: Self-test
+        run: node claude-plugin/plugins/agent-guard/scripts/selftest.js
+      # And whether this repository's nine rules still fire. One of them
+      # blocks, and a rule that has quietly stopped matching is worse than
+      # no rule, because it is still written down and still believed.
+      - name: This repository's own rules
+        run: node claude-plugin/plugins/agent-guard/scripts/check.js --cases .claude/agent-guard.cases.json
+
+  platforms:
+    # Off the push path deliberately: see the note at the top. Start it by
+    # hand from the Actions tab.
+    if: github.event_name == 'workflow_dispatch'
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Test
+        run: pytest

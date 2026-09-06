@@ -766,12 +766,21 @@ benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md)
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
-pytest                 # 635 tests
-ruff check .
-mypy
+python scripts/check.py                                     # every gate, ~35s
 ```
 
-CI runs the suite on Linux, macOS and Windows, against Python 3.11 and 3.13.
+That runs the suite (968 tests), ruff, mypy, and the guard plugin's own
+checks, each judged by its own exit code. `--list` names them, `--skip` drops
+one. A gate that cannot run — node missing, say — is reported as a failure
+rather than a skip, because a check believed to be running and silently not
+is the worse of the two.
+
+CI runs the same gates on a clean Linux, against Python 3.11 and 3.13. It is
+deliberately not an OS matrix: development happens on Windows with a WSL
+Ubuntu beside it, so both are covered before a push, and across 61 runs macOS
+never once caught something the other platforms did not. Windows and macOS
+still exist as a `workflow_dispatch` job, to be started by hand when the
+project is close enough to done for other people's machines to matter.
 
 ## Licence
 
