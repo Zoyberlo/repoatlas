@@ -76,6 +76,7 @@ from .eval.report import to_json, to_markdown
 from .model import IndexSnapshot
 from .oracle.phpstan import PhpStanError, read_phpstan, run_phpstan
 from .oracle.scip import ScipError, cross_check, read_scip
+from .prompts import STRATA
 
 if TYPE_CHECKING:  # pragma: no cover - imported only for type checking
     from .parse.build import BuildResult
@@ -208,6 +209,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agentbench.add_argument(
         "--with-runs", action="store_true", help="include every run in the JSON"
+    )
+    agentbench.add_argument(
+        "--prompts",
+        type=Path,
+        help=(
+            "a JSON prompt set: other ways of asking for the same changes, so a "
+            "request that names an identifier can be compared with one that names "
+            "a button. Only the commits it covers are posed"
+        ),
+    )
+    agentbench.add_argument(
+        "--stratum",
+        choices=STRATA,
+        help="pose only the wordings in this stratum of --prompts",
     )
     agentbench.add_argument("--format", choices=("text", "json"), default="text")
 
@@ -748,6 +763,24 @@ def _cmd_agentbench(args: argparse.Namespace) -> int:
             if row.get("ok")
         ]
         print(f"resuming past {len(earlier)} scored run(s)", file=sys.stderr)
+
+    wordings = None
+    if args.prompts is not None:
+        from .prompts import load_prompts
+
+        try:
+            wordings = load_prompts(args.prompts)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"repoatlas: {exc}") from None
+        if args.stratum:
+            wordings = wordings.in_stratum(args.stratum)
+        if not wordings.prompts:
+            raise SystemExit("repoatlas: that prompt set poses nothing")
+        print(
+            f"posing {len(wordings.prompts)} wording(s)"
+            + (f" from the {args.stratum} stratum" if args.stratum else ""),
+            file=sys.stderr,
+        )
     try:
         result = run_agentbench(
             root,
@@ -764,6 +797,7 @@ def _cmd_agentbench(args: argparse.Namespace) -> int:
             budget=args.budget,
             done={(run.sha, run.arm, run.repeat) for run in earlier},
             progress=progress,
+            wordings=wordings,
         )
     except HistoryError as exc:
         raise SystemExit(f"repoatlas: {exc}") from None

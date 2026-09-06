@@ -45,6 +45,7 @@ from .localize import (
     commit_cases,
     skeleton_prefix,
 )
+from .prompts import PromptSet, TaskPrompt
 from .rank import MapOptions, RankOptions, rank_symbols, render_map
 from .store import IndexStore, update_store
 
@@ -596,12 +597,20 @@ class AgentRun:
     turns: int = 0
     duration_ms: int = 0
     mcp_calls: int = 0
+    stratum: str = ""
+    """Which wording stratum the task was posed in, when a prompt set was used.
+
+    Empty for a commit-subject run, which is its own stratum in practice —
+    developer vocabulary, written after the change.
+    """
+
     tool_calls: dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "sha": self.sha,
             "arm": self.arm,
+            "stratum": self.stratum,
             "repeat": self.repeat,
             "ok": self.ok,
             "reason": self.reason,
@@ -789,8 +798,17 @@ def run_agentbench(
     budget: int = 2000,
     done: set[tuple[str, str, int]] | None = None,
     progress: Any = None,
+    wordings: PromptSet | None = None,
 ) -> AgentBenchResult:
     """Run every task through every arm and score the answers.
+
+    ``wordings`` replaces each task's commit subject with another way of
+    asking for the same change, keeping the ground truth identical. That
+    is the only honest way to compare a request that names an identifier
+    against one that names a button: same answer, same tasks, same
+    pairing, different sentence. Commits with no wording are skipped, so a
+    prompt set of twelve poses twelve tasks rather than quietly falling
+    back to subjects for the rest.
 
     The scratch clone is checked out at each task's parent commit and
     indexed there, so the server the agent sees describes exactly the
@@ -822,6 +840,11 @@ def run_agentbench(
                 snapshot = store.snapshot()
                 wanted_ids = {item for item in wanted if item in snapshot.symbols}
                 if not wanted_ids:
+                    continue
+                wording = wordings.for_sha(commit.sha) if wordings else None
+                if wordings is not None and wording is None:
+                    # Asked for a specific set of wordings; a commit outside
+                    # it is not this experiment's task.
                     continue
                 result.tasks += 1
                 wanted_files = {snapshot.symbols[item].path for item in wanted_ids}
@@ -869,6 +892,7 @@ def run_agentbench(
                             wanted_files=wanted_files,
                             locator=locator,
                             context=contexts.get(arm.context, ""),
+                            wording=wording,
                         )
                         result.runs.append(run)
                         if progress is not None:
@@ -992,10 +1016,11 @@ def _run_once(
     wanted_files: set[str],
     locator: _Locator,
     context: str = "",
+    wording: TaskPrompt | None = None,
 ) -> AgentRun:
     outcome = _run_command(
         root,
-        task_prompt(commit.subject, arm, context),
+        task_prompt(wording.text if wording else commit.subject, arm, context),
         arm,
         claude=claude,
         model=model,
@@ -1004,8 +1029,11 @@ def _run_once(
         config_path=config_path,
         settings_path=settings_path,
     )
+    stratum = wording.stratum if wording else ""
     if isinstance(outcome, str):
-        return AgentRun(commit.sha[:12], arm.name, repeat, ok=False, reason=outcome)
+        return AgentRun(
+            commit.sha[:12], arm.name, repeat, ok=False, reason=outcome, stratum=stratum
+        )
     trace = outcome
     locations = parse_locations(trace.result_text)
     symbol_recall, file_recall, precision = score_locations(
@@ -1019,6 +1047,7 @@ def _run_once(
         arm=arm.name,
         repeat=repeat,
         ok=True,
+        stratum=stratum,
         symbol_recall=symbol_recall,
         file_recall=file_recall,
         file_precision=precision,
