@@ -86,6 +86,19 @@ class Arm:
     trusted: every run records which tools it called.
     """
 
+    hooks: bool = False
+    """Whether to attach the PostToolUse hook that answers a search.
+
+    The tool-shaped arms measured whether an agent *given* the index does
+    better, and the answer was no — because it never called it: 0 times out
+    of 8 for Serena, 0.8 a run for the map. This arm asks a different
+    question. The agent greps exactly as the grep arm does, and the index
+    speaks only afterwards, and only when it has something a text search
+    could not have said. If this does not move either, the index has
+    nothing to offer an agent that already has a shell, and that is worth
+    knowing rather than suspecting.
+    """
+
     hint: str = ""
     context: str = ""
     """What to put in the prompt before the task: ``map``, ``skeleton``, or nothing.
@@ -143,6 +156,17 @@ ARMS: dict[str, Arm] = {
             "resolved references. Its tools can answer this without reading whole "
             "files."
         ),
+    ),
+    # Not a tool the agent can decline. Same allowed tools as `grep`, same
+    # prompt, same hint — the only difference is that a PostToolUse hook
+    # runs after each search and appends what the index knows about the
+    # name searched for, when that is something grep could not have said.
+    "hook": Arm(
+        name="hook",
+        server=None,
+        allowed_tools=_READ_ONLY_TOOLS,
+        hooks=True,
+        hint="Use Grep, Glob and Read to find them.",
     ),
     # The ablation. Same tools as grep, same task, and the same number of
     # tokens of context in front of it either way: `map` is what the ranked
@@ -244,6 +268,7 @@ def claude_command(
     mcp_config_path: Path | None,
     model: str | None,
     max_turns: int,
+    settings_path: Path | None = None,
 ) -> list[str]:
     """The headless Claude Code invocation for one run.
 
@@ -277,6 +302,8 @@ def claude_command(
         command += ["--model", model]
     if arm.mcp and mcp_config_path is not None:
         command += ["--mcp-config", str(mcp_config_path)]
+    if arm.hooks and settings_path is not None:
+        command += ["--settings", str(settings_path)]
     return command
 
 
@@ -330,6 +357,34 @@ def mcp_config(
                 "command": command,
                 "args": [*args, "serve", str(root), "--store", str(store), "--no-refresh"],
             }
+        }
+    }
+
+
+def hook_settings(store: Path) -> dict[str, Any]:
+    """A settings file declaring the PostToolUse hook, for one arm.
+
+    Passed with `--settings`, which applies on top of nothing else here:
+    the runs are already isolated by `--strict-mcp-config` and no session
+    persistence, so this is the only hook the agent has.
+
+    The store is named rather than discovered. The benchmark's index does
+    not live where a project's would, and a hook that quietly answered from
+    some other index would produce a number about the wrong thing.
+    """
+    executable = shutil.which("repoatlas")
+    if executable:
+        command = f'"{executable}" hook --store "{store}"'
+    else:
+        command = f'"{sys.executable}" -m repoatlas hook --store "{store}"'
+    return {
+        "hooks": {
+            "PostToolUse": [
+                {
+                    "matcher": "Grep",
+                    "hooks": [{"type": "command", "command": command}],
+                }
+            ]
         }
     }
 
@@ -740,6 +795,13 @@ def run_agentbench(
                 for arm_name in chosen:
                     arm = ARMS[arm_name]
                     arm_config = config_path.with_name(f"{config_path.name}.{arm_name}.json")
+                    settings_file = config_path.with_name(
+                        f"{config_path.name}.{arm_name}.settings.json"
+                    )
+                    if arm.hooks:
+                        settings_file.write_text(
+                            json.dumps(hook_settings(store_path)), encoding="utf-8"
+                        )
                     if arm.mcp:
                         arm_config.write_text(
                             json.dumps(
@@ -766,6 +828,7 @@ def run_agentbench(
                             max_turns=max_turns,
                             timeout=timeout,
                             config_path=arm_config if arm.mcp else None,
+                            settings_path=settings_file if arm.hooks else None,
                             wanted_ids=wanted_ids,
                             wanted_files=wanted_files,
                             locator=locator,
@@ -833,6 +896,7 @@ def _run_command(
     max_turns: int,
     timeout: int,
     config_path: Path | None,
+    settings_path: Path | None = None,
 ) -> RunTrace | str:
     """One headless run in ``root``: its trace, or why there is none.
 
@@ -847,6 +911,7 @@ def _run_command(
         mcp_config_path=config_path if arm.mcp else None,
         model=model,
         max_turns=max_turns,
+        settings_path=settings_path if arm.hooks else None,
     )
     started = time.monotonic()
     try:
@@ -886,6 +951,7 @@ def _run_once(
     max_turns: int,
     timeout: int,
     config_path: Path | None,
+    settings_path: Path | None,
     wanted_ids: set[str],
     wanted_files: set[str],
     locator: _Locator,
@@ -900,6 +966,7 @@ def _run_once(
         max_turns=max_turns,
         timeout=timeout,
         config_path=config_path,
+        settings_path=settings_path,
     )
     if isinstance(outcome, str):
         return AgentRun(commit.sha[:12], arm.name, repeat, ok=False, reason=outcome)

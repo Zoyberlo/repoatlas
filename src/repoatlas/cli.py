@@ -143,6 +143,19 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    hook = subcommands.add_parser(
+        "hook",
+        help=(
+            "PostToolUse hook: after a search, say which definition each hit "
+            "belongs to (reads the hook payload on stdin)"
+        ),
+    )
+    hook.add_argument(
+        "--store",
+        type=Path,
+        help="the index to answer from; defaults to .repoatlas/index.db",
+    )
+
     search = subcommands.add_parser("search", help="find a symbol in a stored index")
     search.add_argument("store", type=Path, help="the SQLite index to read")
     search.add_argument("query", help="a substring of the symbol name")
@@ -532,6 +545,13 @@ def _load(path: Path, root: Path | None = None) -> IndexSnapshot:
         raise SystemExit(f"repoatlas: no such file: {path}") from None
     except ScipError as exc:
         raise SystemExit(f"repoatlas: cannot read {path}: {exc}") from None
+
+
+def _cmd_hook(args: argparse.Namespace) -> int:
+    """Run the PostToolUse hook: payload on stdin, JSON or nothing on stdout."""
+    from .hook import main as hook_main
+
+    return hook_main(args.store)
 
 
 def _cmd_index(args: argparse.Namespace) -> int:
@@ -1382,6 +1402,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "inspect": _cmd_inspect,
         "index": _cmd_index,
         "search": _cmd_search,
+        "hook": _cmd_hook,
         "map": _cmd_map,
         "tokens": _cmd_tokens,
         "agentbench": _cmd_agentbench,
