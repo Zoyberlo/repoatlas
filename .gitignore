@@ -22,3 +22,6 @@ eval-runs/
 *.db
 *.db-wal
 *.db-shm
+
+# The guard writes here; it is a session record, not project config
+.claude/agent-guard.log
