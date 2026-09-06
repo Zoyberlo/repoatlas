@@ -1,0 +1,214 @@
+[
+  {
+    "label": "a github workflow",
+    "expect": "client-ci",
+    "verdict": "block",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "/home/u/projects/acme/.github/workflows/ci.yml"
+      }
+    }
+  },
+  {
+    "label": "a deployment script",
+    "expect": "client-ci",
+    "verdict": "block",
+    "payload": {
+      "tool_name": "Write",
+      "tool_input": {
+        "file_path": "/home/u/projects/acme/deployment/scripts/release.sh",
+        "content": "x"
+      }
+    }
+  },
+  {
+    "label": "this repository's own workflow",
+    "expect": "own-ci",
+    "verdict": "warn",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "A:/Projects/repoatlas/.github/workflows/ci.yml"
+      }
+    }
+  },
+  {
+    "label": "a client source file",
+    "expect": "client-project-write",
+    "verdict": "block",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "/home/u/projects/application-c/backend/app/Models/User.php"
+      }
+    }
+  },
+  {
+    "label": "the guard rules the user asked for",
+    "expect": null,
+    "payload": {
+      "tool_name": "Write",
+      "tool_input": {
+        "file_path": "/home/u/projects/application-c/.claude/agent-guard.json",
+        "content": "{}"
+      }
+    }
+  },
+  {
+    "label": "a scratch copy",
+    "expect": null,
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "/home/zoyberlo/ra-scratch/ro/app/X.php"
+      }
+    }
+  },
+  {
+    "label": "this repository",
+    "expect": null,
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "A:/Projects/repoatlas/src/repoatlas/cli.py"
+      }
+    }
+  },
+  {
+    "label": "sed -i into a client tree",
+    "expect": "client-project-write-via-shell",
+    "verdict": "warn",
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "sed -i 's/a/b/' /home/u/projects/acme/config/app.php"
+      }
+    }
+  },
+  {
+    "label": "reading a client tree",
+    "expect": null,
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "grep -rn Foo /home/u/projects/acme/app"
+      }
+    }
+  },
+  {
+    "label": "a piped test gate",
+    "expect": "piped-test-gate",
+    "verdict": "warn",
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "pytest -q | tail -2 && git commit -m x"
+      }
+    }
+  },
+  {
+    "label": "a gate that tests its own status",
+    "expect": null,
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "pytest -q > /tmp/g.log 2>&1; rc=$?; if [ $rc -eq 0 ]; then git commit -m x; fi"
+      }
+    }
+  },
+  {
+    "label": "pytest with no commit behind it",
+    "expect": null,
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "pytest -q | tail -3"
+      }
+    }
+  },
+  {
+    "label": "a heredoc carrying an escape",
+    "expect": "heredoc-escapes",
+    "verdict": "warn",
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "python - <<'PY'\nopen('x','w').write('a\\\\nb')\nPY"
+      }
+    }
+  },
+  {
+    "label": "a heredoc with no escapes",
+    "expect": null,
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "python - <<'PY'\nprint(1 + 1)\nPY"
+      }
+    }
+  },
+  {
+    "label": "an artefact written to /tmp",
+    "expect": "scratch-in-tmp",
+    "verdict": "warn",
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "repoatlas agentbench . --out /tmp/ab.json"
+      }
+    }
+  },
+  {
+    "label": "an artefact under ra-scratch",
+    "expect": null,
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "repoatlas agentbench . --out ~/ra-scratch/ab.json"
+      }
+    }
+  },
+  {
+    "label": "a benchmark document",
+    "expect": "benchmark-docs-by-hand",
+    "verdict": "warn",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "A:/Projects/repoatlas/docs/benchmarks/review.md"
+      }
+    }
+  },
+  {
+    "label": "an ordinary document",
+    "expect": null,
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "A:/Projects/repoatlas/docs/evaluation.md"
+      }
+    }
+  },
+  {
+    "label": "pkill -f",
+    "expect": "pkill-self-match",
+    "verdict": "warn",
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "pkill -f 'some pattern'"
+      }
+    }
+  },
+  {
+    "label": "pgrep by name",
+    "expect": null,
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "pgrep node"
+      }
+    }
+  }
+]

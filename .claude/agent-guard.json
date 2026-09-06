@@ -1,4 +1,88 @@
 {
-  "_note": "Rules this repository enforces mechanically. A rule written in prose is advisory; one here is enforced by a PreToolUse hook whether or not anything was read. Add candidates with \"action\": \"warn\" first and let .claude/agent-guard.log decide whether they earn a block.",
-  "rules": []
+  "_note": "Rules this repository enforces mechanically. Every one comes from something that actually went wrong while building it, and each says which. A rule written in prose is advisory; one here is enforced by a PreToolUse hook whether or not anything was read. New candidates enter with \"action\": \"warn\" and let .claude/agent-guard.log decide whether they earn a block. Check them with: node claude-plugin/plugins/agent-guard/scripts/check.js --cases .claude/agent-guard.cases.json",
+  "rules": [
+    {
+      "id": "client-ci",
+      "tools": [
+        "Edit",
+        "Write"
+      ],
+      "pathRegex": "(home/[^/]+/projects|mnt/[a-z]/projects)/[^/]+/(.*/)?(\\.github/|\\.gitlab-ci\\.yml|Jenkinsfile|\\.circleci/|deployment/|deploy/)",
+      "message": "CI, pipelines and deployment scripts of a client repository are off limits entirely. A broken pipeline costs the user a working day, and no experiment run against their code is worth that. Not even to fix something visibly wrong."
+    },
+    {
+      "id": "own-ci",
+      "action": "warn",
+      "tools": [
+        "Edit",
+        "Write"
+      ],
+      "pathRegex": "(/\\.github/|/\\.gitlab-ci\\.yml|/Jenkinsfile|/\\.circleci/)",
+      "message": "This repository's own CI. Changing it is a deliberate act rather than a tidy-up along the way: the suite it runs is what every measurement in docs/benchmarks/ is checked by. Say what you are changing and why."
+    },
+    {
+      "id": "client-project-write",
+      "tools": [
+        "Edit",
+        "Write"
+      ],
+      "pathRegex": "(^|/)(home/[^/]+/projects|mnt/[a-z]/projects)/(?!application-c/\\.claude/)",
+      "message": "This path is inside a client repository. Read them, index them, benchmark against them — do not write to them. Take a copy under ~/ra-scratch/ instead.\n\nIf the user asked for this specific change, back the file up first: .agent/, docs/, CLAUDE.md and AGENTS.md are gitignored there and have no history to recover from."
+    },
+    {
+      "id": "client-project-write-via-shell",
+      "action": "warn",
+      "tools": [
+        "Bash"
+      ],
+      "commandRegex": "(>>?\\s*[^|;&]*(home/[^/]+/projects|projects/(application-c|application-a|application-b))|\\bsed\\s+-i[^|;&]*/projects/|\\brm\\s+-rf?[^|;&]*/projects/)",
+      "message": "Writing into a client repository through the shell is the same change with a different tool. Copy it to ~/ra-scratch/ and work there."
+    },
+    {
+      "id": "piped-test-gate",
+      "action": "warn",
+      "tools": [
+        "Bash"
+      ],
+      "commandRegex": "(pytest|ruff|mypy|npm test)[^|;]*\\|[^&;]*&&",
+      "message": "A pipe between a check and the `&&` that depends on it reads the *pipe's* exit code, not the check's. This has committed a failing suite three times in this project.\n\nRun the gate to a file and test its own status:\n\n    pytest -q > /tmp/gate.log 2>&1; rc=$?; tail -3 /tmp/gate.log\n    if [ $rc -eq 0 ]; then git commit ...; fi"
+    },
+    {
+      "id": "heredoc-escapes",
+      "action": "warn",
+      "tools": [
+        "Bash"
+      ],
+      "commandRegex": "<<\\s*'?[A-Za-z]+'?[\\s\\S]*\\\\\\\\n",
+      "message": "A heredoc on this machine mangles backslash escapes: `\\\\n` inside embedded source arrives as a real newline, and the file it writes has unterminated strings. That has broken a test module and a library function four times here.\n\nUse the Write or Edit tool for any content containing escape sequences, and re-grep the result for the escape you meant to write."
+    },
+    {
+      "id": "scratch-in-tmp",
+      "action": "warn",
+      "tools": [
+        "Bash"
+      ],
+      "commandRegex": "--(out|work|store)\\s+/tmp/",
+      "message": "WSL wiped /tmp mid-session during an upgrade and destroyed two SCIP oracles, a PHPStan fact dump and every benchmark result file. Put anything that took minutes to build under ~/ra-scratch/ instead."
+    },
+    {
+      "id": "benchmark-docs-by-hand",
+      "action": "warn",
+      "tools": [
+        "Edit",
+        "Write"
+      ],
+      "path": "/docs/benchmarks/",
+      "message": "These documents carry measured numbers, and every one of them names the run that produced it. Editing a figure by hand breaks that link silently, and a number nobody can reproduce is worse than no number.\n\nChange the measurement, re-run it, then write down what came back."
+    },
+    {
+      "id": "pkill-self-match",
+      "action": "warn",
+      "tools": [
+        "Bash"
+      ],
+      "commandRegex": "\\b(pkill|pgrep)\\s+-[a-z]*f\\b",
+      "message": "`pkill -f` and `pgrep -f` match the very shell whose command line contains the pattern. A waiter loop built this way never exited because it was itself a match, and an inline `pkill -f` killed its own shell.\n\nWait on a PID, or choose a pattern the waiter's own command line cannot contain."
+    }
+  ]
 }
