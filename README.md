@@ -12,9 +12,9 @@ Point it at a repository and an agent can ask where a symbol is defined, what
 uses it, and what the project is built around. Every answer fits a token
 budget, and every edge says how confidently it was resolved.
 
-**And then it was measured against `grep`, nine times, and did not win.**
+**And then it was measured against `grep`, ten times, and did not win.**
 That result is the most useful thing here; it is summarised
-[below](#what-nine-agent-level-comparisons-found) and reported in full in
+[below](#what-ten-agent-level-comparisons-found) and reported in full in
 [docs/benchmarks/](docs/benchmarks/).
 
 > **Measured, not claimed.** Against real `scip-typescript`, `scip-python`
@@ -27,7 +27,7 @@ That result is the most useful thing here; it is summarised
 > explains why.
 >
 > Being right turned out not to be the same as being useful, which is what
-> [the agent-level comparisons](#what-nine-agent-level-comparisons-found)
+> [the agent-level comparisons](#what-ten-agent-level-comparisons-found)
 > are about.
 
 ```bash
@@ -40,7 +40,7 @@ repoatlas serve /path/to/repo     # seven read-only tools over MCP
 ## Contents
 
 - [Why this exists](#why-this-exists-and-why-it-starts-with-tests)
-- [**What nine agent-level comparisons found**](#what-nine-agent-level-comparisons-found)
+- [**What ten agent-level comparisons found**](#what-ten-agent-level-comparisons-found)
 - [Scoring an index against a compiler](#scoring-an-index-against-a-compiler)
 - [Indexing and searching](#indexing-and-searching)
 - [Mapping a repository](#mapping-a-repository)
@@ -74,7 +74,7 @@ right code first, with fewer tokens as a consequence rather than a target.
 Which means accuracy is the product, and accuracy has to be measurable from
 day one. Hence: oracle harness first, extractor second.
 
-## What nine agent-level comparisons found
+## What ten agent-level comparisons found
 
 The section above argues the index should help. It was then put to an agent
 and measured, and the argument did not survive contact.
@@ -86,7 +86,7 @@ and measured, and the argument did not survive contact.
 | ranked map against an unranked outline of the same size | 56 | never clears zero, on either of two repositories |
 | review a diff **with no checkout** | 36 | **0.000 difference against grep**, at a third of the turns |
 
-Nine head-to-head comparisons, no win. Where a shell and a checkout exist,
+Nine head-to-head comparisons there, no win. Where a shell and a checkout exist,
 `grep` is not merely competitive — it is *cheaper*: 5.1 turns against 14.7,
 $0.185 against $0.206.
 
@@ -108,20 +108,24 @@ Offline it also beats grep on what a tool *returns* — `find_references` at
 does not survive an agent that also has grep.
 
 **The tenth comparison stopped offering the index and started answering
-with it.** A `PostToolUse` hook runs after each `Grep` and appends which
-definition each hit belongs to — `save` is four methods in four classes,
-and here is which of them the resolved edges reach. On a 1,832-file Laravel
-application, twenty-four paired tasks: symbol recall 0.464 to **0.556**,
-paired **+0.093 [+0.009, +0.197]**, W6/L1. File recall is identical and was
-already near its ceiling, so the movement is entirely in *which symbol* was
-named — exactly what the hook says and nothing else.
+with it,** and it failed too. A `PostToolUse` hook runs after each `Grep`
+and appends which definition each hit belongs to. It first measured symbol
+recall 0.464 to 0.556, paired +0.093 [+0.009, +0.197] — and a second run of
+the same tasks scored it at **−0.031**, while `grep` returned an identical
+score on seven of those eight tasks. The arm with the injected context
+moved; the baseline did not. The registered confirmation failed, and so did
+the ceiling arm's registered bar of +0.19, at +0.031.
 
-It is the first interval above zero on this task, and it is thin: the lower
-bound is +0.009, seventeen of twenty-four tasks are ties, the threshold was
-applied after the fact rather than registered before, and it costs 13% more
-tokens by an amount whose interval crosses zero. Read
-[hook.md](docs/benchmarks/hook.md) before believing it; the replication that
-would settle it is registered there and has not been run.
+Ten head-to-head comparisons, no win that survives a re-run. The details,
+kept as first reported and then withdrawn, are in
+[hook.md](docs/benchmarks/hook.md).
+
+One thing none of the ten tested: every task was posed as a **commit
+subject**, written by the developer who made the change, in the vocabulary
+of the code — which is the condition `grep` is best in, because the request
+already contains the string to search for. What a request usually looks
+like ("the button on the report page that clears it doesn't work") shares
+nothing with the code. That comparison has not been run.
 
 | report | what it settles |
 | --- | --- |

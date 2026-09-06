@@ -1,13 +1,20 @@
 # Answering a search instead of offering a tool
 
+> **Withdrawn.** The +0.093 below did not reproduce. A second run of the
+> same tasks scored the hook at **−0.031** against `grep`, and `grep`
+> itself returned the identical score on seven of those eight tasks — so
+> it was the hook arm that moved, not the measurement. The registered
+> confirmation failed. [What actually happened](#the-confirmation-failed)
+> is at the bottom, and the numbers above it are kept as they were
+> reported rather than quietly corrected.
+
 Every earlier agent-level comparison in this project offered the index as
 something the agent could call. Nine of them found no win. This one does
 not offer it: a `PostToolUse` hook runs after each `Grep` and appends what
 the index knows about the name that was searched for.
 
-It is the first agent-level result on the localisation task where the
-interval excludes zero. It is also the weakest kind of positive result
-this project accepts, and the caveats below are not decoration.
+It read as the first agent-level result on the localisation task where the
+interval excluded zero. It was not.
 
 ## The run
 
@@ -172,3 +179,66 @@ Registered before the run:
 
 Raw runs are kept outside this repository, since they carry a client
 project's commit subjects and paths: `hookbench-2026-09-06.json`.
+
+
+## The confirmation failed
+
+Run on 6 September 2026, `--arms grep,hook,ceiling`, same application, same
+walk. It stopped early on a monthly spend limit with nine tasks scored
+instead of twenty-four, and those nine are a **subset of the original
+twenty-four** — so this is a re-measurement of the same work, not a new
+sample of different work.
+
+| the same eight tasks | run 1 | run 2 |
+| --- | ---: | ---: |
+| `hook` minus `grep`, symbol recall | **+0.122** | **−0.031** |
+| wins / losses | W5/L0 | W0/L1 |
+
+Four tasks where the hook gained 0.33, 0.25, 0.25 and 0.14 came back at
+exactly zero. One reversed.
+
+The line that settles it is not the delta but the baseline: **`grep`
+returned an identical score on seven of the eight tasks across the two
+runs.** The harness, the tasks and the scoring are near-deterministic. What
+moved was the arm with the injected context.
+
+That has an explanation, and it is not flattering: context the agent may or
+may not act on is a branch point, and a branch point is variance. The arm
+without it walks a well-worn path. So the first run's six wins were most
+likely the tail of a noisier arm rather than a mechanism, which is exactly
+what "seventeen of twenty-four tasks are ties, the result rests on seven
+tasks" was warning about.
+
+### Against the registered thresholds
+
+| registered | required | observed | |
+| --- | --- | --- | --- |
+| confirmation | `hook − grep` excludes zero again | −0.031 [−0.094, +0.000] | **failed** |
+| headroom | `ceiling − grep` ≥ +0.19, excluding zero | +0.031 [+0.000, +0.094] | **failed** |
+
+The ceiling arm — the ranked map, the MCP tools, a hook answering every
+search, forty turns — finished 0.031 above `grep` on eight tasks. Against
+a registered bar of +0.19. Whatever headroom this task has, none of the
+levers built here reach it.
+
+### What is fair to say against this
+
+n=8, and the run was cut off by a spend limit rather than finishing. That
+is genuinely low power, and a low-powered run cannot establish an absence.
+
+It does not need to. The claim being tested was that a specific set of
+wins would reappear, and on the identical tasks, against a baseline that
+reproduced itself seven times out of eight, they did not. That is what the
+threshold was registered to catch.
+
+### Where this leaves the tenth comparison
+
+With the other nine. The hook is cheap, it is correct in what it says, and
+it has not been shown to help an agent that already has grep and a
+checkout.
+
+The one thing this run did *not* test is the thing that prompted it: every
+task here was posed as a commit subject, written by the developer who made
+the change, in the vocabulary of the code. See
+[prompts.py](../../src/repoatlas/prompts.py) for why that is the baseline's
+best case, and for the stratification that would ask the question properly.
