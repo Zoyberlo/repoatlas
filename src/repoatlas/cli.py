@@ -133,6 +133,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="hash every file instead of trusting size and mtime",
     )
+    index.add_argument(
+        "--rev",
+        metavar="REVISION",
+        help=(
+            "read the files from this git revision's objects instead of from "
+            "the working tree; works against a bare repository, and needs "
+            "--store"
+        ),
+    )
 
     search = subcommands.add_parser("search", help="find a symbol in a stored index")
     search.add_argument("store", type=Path, help="the SQLite index to read")
@@ -528,6 +537,12 @@ def _load(path: Path, root: Path | None = None) -> IndexSnapshot:
 def _cmd_index(args: argparse.Namespace) -> int:
     if args.store is not None:
         return _cmd_index_store(args)
+    if getattr(args, "rev", None):
+        # The in-memory path prints a summary and throws the index away.
+        # Reading a revision is worth doing only to keep the result, and
+        # silently ignoring --rev would print numbers for the working tree
+        # while the caller believed they described a commit.
+        raise SystemExit("repoatlas: --rev needs --store to write the index to")
     result = _build(args.root, use_git=not args.no_git)
     if args.format == "json":
         print(json.dumps(result.as_dict(), indent=2))
@@ -600,14 +615,24 @@ def _cmd_index_store(args: argparse.Namespace) -> int:
         store = IndexStore(args.store)
     except StoreError as exc:
         raise SystemExit(f"repoatlas: {exc}") from None
+    revision = getattr(args, "rev", None)
     with store:
         try:
-            result = update_store(
-                args.root,
-                store,
-                use_git=not args.no_git,
-                trust_mtime=not args.rehash,
-            )
+            if revision:
+                from .parse.gitobjects import GitObjectError, RevisionTree
+
+                try:
+                    with RevisionTree(args.root, revision) as tree:
+                        result = update_store(None, store, tree=tree)
+                except GitObjectError as exc:
+                    raise SystemExit(f"repoatlas: {exc}") from None
+            else:
+                result = update_store(
+                    args.root,
+                    store,
+                    use_git=not args.no_git,
+                    trust_mtime=not args.rehash,
+                )
         except NotADirectoryError as exc:
             raise SystemExit(f"repoatlas: {exc}") from None
         counts = store.counts()

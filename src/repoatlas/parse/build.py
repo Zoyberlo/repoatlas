@@ -190,6 +190,12 @@ def build_snapshot(
     for source in source_files:
         if source.language.name in unavailable:
             continue
+        if source.absolute is None:
+            # This builder walks a directory, so every file it sees has
+            # one. An index built from git objects goes through
+            # update_store, which reads through the tree instead.
+            result.failures.append((source.path, "no location on disk"))
+            continue
         try:
             content = source.absolute.read_bytes()
         except OSError as exc:

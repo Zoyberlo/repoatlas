@@ -547,6 +547,30 @@ Every answer is trimmed to a token budget and says what it left out. Claude
 Code truncates a tool result at 25,000 tokens, and a result cut by the client
 is cut at a point the agent cannot see.
 
+### Serving a repository nobody has checked out
+
+The one setting where this index beats reading code is reviewing a diff with
+no working tree. So it can be built without one:
+
+```bash
+git clone --bare git@host:org/app.git app.git     # objects only, no files
+repoatlas index app.git --rev main --store app.db # reads git's objects
+repoatlas serve --store app.db --no-refresh       # anywhere, no source needed
+```
+
+`index --rev` asks `git ls-tree` what is in the revision and `git cat-file`
+for the bytes, so it never needs the files on disk. On this repository the
+result is not merely comparable to a checkout-built index but identical to
+it — the same 2,986 symbols, the same 10,283 edges, the same content digests
+— and a test holds that equality rather than a paragraph claiming it.
+
+The store carries which commit it describes, and `index_status` reports that
+bodies cannot be read, because on the serving machine there is no file to
+read them from. Framework conventions still apply: detection needs to read
+`composer.json`, so the manifests are pulled out of the revision for it.
+Without that step a no-checkout index would build cleanly and silently
+contain no Blade views at all.
+
 ### What a map call costs on a large index
 
 Measured on a synthetic index of 100,000 symbols in 5,000 files with
@@ -740,18 +764,24 @@ the name cascade would match any function called `nope` and label the result
 - [x] **Four benchmark harnesses** — `localize`, `agentbench`, `sitebench`,
       `reviewbench` — with paired bootstrap intervals and pre-registered
       thresholds
-- [ ] **A deployment path for the one setting that wins**: building an index
-      without a working tree, moving a store between machines, refreshing it
-      from a diff. Until that exists, "review with no checkout" is a
-      benchmark result rather than a capability
+- [x] **Building an index with no working tree**, straight from git's object
+      database, so the one setting that wins can be deployed into. On this
+      repository the store built from a bare clone is identical to the one
+      built from a checkout of the same commit: same 2,986 symbols, same
+      10,283 edges, same content digests
+- [ ] **Refreshing such a store from a diff.** A commit has no modification
+      times, so moving an existing store to a newer revision re-hashes every
+      file. Correct, and more work than it needs to be
 - [ ] **Documentation layer**: per-file summaries anchored to symbol ranges,
       cached by content hash and measured against the same harness
 
 Known gaps, stated rather than buried, largest first:
 
-- **The one measured win cannot be deployed.** It needs a store built and
-  served without a checkout, and nothing here builds one from anything but a
-  working tree.
+- **That win is deployed, but not proven end to end.** `index --rev` builds
+  from a bare repository and `serve --no-refresh` serves the result on a
+  machine holding no source, and the two halves are tested. What has not been
+  run is `reviewbench` against a store built that way, which is what would
+  show the measured numbers surviving the change.
 - **That win is PHP-only.** Three repositories, all Laravel, 14 questions
   each. It should be confirmed in another language before it is built on.
 - **The ranked map does not earn its place** at the agent level and should
@@ -769,7 +799,7 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
 python scripts/check.py                                     # every gate, ~35s
 ```
 
-That runs the suite (968 tests), ruff, mypy, and the guard plugin's own
+That runs the suite (981 tests), ruff, mypy, and the guard plugin's own
 checks, each judged by its own exit code. `--list` names them, `--skip` drops
 one. A gate that cannot run — node missing, say — is reported as a failure
 rather than a skip, because a check believed to be running and silently not

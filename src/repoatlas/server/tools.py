@@ -868,6 +868,13 @@ def index_status(store: IndexStore) -> str:
         f"symbols:   {counts['symbols']}",
         f"edges:     {counts['edges']}",
     ]
+    # An index built from git objects can be copied to a machine holding no
+    # source at all, and then the only way to know what it describes is to
+    # have written it down.
+    commit = store.get_meta("commit")
+    if commit:
+        revision = store.get_meta("revision") or "?"
+        lines.insert(1, f"revision:  {revision} at {commit[:12]}")
     constant = store.chars_per_token()
     if constant:
         model = store.calibrated_model() or "an unnamed model"

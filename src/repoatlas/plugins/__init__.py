@@ -22,8 +22,13 @@ nothing central lists them.
 from __future__ import annotations
 
 from .base import FrameworkPlugin, active_plugins, register, registered_plugins
-from .frameworks import framework_names, framework_plugins, frameworks_source
-from .registry import ConventionPlugin, Framework, load_framework
+from .frameworks import (
+    framework_names,
+    framework_plugins,
+    frameworks_source,
+    manifest_names,
+)
+from .registry import ConventionPlugin, Framework, load_framework, project_directories
 
 __all__ = [
     "ConventionPlugin",
@@ -34,6 +39,8 @@ __all__ = [
     "framework_plugins",
     "frameworks_source",
     "load_framework",
+    "manifest_names",
+    "project_directories",
     "register",
     "registered_plugins",
 ]

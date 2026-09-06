@@ -147,7 +147,9 @@ def run_benchmark(
         result.index_noop_seconds = _timed(lambda: update_store(root, store, use_git=use_git))
 
         first = next(iter(iter_source_files(root, use_git=use_git)), None)
-        if first is not None:
+        # Timing a touched re-index means writing to a file, which needs
+        # a working tree; this harness is always given one.
+        if first is not None and first.absolute is not None:
             original = first.absolute.read_bytes()
             first.absolute.write_bytes(original + b"\n")
             try:

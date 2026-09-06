@@ -43,7 +43,7 @@ from ..model import (
 from ..parse.build import LanguageStats, _resolve_references
 from ..parse.extract import Reference, extract_source
 from ..parse.languages import SUPPORTED, LanguageUnavailable, query_source
-from ..parse.walk import SourceFile, WalkStats, iter_source_files
+from ..parse.walk import SourceFile, Tree, WalkStats, WorkingTree
 from ..plugins import active_plugins, frameworks_source
 from ..rank.pagerank import SymbolGraph, rank_symbols
 from ..resolve.cascade import ResolutionStats
@@ -150,19 +150,48 @@ def current_toolchain() -> str:
     return toolchain_version(queries)
 
 
+class _FromDisk:
+    """Read a file through the path it carries, for callers with no tree.
+
+    ``detect_changes`` is public and older callers pass a list of files and
+    nothing else. Those files came off a disk, so this is what they meant.
+    """
+
+    @staticmethod
+    def _located(source: SourceFile) -> Path:
+        if source.absolute is None:
+            raise ValueError(
+                f"{source.path} has no location on disk; pass the tree it came from"
+            )
+        return source.absolute
+
+    def read(self, source: SourceFile) -> bytes:
+        return self._located(source).read_bytes()
+
+    def stamp(self, source: SourceFile) -> tuple[int, int] | None:
+        stat = self._located(source).stat()
+        return stat.st_size, stat.st_mtime_ns
+
+
 def detect_changes(
     files: Iterable[SourceFile],
     store: IndexStore,
     *,
     toolchain: str | None = None,
     trust_mtime: bool = True,
+    tree: Tree | None = None,
 ) -> ChangeSet:
-    """Compare the filesystem against the store.
+    """Compare the source against the store.
 
     ``trust_mtime`` uses size and modification time to skip hashing, which
     is what makes a no-op re-index fast. Turning it off hashes every file,
     for the case where a checkout has rewritten timestamps or a build step
     has touched files without changing them.
+
+    A tree that has no timestamps to offer — a git revision — says so, and
+    then every file is hashed regardless of ``trust_mtime``. That is not an
+    oversight to optimise away later: a commit has no mtimes, and any
+    constant stood in for them would make every file look untouched.
     """
     toolchain = toolchain or current_toolchain()
     stored = store.file_records()
@@ -172,6 +201,7 @@ def detect_changes(
     )
     known = {} if changes.full_rebuild else stored
     seen: set[str] = set()
+    access: Tree | _FromDisk = tree if tree is not None else _FromDisk()
 
     for source in files:
         seen.add(source.path)
@@ -180,16 +210,16 @@ def detect_changes(
             changes.added.append(source)
             continue
         try:
-            stat = source.absolute.stat()
+            stamp = access.stamp(source)
         except OSError:
             changes.modified.append(source)
             continue
-        if trust_mtime and record.unchanged_by_stat(stat.st_size, stat.st_mtime_ns):
+        if trust_mtime and stamp is not None and record.unchanged_by_stat(*stamp):
             changes.stat_hits += 1
             changes.unchanged.append(source)
             continue
         try:
-            digest = content_digest(source.absolute.read_bytes())
+            digest = content_digest(access.read(source))
         except OSError:
             changes.modified.append(source)
             continue
@@ -203,20 +233,31 @@ def detect_changes(
 
 
 def update_store(
-    root: Path | str,
+    root: Path | str | None,
     store: IndexStore,
     *,
     use_git: bool = True,
     trust_mtime: bool = True,
     resolve: bool = True,
+    tree: Tree | None = None,
 ) -> UpdateResult:
-    """Bring ``store`` up to date with ``root``, parsing only what changed."""
-    root_path = Path(root).resolve()
+    """Bring ``store`` up to date with its source, parsing only what changed.
+
+    ``tree`` says where that source is. Left out, it is the working tree at
+    ``root``, which is what it has always been. Passed a
+    :class:`~repoatlas.parse.gitobjects.RevisionTree`, the whole build runs
+    against git's object database and never needs the files on disk — the
+    setting the diff-review result was measured in.
+    """
+    if tree is None:
+        if root is None:
+            raise ValueError("update_store needs either a root or a tree")
+        tree = WorkingTree(Path(root).resolve(), use_git=use_git)
     walk_stats = WalkStats()
-    source_files = list(iter_source_files(root_path, use_git=use_git, stats=walk_stats))
+    source_files = list(tree.files(walk_stats))
     toolchain = current_toolchain()
     changes = detect_changes(
-        source_files, store, toolchain=toolchain, trust_mtime=trust_mtime
+        source_files, store, toolchain=toolchain, trust_mtime=trust_mtime, tree=tree
     )
     result = UpdateResult(changes=changes, walk=walk_stats)
 
@@ -241,11 +282,15 @@ def update_store(
             if source.language.name in unavailable:
                 continue
             try:
-                content = source.absolute.read_bytes()
-                stat = source.absolute.stat()
+                content = tree.read(source)
+                stamp = tree.stamp(source)
             except OSError as exc:
                 result.failures.append((source.path, f"unreadable: {exc}"))
                 continue
+            # A revision has no timestamps. Zero is not a lie here the way
+            # it would be in change detection: the stamp is only ever
+            # trusted when the tree offered one, and this tree did not.
+            size, mtime_ns = stamp if stamp is not None else (len(content), 0)
             try:
                 extraction = extract_source(source.path, content, source.language)
             except LanguageUnavailable as exc:
@@ -263,8 +308,8 @@ def update_store(
                     path=source.path,
                     language=source.language.name,
                     digest=content_digest(content),
-                    size=stat.st_size,
-                    mtime_ns=stat.st_mtime_ns,
+                    size=size,
+                    mtime_ns=mtime_ns,
                     has_errors=extraction.has_errors,
                     error_count=extraction.error_count,
                 ),
@@ -281,8 +326,10 @@ def update_store(
                 stats.files_with_errors += 1
                 stats.error_nodes += extraction.error_count
         store.set_meta("toolchain", toolchain)
-        store.set_meta("project_root", str(root_path))
+        store.set_meta("project_root", tree.label)
         store.set_meta("producer", f"repoatlas {__version__} (tree-sitter)")
+        for key, value in tree.provenance().items():
+            store.set_meta(key, value)
     result.parse_seconds = time.perf_counter() - started
 
     # Resolution is global, so it runs whenever anything moved. When
@@ -290,35 +337,43 @@ def update_store(
     # burn the one cost a no-op re-index is supposed to avoid.
     if resolve and not changes.is_empty:
         started = time.perf_counter()
-        plugins_now = ",".join(
-            sorted(plugin.name for plugin in active_plugins(root_path, {s.path for s in source_files}))
-        )
-        plugins_before = store.get_meta("plugins")
-        scoped = (
-            not changes.full_rebuild
-            and not changes.was_empty
-            and plugins_before == plugins_now
-        )
-        if scoped:
-            touched = [source.path for source in changes.dirty]
-            definitions_after = store.definitions_by_name(touched)
-            changed_names = {
-                name
-                for name in definitions_before.keys() | definitions_after.keys()
-                if definitions_before.get(name) != definitions_after.get(name)
-            }
-            _resolve_scoped(
-                store,
-                root_path,
-                source_files,
-                result,
-                touched=touched,
-                removed=list(changes.removed),
-                changed_names=changed_names,
-                files_changed=bool(changes.added or changes.removed),
+        paths = {source.path for source in source_files}
+        # Framework detection reads manifests, so it needs a directory even
+        # when the index does not. A working tree hands over its own root;
+        # a revision writes out the few manifests that could matter. The
+        # alternative was for a no-checkout index to silently lose every
+        # Blade view and auto-imported component, which is the half of the
+        # PHP result that a parser cannot recover.
+        with tree.manifests(paths) as conventions_root:
+            plugins_now = ",".join(
+                sorted(plugin.name for plugin in active_plugins(conventions_root, paths))
             )
-        else:
-            _resolve_into(store, root_path, source_files, result)
+            plugins_before = store.get_meta("plugins")
+            scoped = (
+                not changes.full_rebuild
+                and not changes.was_empty
+                and plugins_before == plugins_now
+            )
+            if scoped:
+                touched = [source.path for source in changes.dirty]
+                definitions_after = store.definitions_by_name(touched)
+                changed_names = {
+                    name
+                    for name in definitions_before.keys() | definitions_after.keys()
+                    if definitions_before.get(name) != definitions_after.get(name)
+                }
+                _resolve_scoped(
+                    store,
+                    conventions_root,
+                    source_files,
+                    result,
+                    touched=touched,
+                    removed=list(changes.removed),
+                    changed_names=changed_names,
+                    files_changed=bool(changes.added or changes.removed),
+                )
+            else:
+                _resolve_into(store, conventions_root, source_files, result)
         with store.transaction():
             store.set_meta("plugins", plugins_now)
         result.resolve_seconds = time.perf_counter() - started

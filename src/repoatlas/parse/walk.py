@@ -13,7 +13,9 @@ directory is not a repository.
 from __future__ import annotations
 
 import subprocess
+from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,7 +25,9 @@ __all__ = [
     "DEFAULT_EXCLUDED_DIRECTORIES",
     "MAX_FILE_BYTES",
     "SourceFile",
+    "Tree",
     "WalkStats",
+    "WorkingTree",
     "is_git_repository",
     "iter_source_files",
 ]
@@ -74,9 +78,20 @@ class SourceFile:
     path: str
     """Repository-relative, POSIX separators, as git reports it."""
 
-    absolute: Path
+    absolute: Path | None
+    """Where the file is on disk, or ``None`` when there is no checkout.
+
+    An index can be built straight from git's object database, in which
+    case the file has a blob but no location: see
+    :mod:`repoatlas.parse.gitobjects`. Read a file's bytes through the
+    :class:`Tree` that produced it rather than from here.
+    """
+
     language: LanguageSpec
     size: int
+
+    blob: str | None = None
+    """The git object id, when the file came from a revision rather than disk."""
 
 
 @dataclass(slots=True)
@@ -210,3 +225,99 @@ def iter_source_files(
         yield SourceFile(
             path=relative, absolute=absolute, language=spec, size=size
         )
+
+
+class Tree(ABC):
+    """Where an index's files and their bytes come from.
+
+    There are two: a checked-out working tree, and a revision read straight
+    out of git's object database. The second exists because the one setting
+    where this index measurably beats grep is reviewing a diff with no
+    checkout, and until an index could be built without one, that result
+    could be reproduced but not deployed.
+
+    Everything downstream — change detection, extraction, framework
+    detection — goes through this rather than touching the filesystem, so
+    the two paths cannot drift into producing different indexes.
+    """
+
+    @property
+    @abstractmethod
+    def label(self) -> str:
+        """What to record as the index's origin."""
+
+    @abstractmethod
+    def files(self, stats: WalkStats | None = None) -> Iterator[SourceFile]:
+        """The files worth parsing."""
+
+    @abstractmethod
+    def read(self, source: SourceFile) -> bytes:
+        """One file's contents."""
+
+    @abstractmethod
+    def stamp(self, source: SourceFile) -> tuple[int, int] | None:
+        """Size and mtime, or ``None`` when there is no cheap stamp.
+
+        ``None`` means change detection must hash the contents. A revision
+        has no modification times, and inventing one would be worse than
+        admitting it: a constant would make every file look unchanged.
+        """
+
+    def provenance(self) -> dict[str, str]:
+        """Extra meta recording where this index came from.
+
+        Written into the store beside the producer stamp, so an index that
+        arrived on a machine with no source can still say which commit it
+        describes.
+        """
+        return {}
+
+    @abstractmethod
+    def manifests(self, paths: Iterable[str]) -> AbstractContextManager[Path]:
+        """A directory the framework plugins can read manifests from.
+
+        Framework detection asks whether `composer.json` declares Laravel,
+        which means reading a real file. A working tree simply hands over
+        its root; a revision materialises the handful of manifests that
+        could matter into a temporary directory. Without this a
+        no-checkout index would quietly lose every framework convention —
+        Blade views, Livewire components, auto-imported Vue — which is
+        exactly the part the PHP result depends on.
+        """
+
+
+@dataclass(frozen=True)
+class WorkingTree(Tree):
+    """The ordinary case: files on disk, in a directory."""
+
+    root: Path
+    use_git: bool = True
+    excluded_directories: frozenset[str] = DEFAULT_EXCLUDED_DIRECTORIES
+    max_bytes: int = MAX_FILE_BYTES
+
+    @property
+    def label(self) -> str:
+        return str(self.root)
+
+    def files(self, stats: WalkStats | None = None) -> Iterator[SourceFile]:
+        return iter_source_files(
+            self.root,
+            use_git=self.use_git,
+            excluded_directories=self.excluded_directories,
+            max_bytes=self.max_bytes,
+            stats=stats,
+        )
+
+    def read(self, source: SourceFile) -> bytes:
+        if source.absolute is None:  # pragma: no cover - not reachable from here
+            raise ValueError(f"{source.path} has no location on disk")
+        return source.absolute.read_bytes()
+
+    def stamp(self, source: SourceFile) -> tuple[int, int] | None:
+        if source.absolute is None:  # pragma: no cover - not reachable from here
+            return None
+        stat = source.absolute.stat()
+        return stat.st_size, stat.st_mtime_ns
+
+    def manifests(self, paths: Iterable[str]) -> AbstractContextManager[Path]:
+        return nullcontext(self.root)

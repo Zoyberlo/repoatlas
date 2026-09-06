@@ -24,7 +24,12 @@ from pathlib import Path
 
 from ..base import FrameworkPlugin
 
-__all__ = ["framework_names", "framework_plugins", "frameworks_source"]
+__all__ = [
+    "framework_names",
+    "framework_plugins",
+    "frameworks_source",
+    "manifest_names",
+]
 
 _HERE = Path(__file__).parent
 
@@ -74,3 +79,22 @@ def frameworks_source() -> str:
         relative = path.relative_to(_HERE).as_posix()
         parts.append(f"{relative}\n{path.read_text(encoding='utf-8')}")
     return "\n".join(parts)
+
+
+def manifest_names() -> tuple[str, ...]:
+    """Every manifest file framework detection reads, deduplicated.
+
+    Asked for by the git-object index, which has no working tree to read
+    manifests from and so must write out the few that could matter. Derived
+    from the registry rather than listed by hand, because a hand-written
+    list is one that goes stale the first time a framework is added and
+    then silently disables that framework's conventions.
+    """
+    names: list[str] = []
+    for plugin in framework_plugins():
+        framework = getattr(plugin, "framework", None)
+        for clause in getattr(framework, "detect", ()):
+            name = getattr(clause, "file", None)
+            if isinstance(name, str) and name not in names:
+                names.append(name)
+    return tuple(names)
