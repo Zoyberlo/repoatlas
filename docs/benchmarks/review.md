@@ -146,6 +146,62 @@ is the one where the index earns its place.
 Fourteen tasks on one PHP backend is thin, and the effect should be
 confirmed on another repository before it is built on.
 
+## Replicated on a third repository
+
+`application-b`, an independent Laravel 9 and Vue application: 2,148
+tracked files, 6,740 commits, an oracle covering 384 files. This index
+scores 1.000 on definitions and 0.990 F1 on references against it.
+
+Fourteen symbols, no exclusions — every arm answered every question.
+
+| | read | **index** | grep (has a checkout) |
+| --- | ---: | ---: | ---: |
+| precision | 0.955 | 0.943 | 0.943 |
+| recall | 0.938 | **1.000** | 1.000 |
+| F1 | 0.933 | **0.961** | 0.961 |
+| turns | 42.9 | **14.7** | 5.1 |
+| tokens | 1,548,036 | **82,349** | 79,415 |
+| cost | $2.342 | **$0.206** | $0.185 |
+
+| paired, n=14 | point | interval | W/L |
+| --- | ---: | ---: | ---: |
+| F1, read → index | +0.029 | [−0.005, +0.066] | 4/1 |
+| recall, read → index | **+0.062** | **[+0.014, +0.117]** | **4/0** |
+| **tokens**, read → index | **−1,465,687** | **[−1,998,631, −959,137]** | **0/14** |
+| **cost**, read → index | **−$2.14** | **[−$2.75, −$1.54]** | **0/14** |
+| F1, grep → index | 0.000 | [0.000, 0.000] | 0/0 |
+
+**The accuracy result did not replicate.** F1 +0.029 crosses zero. Recall
+alone clears it. On the registered measure this repository behaves like
+the small one, not like the large one.
+
+## What three repositories say together
+
+| | oracle files | read F1 | **index F1** | grep F1 | read unanswered |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| application-a | ~280 | 0.958 | **1.000** | 1.000 | 0 of 8 |
+| application-b | 384 | 0.933 | **0.961** | 0.961 | 0 of 14 |
+| application-c | 874 | **0.503** | **0.839** | 0.868 | **5 of 14** |
+
+Read down the `read` column: 0.958, 0.933, 0.503. Brute-force file
+reading degrades gently and then collapses, and the collapse is in the
+last column — five questions of fourteen where thirty turns of reading
+produced no answer at all.
+
+So the finding is narrower and more useful than "the index wins without a
+checkout". It is: **reading files instead of searching them works up to
+some repository size and stops working above it**, and the three points
+measured put that boundary between 384 and 874 indexed files.
+
+The other two results replicated every time:
+
+- **Cost.** Fourteen of fourteen, eight of eight, thirteen of thirteen —
+  no overlap with zero on any repository. Five to nineteen times fewer
+  tokens, and two dollars a question on the largest.
+- **An index substitutes for a checkout.** `grep → index` is 0.000 with a
+  zero-width interval on all three. Without a tree to search, at a third
+  of the turns, for the same money, the answer is identical.
+
 ## The caveat that decided this run
 
 This repository is 363 files. Brute-force reading is a viable strategy at
