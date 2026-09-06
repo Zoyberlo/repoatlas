@@ -9,6 +9,21 @@ Numbers below marked *measured* were produced on this machine today.
 Everything else is either a defect visible in the code or a result quoted
 from a source listed at the end.
 
+> **Read this as a record, not a plan.** It was written before the index
+> was put to an agent, and most of it argues about how to make a map
+> better. Two days later, over 56 paired tasks on two repositories, a
+> ranked map did not beat an unranked outline of the same size, and across
+> nine head-to-head comparisons the index never beat `grep` where a shell
+> and a checkout exist. Sections 3.1 to 3.7 are therefore refinements to
+> something that has since been measured as not paying, and section 4's
+> ordering is superseded.
+>
+> What survived is in [benchmarks/grep.md](benchmarks/grep.md) and
+> [benchmarks/review.md](benchmarks/review.md); what to do next is in the
+> README's known gaps. This file is kept because the reasoning was sound
+> given what was known, and a backlog quietly rewritten to match the
+> outcome teaches nothing.
+
 ## 1. What is measurably wrong now
 
 ### 1.1 The token estimate is about thirty percent low for current models
