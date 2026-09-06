@@ -9,17 +9,26 @@ rather than asserted.**
 [![Languages](https://img.shields.io/badge/languages-Python%20%C2%B7%20TS%20%C2%B7%20TSX%20%C2%B7%20JS%20%C2%B7%20PHP-informational)](#languages)
 
 Point it at a repository and an agent can ask where a symbol is defined, what
-uses it, and what the project is built around, without grepping its way
-there. Every answer fits a token budget, and every edge says how confidently
-it was resolved.
+uses it, and what the project is built around. Every answer fits a token
+budget, and every edge says how confidently it was resolved.
+
+**And then it was measured against `grep`, nine times, and did not win.**
+That result is the most useful thing here; it is summarised
+[below](#what-nine-agent-level-comparisons-found) and reported in full in
+[docs/benchmarks/](docs/benchmarks/).
 
 > **Measured, not claimed.** Against real `scip-typescript`, `scip-python`
 > and `scip-php` indexes the extractor finds definitions at **1.00**
-> precision in all three languages, and resolves references at 0.90, 1.00
-> and 0.75 precision. Every number below is checked by CI on every
+> precision in all three languages. On three production repositories it
+> scores **1.000** on definitions and **0.990–0.991 F1** on references
+> against `scip-php`. Every number below is checked by CI on every
 > platform. The oracle harness was written before the extractor it judges,
 > and [the next section](#why-this-exists-and-why-it-starts-with-tests)
 > explains why.
+>
+> Being right turned out not to be the same as being useful, which is what
+> [the agent-level comparisons](#what-nine-agent-level-comparisons-found)
+> are about.
 
 ```bash
 pip install -e ".[parse,serve]"
@@ -31,6 +40,7 @@ repoatlas serve /path/to/repo     # seven read-only tools over MCP
 ## Contents
 
 - [Why this exists](#why-this-exists-and-why-it-starts-with-tests)
+- [**What nine agent-level comparisons found**](#what-nine-agent-level-comparisons-found)
 - [Scoring an index against a compiler](#scoring-an-index-against-a-compiler)
 - [Indexing and searching](#indexing-and-searching)
 - [Mapping a repository](#mapping-a-repository)
@@ -63,6 +73,48 @@ right code first, with fewer tokens as a consequence rather than a target.
 
 Which means accuracy is the product, and accuracy has to be measurable from
 day one. Hence: oracle harness first, extractor second.
+
+## What nine agent-level comparisons found
+
+The section above argues the index should help. It was then put to an agent
+and measured, and the argument did not survive contact.
+
+| what was asked | n | result |
+| --- | ---: | --- |
+| localise a change from its commit subject | 24 | 0.349 against grep's 0.317, interval crosses zero |
+| find every call site of a symbol | 14 | both **F1 1.000**; grep took 6.3 turns, the index 20.4 |
+| ranked map against an unranked outline of the same size | 56 | never clears zero, on either of two repositories |
+| review a diff **with no checkout** | 36 | **0.000 difference against grep**, at a third of the turns |
+
+Nine head-to-head comparisons, no win. Where a shell and a checkout exist,
+`grep` is not merely competitive — it is *cheaper*: 5.1 turns against 14.7,
+$0.185 against $0.206.
+
+The explanation is in the tool-call records rather than the scores. An agent
+reads whatever context it is handed and then greps, so grep recovers whatever
+the index would have supplied. And an agent ignores what it can: given
+Serena, it called it **0 times out of 8**; given a ranked map, **0.8 times a
+run**.
+
+**What the index does win is narrower and real.** In the setting where there
+is no tree to search — a review bot, a CI check, a hosted agent — it answers
+identically to an agent with a checkout, at a third of the turns, and between
+five and nineteen times cheaper than one that brute-forces by reading files.
+On the largest repository tested, file-reading alone failed outright on 5 of
+14 questions; the index answered 13.
+
+Offline it also beats grep on what a tool *returns* — `find_references` at
+1.000 F1 against `rg -w`'s 0.847, for half the tokens — but that advantage
+does not survive an agent that also has grep.
+
+| report | what it settles |
+| --- | --- |
+| [grep.md](docs/benchmarks/grep.md) | every head-to-head, including the map ablation that falsified the ranked map |
+| [review.md](docs/benchmarks/review.md) | the one setting the index wins, across three repositories |
+| [enrichment.md](docs/benchmarks/enrichment.md) | +56% and +18.6% more resolved references from a type engine |
+| [phpstan.md](docs/benchmarks/phpstan.md) | what PHPStan and larastan see that no SCIP indexer does |
+
+Read those before building on anything here.
 
 ## Scoring an index against a compiler
 
@@ -643,18 +695,41 @@ the name cascade would match any function called `nope` and label the result
 - [x] **SQLite storage** with content-hash incremental updates: one file,
       trigram symbol search, and a re-index that parses only what changed
 - [x] **Ranking**: personalised PageRank over the symbol graph, with a binary
-      search that fits a map to a token budget
+      search that fits a map to a token budget. **Since falsified as an agent
+      feature**: over 56 paired tasks on two repositories a ranked map never
+      beat an unranked outline of the same size. It still holds up offline,
+      where an unranked outline of a 1,832-file repository scores 0.000 at
+      every budget to 32,000 tokens and the ranked map scores 0.345 — the
+      agent simply greps its way past the difference
 - [x] **MCP server**: seven read-only tools over stdio, each answer budgeted
 - [x] **Framework conventions as data**: Laravel views, layouts, includes,
       Blade and Livewire components, and Vue components a bundler
       auto-imports. Adding a framework is adding a directory
+- [x] **Enrichment from a type engine**: a producer-neutral facts format and
+      a PHPStan collector, worth +56% and +18.6% more resolved references on
+      two applications, corroborated 94.7–99.0% and contradicting the
+      compiler-backed oracle nowhere
+- [x] **Four benchmark harnesses** — `localize`, `agentbench`, `sitebench`,
+      `reviewbench` — with paired bootstrap intervals and pre-registered
+      thresholds
+- [ ] **A deployment path for the one setting that wins**: building an index
+      without a working tree, moving a store between machines, refreshing it
+      from a diff. Until that exists, "review with no checkout" is a
+      benchmark result rather than a capability
 - [ ] **Documentation layer**: per-file summaries anchored to symbol ranges,
       cached by content hash and measured against the same harness
 
-Known gaps, stated rather than buried: the ranking weights are now
-measured but on one repository only, and a codebase shaped differently
-would exercise them differently; Laravel route and config names need tables
-nothing yet reads; and Kotlin is not supported.
+Known gaps, stated rather than buried, largest first:
+
+- **The one measured win cannot be deployed.** It needs a store built and
+  served without a checkout, and nothing here builds one from anything but a
+  working tree.
+- **That win is PHP-only.** Three repositories, all Laravel, 14 questions
+  each. It should be confirmed in another language before it is built on.
+- **The ranked map does not earn its place** at the agent level and should
+  stop being described as the reason this exists.
+- Laravel route and config names need tables nothing yet reads, and Kotlin is
+  not supported.
 
 The full plan, including how tiers 3 and 4 of evaluation work and which
 benchmarks cover which languages, is in [docs/evaluation.md](docs/evaluation.md).
