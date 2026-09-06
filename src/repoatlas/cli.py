@@ -346,6 +346,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="walk the filesystem instead of asking git which files are tracked",
     )
 
+    check_docs = subcommands.add_parser(
+        "check-docs",
+        help="ask the index whether a knowledge base's file and line claims still hold",
+    )
+    check_docs.add_argument("store", type=Path, help="the index to ask")
+    check_docs.add_argument(
+        "documents", type=Path, nargs="+", help="markdown files or directories"
+    )
+    check_docs.add_argument(
+        "--root", type=Path, help="report paths relative to this directory"
+    )
+    check_docs.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit non-zero when a claim is stale or points at nothing indexed",
+    )
+    check_docs.add_argument("--format", choices=("text", "json"), default="text")
+
     reviewbench = subcommands.add_parser(
         "reviewbench",
         help="review a diff with no checkout to grep, with and without the index",
@@ -1175,6 +1193,34 @@ def _cmd_phpstan(args: argparse.Namespace) -> int:
     return _EXIT_OK
 
 
+def _cmd_check_docs(args: argparse.Namespace) -> int:
+    """Check a knowledge base against the code it describes."""
+    from .docs import check_documents, render
+    from .store import IndexStore
+
+    if not args.store.exists():
+        raise SystemExit(f"repoatlas: no index at {args.store}")
+    documents: list[Path] = []
+    for given in args.documents:
+        if given.is_dir():
+            documents.extend(sorted(given.rglob("*.md")))
+        elif given.exists():
+            documents.append(given)
+        else:
+            raise SystemExit(f"repoatlas: no such file: {given}")
+    if not documents:
+        raise SystemExit("repoatlas: no markdown found to check")
+    with IndexStore(args.store) as store:
+        result = check_documents(store, documents, root=args.root)
+    if args.format == "json":
+        print(json.dumps(result.as_dict(), indent=2))
+    else:
+        print(render(result), end="")
+    if args.strict and result.problems:
+        return _EXIT_FAILED_CHECK
+    return _EXIT_OK
+
+
 def _cmd_reviewbench(args: argparse.Namespace) -> int:
     """Ask the reviewer's question where there is no shell to answer it with."""
     from .localize import HistoryError
@@ -1321,6 +1367,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "serve": _cmd_serve,
         "verify-oracle": _cmd_verify_oracle,
         "phpstan": _cmd_phpstan,
+        "check-docs": _cmd_check_docs,
         "reviewbench": _cmd_reviewbench,
         "enrich": _cmd_enrich,
         "compare": _cmd_compare,
