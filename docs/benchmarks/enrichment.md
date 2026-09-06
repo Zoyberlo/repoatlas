@@ -252,3 +252,41 @@ getting. The tier is how they can tell.
 The other caveat is operational: enrichment writes edges into an existing
 store, and the next re-index of those files replaces them. It is a step
 in a pipeline, not a property of the index yet.
+
+## What it does *not* reach: the search hook
+
+Measured 6 September 2026, on the 1,832-file application, against the
+store the `agentbench` run built. The dump took 51 seconds
+(`repoatlas phpstan <app>/backend --larastan <...>/extension.neon`:
+119,630 sites, 114,307 resolved, 146,291 facts), and folding it in added
+6,340 edges, 89,515 to 95,855.
+
+That is a 7.1% larger index. It is very nearly no change at all to what
+[the search hook](hook.md) can say:
+
+| grepped name | plain | enriched |
+| --- | ---: | ---: |
+| `save`, `store`, `index`, `handle`, `show`, `boot`, `user`, `report` | unchanged | unchanged |
+| `render` | 1,032 chars | 1,127 |
+| `delete` | 1,602 | 1,838 |
+| `update`, `create` | 1,841 / 1,888 | 1,763 / 1,873 (shorter: the cap redistributes) |
+| `query`, `invoice` | silent | silent |
+
+Two of fourteen common names gained anything.
+
+The reason is in the enrichment's own numbers rather than in the hook:
+**5,367 of the 6,340 added edges point at a member nothing declares** —
+Eloquent's columns and magic relations. The hook groups uses by the
+*declaration* they reach, and an edge whose target has no declaration has
+no group to appear under. The two producers are close to orthogonal on
+this application.
+
+So enrichment is not the next lever for the hook, which is the opposite of
+what was assumed when the ceiling arm was planned. Where it should still
+pay is a direct `find_references` on a declared symbol whose receiver only
+a type engine can resolve — a different question, asked by a different
+tool, and not yet measured at the agent level.
+
+The measurement itself is cheap enough to keep: 51 seconds a commit means
+enrichment could run inside a benchmark walk for about twenty minutes of
+extra wall clock. It is affordability, not value, that this establishes.
