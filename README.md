@@ -140,12 +140,21 @@ runs lost none. Asking in a person's words instead of the developer's
 halves accuracy and doubles cost — and the index does nothing about it,
 because both arms fall together.
 
-Two things fell out of writing the requests at all. Nineteen were written
-deliberately in user language — "square" for cell, "box" for field — and
-**not one came out unanchored**: the code is English and so is the user. The
-same nineteen in Ukrainian are unanchored nineteen times out of nineteen,
-because the codebase contains no Ukrainian. That set is written and not yet
-run.
+**And then the rationale itself was falsified.** The same requests in
+Ukrainian share not one word with their answers, because the code is
+English — the sharpest condition this project can construct, and the one
+where a text search should have been helpless. `grep` did not care:
+0.287 to **0.281** against the English wordings, −0.006 [−0.038, +0.026],
+in *fewer* turns. The index changed nothing there either, at −0.001
+[−0.026, +0.023] over eighteen tasks — a tight null, not an underpowered
+one.
+
+An agent does not search for the words in the request. It reads the
+request, forms a hypothesis in the codebase's own vocabulary, and searches
+for that. The model supplies the anchor itself, so the anchor was never
+missing, and "the request has no string to grep for" describes a problem
+the agent does not have. That was the last standing theoretical case for
+this index helping an agent that already has a shell.
 
 | report | what it settles |
 | --- | --- |

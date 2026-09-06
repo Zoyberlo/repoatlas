@@ -166,10 +166,80 @@ hide a difference that only shows with more turns. The account hit its
 spend limit again on the final run. And `precise` at n=4 cannot support any
 comparison at all.
 
+## The Ukrainian run, and what it falsified
+
+7 September 2026, `--max-turns 40` because the thirty-turn cap was binding
+last time. Nineteen wordings, eighteen paired, two repeats each, averaged.
+
+This was the sharpest condition this project can construct: **nineteen of
+nineteen requests share not one word with their answer**, because the code
+is English and the request is Ukrainian. If a text search were ever going
+to be helpless, it is here.
+
+| symbol recall, repeats averaged | grep | hook | paired delta |
+| --- | ---: | ---: | --- |
+| eighteen tasks | 0.293 | 0.292 | **−0.001 [−0.026, +0.023]** W3/L3 |
+| file recall | 0.792 | 0.764 | −0.028 [−0.083, +0.000] W0/L1 |
+
+Not a weak null. The interval is ±0.025 wide, so an effect larger than
+about two and a half points in either direction is ruled out. Three wins,
+three losses, twelve ties.
+
+### The rationale is falsified, not merely unsupported
+
+The argument for this whole line of work was that a request with no
+lexical anchor leaves `grep` nothing to search for. The same tasks, the
+same arms, only the language of the sentence changed:
+
+| same tasks, English → Ukrainian | English | Ukrainian | paired delta |
+| --- | ---: | ---: | --- |
+| `grep`, symbol recall | 0.287 | 0.281 | −0.006 [−0.038, +0.026] |
+| `grep`, file recall | 0.745 | 0.779 | +0.034 [−0.020, +0.108] |
+| `grep`, turns | 24.6 | 22.7 | −2.0 [−5.5, +1.5] |
+
+**`grep` did not care.** Removing every shared word between the request and
+the code cost it six thousandths of a point, and it used fewer turns.
+
+The reason is that an agent does not search for the words in the request.
+It reads the request, forms a hypothesis in the codebase's own vocabulary,
+and searches for *that*. The model supplies the anchor itself, so the
+anchor was never missing. "The request has no string to grep for" describes
+a problem the agent does not have.
+
+That was the last standing theoretical case for a resolved index helping an
+agent that already has a shell. It is now measured and gone.
+
+### The variance correction, confirmed twice
+
+`grep` scored identically on both repeats for 12 of 18 tasks, mean swing
+0.085; `hook` for 13 of 16, mean swing **0.046**. Same direction as the
+English run. The arm carrying injected context is the steadier one, and the
+[withdrawn explanation](hook.md#the-confirmation-failed) for the failed
+reproduction — that extra context is a branch point and therefore variance
+— is wrong in both runs that could test it.
+
+### A number that looks like a result and is not
+
+Pooling both wording runs, `hook` used 117,190 fewer tokens per task,
+interval [−248,568, −10,988], which excludes zero. It should not be
+reported as a saving, for two reasons that are visible in the same output:
+**sixteen tasks were cheaper and eighteen dearer**, so the mean is pulled
+by a few large savings rather than a consistent effect, and the dollar cost
+does not move at all (−$0.048 [−$0.162, +$0.074]). It is also a pooling
+decided after seeing the numbers.
+
+An interval excluding zero alongside a losing win-loss count is a warning,
+not a finding.
+
+### Exclusions
+
+Five runs lost, against eight in the English run, so raising the turn cap
+helped — three of the five are a single task that neither arm could finish.
+The account hit its spend limit on the final run again.
+
 ## Status
 
-The English set is run, above. The Ukrainian set is written and not run.
-The prompt sets sit outside this repository, next to the raw runs, since
+Both sets are run. The prompt sets sit outside this repository, next to the raw runs, since
 they describe a client application's features: `wordings-en.json`,
 `wordings-ua.json`, `enbench-2026-09-06.json`.
 
