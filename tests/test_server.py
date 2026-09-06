@@ -13,6 +13,7 @@ missing, which is worse than a short answer that says it is short.
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 
 import pytest
@@ -175,6 +176,64 @@ class TestGetSymbol:
     def test_a_skeleton_respects_its_budget(self, store: IndexStore) -> None:
         result = tools.get_symbol(store, USER_CLASS, detail="skeleton", budget=45)
         assert "more; file_outline" in result
+
+
+class TestServingWithoutACheckout:
+    """The one setting this index measurably wins in.
+
+    A review bot, a CI check and a hosted agent see a diff and an API;
+    there is no tree to index. Refusing to start without one refused the
+    only case that pays, and the refusal was a single line in the CLI.
+    """
+
+    def test_a_store_answers_when_the_tree_it_describes_is_gone(
+        self, tmp_path: Path
+    ) -> None:
+        from repoatlas.store import update_store
+
+        project = tmp_path / "gone"
+        project.mkdir()
+        (project / "a.py").write_text(
+            "class Greeter:\n"
+            "    def greet(self):\n"
+            "        pass\n"
+            "\n"
+            "\n"
+            "def main():\n"
+            "    g = Greeter()\n"
+            "    return g.greet()\n",
+            encoding="utf-8",
+        )
+        store_path = tmp_path / "shipped.db"
+        with IndexStore(store_path) as store:
+            update_store(project, store, use_git=False)
+        # The tree is deleted, as it is absent on the machine a prebuilt
+        # index gets served from.
+        shutil.rmtree(project)
+        with IndexStore(store_path) as store:
+            assert "Greeter" in tools.search_symbols(store, "Greeter")
+            assert "greet" in tools.get_symbol(store, "Greeter/greet")
+            assert "use(s)" in tools.find_references(store, "Greeter/greet")
+            assert "a.py" in tools.file_outline(store, "a.py")
+
+    def test_the_status_says_the_tree_is_not_here(self, tmp_path: Path) -> None:
+        # Otherwise an agent spends a call discovering that include_body
+        # returns nothing, and cannot tell that from a broken index.
+        from repoatlas.store import update_store
+
+        project = tmp_path / "gone2"
+        project.mkdir()
+        (project / "a.py").write_text("def f():\n    pass\n", encoding="utf-8")
+        store_path = tmp_path / "shipped2.db"
+        with IndexStore(store_path) as store:
+            update_store(project, store, use_git=False)
+        with IndexStore(store_path) as store:
+            assert "not on this machine" not in tools.index_status(store)
+        shutil.rmtree(project)
+        with IndexStore(store_path) as store:
+            status = tools.index_status(store)
+        assert "not on this machine" in status
+        assert "include_body" in status
 
 
 class TestNamePaths:

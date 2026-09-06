@@ -322,7 +322,13 @@ def build_parser() -> argparse.ArgumentParser:
     localize.add_argument("--format", choices=("text", "json"), default="text")
 
     serve = subcommands.add_parser("serve", help="run the MCP server over stdio")
-    serve.add_argument("root", type=Path, help="the repository to serve")
+    serve.add_argument(
+        "root",
+        type=Path,
+        nargs="?",
+        help="the repository to serve; omit it to serve a prebuilt index with "
+        "no working tree, which needs --store",
+    )
     serve.add_argument(
         "--store",
         type=Path,
@@ -1017,13 +1023,39 @@ def _cmd_localize(args: argparse.Namespace) -> int:
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
-    """Run the MCP server over stdio."""
+    """Run the MCP server over stdio, with or without the tree it describes.
+
+    A review bot, a CI check and a hosted agent see a diff and an API;
+    there is no checkout to index. That is also the one setting this index
+    measurably wins in, so refusing to start without a working tree
+    refused the only case that pays. With no root the store is served as
+    it stands: locations, outlines and references all answer, and reading
+    a symbol's body is the one thing that cannot.
+    """
     from .server.app import serve as run_server
 
-    root = args.root
-    if not root.is_dir():
-        raise SystemExit(f"repoatlas: not a directory: {root}")
-    store_path = args.store or root / ".repoatlas" / "index.db"
+    root: Path | None = args.root
+    if root is None:
+        if args.store is None:
+            raise SystemExit(
+                "repoatlas: serving without a repository needs --store "
+                "pointing at an index built elsewhere"
+            )
+        if not args.store.exists():
+            raise SystemExit(f"repoatlas: no index at {args.store}")
+        if not args.no_refresh:
+            # Refreshing is the default because a stale index is the one
+            # failure an agent cannot see. With nothing to refresh from,
+            # saying so beats silently serving whatever is in the file.
+            raise SystemExit(
+                "repoatlas: serving without a repository cannot refresh; "
+                "pass --no-refresh to serve the stored index as it stands"
+            )
+        store_path = args.store
+    else:
+        if not root.is_dir():
+            raise SystemExit(f"repoatlas: not a directory: {root}")
+        store_path = args.store or root / ".repoatlas" / "index.db"
     try:
         run_server(
             root,

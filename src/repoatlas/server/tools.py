@@ -854,8 +854,15 @@ def index_status(store: IndexStore) -> str:
     in this tool set would reveal that.
     """
     counts = store.counts()
+    # Whether the tree this describes is actually here. Served from a
+    # prebuilt index — a review bot, a CI check — it is not, and every
+    # answer still holds except reading a body, which an agent should be
+    # told before it spends a call finding out.
+    recorded_root = store.get_meta("project_root")
+    tree = Path(recorded_root).is_dir() if recorded_root else False
     lines = [
-        f"root:      {store.get_meta('project_root') or 'unknown'}",
+        f"root:      {recorded_root or 'unknown'}"
+        + ("" if tree else "  (not on this machine: include_body cannot read source)"),
         f"producer:  {store.get_meta('producer') or 'unknown'}",
         f"files:     {counts['files']}",
         f"symbols:   {counts['symbols']}",

@@ -571,6 +571,30 @@ installed, which `repoatlas[serve]` brings in; without it the same walk
 runs in plain Python and a test holds the two to the same answer. The
 core still installs with nothing.
 
+### Serving it where there is no checkout
+
+The one setting this index measurably wins in is the one with no working
+tree, so the server runs without one. Build the index where the code is —
+CI has a checkout — and serve the file anywhere:
+
+```bash
+# wherever the repository exists, e.g. in CI after a merge
+repoatlas index /path/to/repo --store index.db
+
+# wherever the agent runs, with no repository at all
+repoatlas serve --store index.db --no-refresh
+```
+
+The store is one SQLite file and carries repository-relative paths, so it
+travels. Everything answers: search, outlines, references, the map. The one
+thing that cannot is `include_body`, which reads source from disk — and
+`index_status` says so in its first line rather than letting an agent
+discover it by spending a call.
+
+Refreshing stays the default when a root is given, because a stale index is
+the failure an agent cannot detect from the answers. Without a root there is
+nothing to refresh from, so `--no-refresh` is required rather than assumed.
+
 ## What the first real measurement changed
 
 Running against genuine `scip-typescript` output immediately falsified two

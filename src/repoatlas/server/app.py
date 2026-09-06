@@ -277,7 +277,7 @@ def build_server(store: IndexStore, *, name: str = "repoatlas") -> Any:
 
 
 def serve(
-    root: Path | str,
+    root: Path | str | None,
     store_path: Path | str,
     *,
     refresh: bool = True,
@@ -291,7 +291,7 @@ def serve(
     """
     store = IndexStore(store_path)
     try:
-        if refresh:
+        if refresh and root is not None:
             update_store(root, store, use_git=use_git)
         server = build_server(store)
         server.run("stdio")
