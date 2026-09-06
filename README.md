@@ -125,12 +125,21 @@ subject**, written by the developer who made the change, in the vocabulary
 of the code — which is the condition `grep` is best in, because the request
 already contains the string to search for. What a request usually looks
 like ("the button on the report page that clears it doesn't work") shares
-nothing with the code. That comparison has not been run.
+nothing with the code. That comparison is built and registered in
+[wording.md](docs/benchmarks/wording.md) and has not been run.
+
+One result arrived before any agent did. Nineteen requests were written
+deliberately in user language — "square" for cell, "box" for field — and
+**not one came out unanchored**: the code is English and so is the user, so
+an overlap survives every attempt to avoid it. The same nineteen in
+Ukrainian are unanchored nineteen times out of nineteen, because the
+codebase contains no Ukrainian.
 
 | report | what it settles |
 | --- | --- |
 | [grep.md](docs/benchmarks/grep.md) | every head-to-head, including the map ablation that falsified the ranked map |
 | [hook.md](docs/benchmarks/hook.md) | the tenth comparison: answering a search rather than offering a tool |
+| [wording.md](docs/benchmarks/wording.md) | why every one of the ten was measured in grep's best case |
 | [review.md](docs/benchmarks/review.md) | the one setting the index wins, across three repositories |
 | [enrichment.md](docs/benchmarks/enrichment.md) | +56% and +18.6% more resolved references from a type engine |
 | [phpstan.md](docs/benchmarks/phpstan.md) | what PHPStan and larastan see that no SCIP indexer does |
