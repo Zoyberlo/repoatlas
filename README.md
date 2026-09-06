@@ -577,11 +577,15 @@ The one setting this index measurably wins in is the one with no working
 tree, so the server runs without one. Build the index where the code is —
 CI has a checkout — and serve the file anywhere:
 
-```bash
-# wherever the repository exists, e.g. in CI after a merge
-repoatlas index /path/to/repo --store index.db
+Where the repository exists, in CI after a merge:
 
-# wherever the agent runs, with no repository at all
+```bash
+repoatlas index /path/to/repo --store index.db
+```
+
+Where the agent runs, with no repository at all:
+
+```bash
 repoatlas serve --store index.db --no-refresh
 ```
 
