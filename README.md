@@ -107,9 +107,26 @@ Offline it also beats grep on what a tool *returns* — `find_references` at
 1.000 F1 against `rg -w`'s 0.847, for half the tokens — but that advantage
 does not survive an agent that also has grep.
 
+**The tenth comparison stopped offering the index and started answering
+with it.** A `PostToolUse` hook runs after each `Grep` and appends which
+definition each hit belongs to — `save` is four methods in four classes,
+and here is which of them the resolved edges reach. On a 1,832-file Laravel
+application, twenty-four paired tasks: symbol recall 0.464 to **0.556**,
+paired **+0.093 [+0.009, +0.197]**, W6/L1. File recall is identical and was
+already near its ceiling, so the movement is entirely in *which symbol* was
+named — exactly what the hook says and nothing else.
+
+It is the first interval above zero on this task, and it is thin: the lower
+bound is +0.009, seventeen of twenty-four tasks are ties, the threshold was
+applied after the fact rather than registered before, and it costs 13% more
+tokens by an amount whose interval crosses zero. Read
+[hook.md](docs/benchmarks/hook.md) before believing it; the replication that
+would settle it is registered there and has not been run.
+
 | report | what it settles |
 | --- | --- |
 | [grep.md](docs/benchmarks/grep.md) | every head-to-head, including the map ablation that falsified the ranked map |
+| [hook.md](docs/benchmarks/hook.md) | the tenth comparison: answering a search rather than offering a tool |
 | [review.md](docs/benchmarks/review.md) | the one setting the index wins, across three repositories |
 | [enrichment.md](docs/benchmarks/enrichment.md) | +56% and +18.6% more resolved references from a type engine |
 | [phpstan.md](docs/benchmarks/phpstan.md) | what PHPStan and larastan see that no SCIP indexer does |
