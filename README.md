@@ -186,10 +186,17 @@ best the index ever managed, and cost did not rise — every cost interval
 crosses zero, but all four measures point down and the turn cap killed
 four runs instead of eight.
 
-It is one run, it is an upper bound because the simulated reporter had seen
-the change, and this project's own rule is that nothing counts until a
-second independent run holds it. The caveats and the registered thresholds
-are in [wording.md](docs/benchmarks/wording.md#the-clarifying-run).
+**It held on re-run**, which nothing else here has. A second independent
+run of the same tasks scored **+0.233 [+0.093, +0.397]**, and the two
+clarified runs do not differ from each other (+0.024 [−0.015, +0.076]).
+Twelve of sixteen tasks scored identically across them, and every large win
+came back to the second decimal — where the hook's four wins of 0.33, 0.25,
+0.25 and 0.14 had all returned as 0.00.
+
+What is still open is the one thing the design could not control: the
+reporter was simulated and had seen the change, so this is an upper bound
+on what asking can buy. The caveats and the registered thresholds are in
+[wording.md](docs/benchmarks/wording.md#the-clarifying-run).
 
 **If you want a coding agent to be cheaper and more accurate today, the
 largest measured lever is not retrieval. It is what the request says.**

@@ -373,3 +373,59 @@ real exchange is the question this cannot answer.
 
 **Not a comparison of tools.** Both sides are the plain `grep` agent. This
 says something about how work is requested, not about what it is given.
+
+## The confirmation
+
+Run again the same day, fresh clone, fresh index, the same nineteen tasks
+and the same prompt set — the same wordings deliberately, because what
+destroyed the hook result was run-to-run variance on identical inputs, and
+that is the thing to isolate.
+
+| | point | interval | W/L |
+| --- | ---: | --- | ---: |
+| **vague → clarified #2** | **+0.233** | **[+0.093, +0.397]** | **W9/L1** |
+| vague → clarified #1 | +0.195 | [+0.066, +0.350] | W8/L0 |
+| **clarified #1 → clarified #2** | +0.024 | [−0.015, +0.076] | W3/L1 |
+
+The third row is the one that matters. **The two clarified runs do not
+differ from each other**, so the measurement is stable and the effect is
+not a sample of a noisy arm.
+
+Per task, in the format that settled the hook:
+
+| task | vague | clar 1 | clar 2 | Δ1 | Δ2 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 48413647 | 0.00 | 1.00 | 1.00 | +1.00 | +1.00 |
+| e0a8bcc7 | 0.25 | 1.00 | 1.00 | +0.75 | +0.75 |
+| 1e4e0ccc | 0.00 | 0.56 | 0.56 | +0.56 | +0.56 |
+| 0ed75adb | 0.50 | 1.00 | 1.00 | +0.50 | +0.50 |
+| 60675c8d | 0.25 | 0.50 | 0.50 | +0.25 | +0.25 |
+| 6227ed12 | 0.07 | 0.21 | 0.21 | +0.14 | +0.14 |
+
+**Every large win reproduced exactly.** Twelve of sixteen tasks scored
+identically across the two runs. The hook's four wins of 0.33, 0.25, 0.25
+and 0.14 had come back at 0.00; these come back to the second decimal.
+
+**The registered bar is met**, and it is the only agent-level result in
+this project that has ever survived its own re-run.
+
+### What is still not known
+
+**The reporter is simulated and had seen the change.** This remains an
+upper bound, and it is now the whole of the doubt. A real person answers
+from memory of what they did, not from the diff, and would not volunteer
+"only when I've double-clicked into the square first" unless they happened
+to notice. What fraction of +0.2 survives a real exchange is the next
+question and this cannot answer it.
+
+**One application, one model, English.** Nineteen tasks on a 1,832-file
+Laravel and Vue codebase with Opus 5.
+
+**The exchanges were generated once.** Both runs used the same nineteen,
+so this confirms the agent-level measurement, not the stability of
+generating them. Different questions might buy less.
+
+**It is not a tool result.** Both arms are the plain `grep` agent. Twelve
+comparisons of tooling moved nothing; changing what the request says moved
+0.23. That is the finding, and it points at a product that asks rather than
+one that indexes.
