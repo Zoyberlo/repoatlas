@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
-from repoatlas.prompts import classify, identifiers_of, load_prompts, words_of
+from repoatlas.prompts import classify, identifiers_of, load_prompts, revealing, words_of
 
 ANSWER = ["app/Http/Controllers/ReportController.php", "ReportController.clearReport"]
 VOCABULARY = ["app/Models/Estimate.php", "Estimate.section", "app/Support/Layout.php"]
@@ -107,3 +108,36 @@ class TestLoadingASet:
         path = self.write(tmp_path, [{"sha": "a1", "stratum": "domain"}])
         with pytest.raises(ValueError, match="needs both"):
             load_prompts(path)
+
+
+class TestWhatCountsAsALeak:
+    """Overlap places a wording; selectivity decides whether it gave the answer away.
+
+    The distinction is not academic. Applied to real clarifying answers,
+    overlap rejected sixteen of nineteen for naming `page`, `report` and
+    `date` — the words a person has to use to describe the thing at all.
+    """
+
+    ANSWER: ClassVar[list[str]] = ["app/pages/ReportPage/ClearReport.vue"]
+    # How many symbols in the repository carry each word.
+    COUNTS: ClassVar[dict[str, int]] = {
+        "report": 214, "page": 180, "clear": 31, "clearreport": 1, "reportpage": 3
+    }
+
+    def test_a_word_the_whole_product_uses_is_not_a_leak(self) -> None:
+        assert revealing("the report page is broken", self.ANSWER, self.COUNTS) == set()
+
+    def test_a_word_that_selects_one_symbol_is(self) -> None:
+        assert revealing("clearReport fails", self.ANSWER, self.COUNTS) == {"clearreport"}
+
+    def test_it_only_considers_words_the_answer_contains(self) -> None:
+        # `clear` is selective enough, but if the answer never uses it the
+        # word points somewhere else and is not this answer's leak.
+        assert "clear" not in revealing("clear the cache", ["app/Cache/Flush.php"], self.COUNTS)
+
+    def test_a_word_the_codebase_does_not_have_reveals_nothing(self) -> None:
+        assert revealing("the wibble is broken", ["app/Wibble.php"], {}) == set()
+
+    def test_the_threshold_is_the_caller_s_to_set(self) -> None:
+        loose = revealing("the report page", self.ANSWER, self.COUNTS, max_candidates=300)
+        assert {"report", "page"} <= loose

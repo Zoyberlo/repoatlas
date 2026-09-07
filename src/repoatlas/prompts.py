@@ -58,7 +58,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -70,6 +70,7 @@ __all__ = [
     "classify",
     "identifiers_of",
     "load_prompts",
+    "revealing",
     "words_of",
 ]
 
@@ -165,6 +166,41 @@ def classify(
     if asked & identifiers_of(vocabulary):
         return "domain"
     return "unanchored"
+
+
+def revealing(
+    text: str,
+    answer_names: Iterable[str],
+    selectivity: Mapping[str, int],
+    *,
+    max_candidates: int = 10,
+) -> set[str]:
+    """The words in ``text`` that actually point at the answer.
+
+    Binary overlap, which :func:`classify` uses, cannot tell a pointer from
+    a product's own vocabulary. That is fine for placing a wording in a
+    stratum and useless for deciding whether an answer has leaked: a person
+    reporting a fault on the report page says "report page", the file is
+    called `ReportPage`, and overlap calls it a leak. Measured, it rejected
+    sixteen of nineteen clarifying answers for saying `page`, `report`,
+    `date`, `column` — none of which narrows anything.
+
+    So a word counts as revealing only if it *selects* few candidates:
+    ``selectivity`` maps a word to how many symbols in the repository carry
+    it, and `report` matching two hundred gives nothing away while
+    `clearReport` matching one gives away the answer. A word the map does
+    not mention selects nothing and is treated as revealing nothing, since
+    a word absent from the codebase cannot point into it.
+
+    This is the refinement the module docstring said to make only once
+    there was evidence the binary split was too coarse. There is.
+    """
+    answer = identifiers_of(answer_names)
+    return {
+        word
+        for word in words_of(text) & answer
+        if 0 < selectivity.get(word, 0) <= max_candidates
+    }
 
 
 def load_prompts(path: Path) -> PromptSet:
