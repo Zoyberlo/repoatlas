@@ -8,10 +8,15 @@ correct against compiler-backed oracles, and then measured whether it
 helped. Eleven times it did not. The twelfth held — in the one setting
 where the agent has no files to search.
 
+Then we stopped changing the tools and changed the request instead, and
+recovered more accuracy in one run than every tool in the project had
+managed put together.
+
 | | |
 | --- | --- |
 | Head-to-head comparisons | **12** |
-| Intervals excluding zero | **1** |
+| Intervals excluding zero, from tooling | **1** |
+| Intervals excluding zero, from asking | **1** |
 | Results withdrawn | **1** |
 | Definition precision against SCIP | **1.000** |
 
@@ -27,31 +32,28 @@ below is scored against compiler-backed `scip-php`, `scip-typescript` and
 `scip-python` indexes, on three production repositories, with paired
 bootstrap intervals and thresholds written down before each run.
 
-## Everything sits on zero
+## Ten intervals, and where the two that cleared zero are
 
-```
-                         +       +       +       +       +       +       +       +
-                         -.10    0              +.20            +.40            +.60
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/intervals-dark.svg">
+  <img alt="Paired differences with 95% intervals. Eight of ten overlap zero. Two do not: reviewing a diff with no checkout at +0.337, and two clarifying questions at +0.195." src="img/intervals-light.svg">
+</picture>
 
-localise a change           [-------@------]
-hook, first run                  |[-----@--------]                                      withdrawn
-hook, re-run             [-----@-]
-everything at once               [-@-----]
-user wording, English        [----@------]
-user wording, Ukrainian        [-@-]
-Ukrainian vs English          [--@-]
-review, index vs grep            @
-review, no checkout              |         [----------------@-----------------]         HELD
+Each bar is a 95% paired bootstrap interval and the dot is the point
+estimate. Accuracy is symbol recall for the localisation rows and F1 for
+the review rows, both bounded 0 to 1. The figure is generated from the
+figures by [scripts/interval_plot.py](../scripts/interval_plot.py), so a
+bar cannot drift from the number it stands for.
 
-                         +       +       +       +       +       +       +       +
-```
+Eight of the ten overlap zero. One of the two that does not is a diff
+reviewed with **no working tree**, where the comparison is against an agent
+that can only read files — the index substituting for a checkout rather
+than beating one.
 
-Each bar is a 95% paired bootstrap interval and `@` is the point estimate;
-`|` marks no difference. Accuracy is symbol recall for the localisation
-rows and F1 for the review rows, both bounded 0 to 1. Eleven intervals
-touch or cross zero. The one that does not is a diff reviewed with no
-working tree, where the comparison is against an agent that can only read
-files.
+The other is not a tool at all. It is the same agent, the same grep, the
+same tasks, asked the same vague request **plus two clarifying questions**,
+and it is the reason the dashed rule is in the picture: everything above it
+is a better tool, and the thing that worked was a better question.
 
 ## The index itself is not the problem
 
@@ -88,6 +90,7 @@ that also has a shell.
 | Requests in a user's words, Ukrainian | 18 | −0.001 [−0.026, +0.023] | null |
 | Review a diff, index vs grep | 36 | 0.000 [0.000, 0.000] | null |
 | Review a diff with **no checkout** | 14 | **+0.337 [+0.129, +0.565]**, W6/L0 | **held** |
+| The same request plus **two clarifying questions** | 17 | **+0.195 [+0.066, +0.350]**, W8/L0 | **held** |
 
 Where a shell and a checkout exist, `grep` is not merely competitive — it
 is cheaper. On the call-site task it took 6.3 turns to the index's 20.4,

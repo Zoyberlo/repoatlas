@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 476" width="900" height="476" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="Ten paired comparisons with 95% intervals. Eight overlap zero; two do not.">
+<text x="258" y="26" font-size="15" font-weight="600" fill="#1f2328">Paired difference in accuracy, with 95% interval</text>
+<text x="258" y="46" font-size="12.5" fill="#59636e">Eight of ten overlap zero. Both that do not are to the right of it.</text>
+<line x1="274.4" y1="84" x2="274.4" y2="418" stroke="#d1d9e0" stroke-width="1"/>
+<line x1="438.3" y1="84" x2="438.3" y2="418" stroke="#d1d9e0" stroke-width="1"/>
+<line x1="520.2" y1="84" x2="520.2" y2="418" stroke="#d1d9e0" stroke-width="1"/>
+<line x1="602.2" y1="84" x2="602.2" y2="418" stroke="#d1d9e0" stroke-width="1"/>
+<line x1="684.1" y1="84" x2="684.1" y2="418" stroke="#d1d9e0" stroke-width="1"/>
+<line x1="766.1" y1="84" x2="766.1" y2="418" stroke="#d1d9e0" stroke-width="1"/>
+<line x1="848.0" y1="84" x2="848.0" y2="418" stroke="#d1d9e0" stroke-width="1"/>
+<line x1="356.3" y1="78" x2="356.3" y2="424" stroke="#1f2328" stroke-width="1.5"/>
+<text x="356.3" y="72" font-size="11.5" font-weight="600" fill="#1f2328" text-anchor="middle">no difference</text>
+<text x="244" y="111.0" font-size="13" fill="#1f2328" text-anchor="end">localise a change</text>
+<line x1="308.0" y1="107.0" x2="456.3" y2="107.0" stroke="#8c959f" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="308.0" y1="102.5" x2="308.0" y2="111.5" stroke="#8c959f" stroke-width="2"/>
+<line x1="456.3" y1="102.5" x2="456.3" y2="111.5" stroke="#8c959f" stroke-width="2"/>
+<circle cx="382.6" cy="107.0" r="4.5" fill="#8c959f"/>
+<text x="244" y="141.0" font-size="13" fill="#1f2328" text-anchor="end">hook, first run</text>
+<line x1="363.7" y1="137.0" x2="517.8" y2="137.0" stroke="#9a3b2e" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="5 4"/>
+<line x1="363.7" y1="132.5" x2="363.7" y2="141.5" stroke="#9a3b2e" stroke-width="2"/>
+<line x1="517.8" y1="132.5" x2="517.8" y2="141.5" stroke="#9a3b2e" stroke-width="2"/>
+<circle cx="432.5" cy="137.0" r="4.5" fill="#9a3b2e"/>
+<text x="529.8" y="141.0" font-size="11.5" fill="#9a3b2e">withdrawn</text>
+<text x="244" y="171.0" font-size="13" fill="#1f2328" text-anchor="end">hook, re-run</text>
+<line x1="279.3" y1="167.0" x2="356.3" y2="167.0" stroke="#8c959f" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="279.3" y1="162.5" x2="279.3" y2="171.5" stroke="#8c959f" stroke-width="2"/>
+<line x1="356.3" y1="162.5" x2="356.3" y2="171.5" stroke="#8c959f" stroke-width="2"/>
+<circle cx="330.9" cy="167.0" r="4.5" fill="#8c959f"/>
+<text x="244" y="201.0" font-size="13" fill="#1f2328" text-anchor="end">map + tools + hook + turns</text>
+<line x1="356.3" y1="197.0" x2="433.4" y2="197.0" stroke="#8c959f" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="356.3" y1="192.5" x2="356.3" y2="201.5" stroke="#8c959f" stroke-width="2"/>
+<line x1="433.4" y1="192.5" x2="433.4" y2="201.5" stroke="#8c959f" stroke-width="2"/>
+<circle cx="381.7" cy="197.0" r="4.5" fill="#8c959f"/>
+<text x="244" y="231.0" font-size="13" fill="#1f2328" text-anchor="end">user wording, English</text>
+<line x1="313.7" y1="227.0" x2="439.1" y2="227.0" stroke="#8c959f" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="313.7" y1="222.5" x2="313.7" y2="231.5" stroke="#8c959f" stroke-width="2"/>
+<line x1="439.1" y1="222.5" x2="439.1" y2="231.5" stroke="#8c959f" stroke-width="2"/>
+<circle cx="370.3" cy="227.0" r="4.5" fill="#8c959f"/>
+<text x="244" y="261.0" font-size="13" fill="#1f2328" text-anchor="end">user wording, Ukrainian</text>
+<line x1="335.0" y1="257.0" x2="375.2" y2="257.0" stroke="#8c959f" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="335.0" y1="252.5" x2="335.0" y2="261.5" stroke="#8c959f" stroke-width="2"/>
+<line x1="375.2" y1="252.5" x2="375.2" y2="261.5" stroke="#8c959f" stroke-width="2"/>
+<circle cx="355.5" cy="257.0" r="4.5" fill="#8c959f"/>
+<text x="244" y="291.0" font-size="13" fill="#1f2328" text-anchor="end">Ukrainian vs English</text>
+<line x1="325.2" y1="287.0" x2="377.6" y2="287.0" stroke="#8c959f" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="325.2" y1="282.5" x2="325.2" y2="291.5" stroke="#8c959f" stroke-width="2"/>
+<line x1="377.6" y1="282.5" x2="377.6" y2="291.5" stroke="#8c959f" stroke-width="2"/>
+<circle cx="351.4" cy="287.0" r="4.5" fill="#8c959f"/>
+<text x="244" y="321.0" font-size="13" fill="#1f2328" text-anchor="end">review, index vs grep</text>
+<line x1="356.3" y1="311.0" x2="356.3" y2="323.0" stroke="#8c959f" stroke-width="2.5"/>
+<circle cx="356.3" cy="317.0" r="4.5" fill="#8c959f"/>
+<text x="244" y="351.0" font-size="13" fill="#1f2328" text-anchor="end">review, no checkout</text>
+<line x1="462.0" y1="347.0" x2="819.3" y2="347.0" stroke="#1a6560" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="462.0" y1="342.5" x2="462.0" y2="351.5" stroke="#1a6560" stroke-width="2"/>
+<line x1="819.3" y1="342.5" x2="819.3" y2="351.5" stroke="#1a6560" stroke-width="2"/>
+<circle cx="632.5" cy="347.0" r="4.5" fill="#1a6560"/>
+<text x="632.5" y="337.0" font-size="11.5" font-weight="600" fill="#1a6560" text-anchor="middle">+0.337</text>
+<line x1="24" y1="380" x2="848" y2="380" stroke="#d1d9e0" stroke-width="1" stroke-dasharray="2 3"/>
+<text x="24" y="371" font-size="10.5" fill="#818b98" letter-spacing="0.08em">A BETTER QUESTION, NOT A BETTER TOOL</text>
+<text x="244" y="407.0" font-size="13" fill="#1f2328" text-anchor="end">two clarifying questions</text>
+<line x1="410.4" y1="403.0" x2="643.1" y2="403.0" stroke="#1a6560" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="410.4" y1="398.5" x2="410.4" y2="407.5" stroke="#1a6560" stroke-width="2"/>
+<line x1="643.1" y1="398.5" x2="643.1" y2="407.5" stroke="#1a6560" stroke-width="2"/>
+<circle cx="516.1" cy="403.0" r="4.5" fill="#1a6560"/>
+<text x="516.1" y="393.0" font-size="11.5" font-weight="600" fill="#1a6560" text-anchor="middle">+0.195</text>
+<text x="274.4" y="442" font-size="11.5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" fill="#818b98" text-anchor="middle">-.1</text>
+<text x="356.3" y="442" font-size="11.5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" fill="#818b98" text-anchor="middle">0</text>
+<text x="438.3" y="442" font-size="11.5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" fill="#818b98" text-anchor="middle">+.1</text>
+<text x="520.2" y="442" font-size="11.5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" fill="#818b98" text-anchor="middle">+.2</text>
+<text x="602.2" y="442" font-size="11.5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" fill="#818b98" text-anchor="middle">+.3</text>
+<text x="684.1" y="442" font-size="11.5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" fill="#818b98" text-anchor="middle">+.4</text>
+<text x="766.1" y="442" font-size="11.5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" fill="#818b98" text-anchor="middle">+.5</text>
+<text x="848.0" y="442" font-size="11.5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" fill="#818b98" text-anchor="middle">+.6</text>
+<text x="553" y="463" font-size="11.5" fill="#59636e" text-anchor="middle">symbol recall for the localisation rows, F1 for the review rows</text>
+</svg>
