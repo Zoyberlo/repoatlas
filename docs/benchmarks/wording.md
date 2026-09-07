@@ -93,7 +93,8 @@ because the previous positive result on this harness was destroyed by
 single-run variance and averaging is the direct answer to that.
 
 ```bash
-repoatlas agentbench <app> --prompts wordings-en.json --arms grep,hook \n  --commits 44 --repeats 2 --out enbench.json --with-runs
+repoatlas agentbench <app> --prompts wordings-en.json --arms grep,hook \
+  --commits 44 --repeats 2 --out enbench.json --with-runs
 ```
 
 | symbol recall, repeats averaged | grep | hook | paired delta |
