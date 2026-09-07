@@ -295,3 +295,30 @@ rejected**, not edited. Rejections are counted and reported.
 > **Two repeats, averaged per task**, as with both wording runs, because a
 > single run on a task set full of ties is a hypothesis here and not a
 > finding.
+
+### What the generated exchanges are, and are not
+
+Nineteen of nineteen passed the leak check at the strict setting: no answer
+named a word selecting ten symbols or fewer. The most selective thing any
+of them shared with its own ground truth was `app` (596 symbols), `cell`
+(257), `loan` (324) — product vocabulary, not pointers. The filter is not
+inert either: the same answers would fail at looser thresholds, 5 of 19 at
+100 candidates and 15 of 19 under plain overlap, so there is a real
+gradient and these sit at the clean end of it.
+
+They read like the real thing. One answer runs *"I was on a report's loan
+section, and I clicked into one of the existing loans to open the loan
+details dialog where you edit the dates, rate and payment"* — genuine
+localisation a person can give without naming any code.
+
+**But the answerer saw the change.** Another says *"only when I've
+double-clicked into the square to edit it first"*, which is exactly the
+condition the fix turned on. A real reporter might never notice that. So
+the simulated user has perfect recall of the true cause, expressed in
+user language, and this run therefore measures an **upper bound** on what
+asking can buy rather than the typical case. If the upper bound is small,
+the intervention is dead; if it is large, the next question is how much of
+it a real exchange recovers, which this cannot answer.
+
+The run holds `--max-turns 30`, matching the vague English run exactly, so
+the only thing that differs between them is the sentence.
