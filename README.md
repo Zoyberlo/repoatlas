@@ -158,6 +158,7 @@ this index helping an agent that already has a shell.
 
 | report | what it settles |
 | --- | --- |
+| [article.md](docs/article.md) | all twelve comparisons, written up as one piece |
 | [grep.md](docs/benchmarks/grep.md) | every head-to-head, including the map ablation that falsified the ranked map |
 | [hook.md](docs/benchmarks/hook.md) | the tenth comparison: answering a search rather than offering a tool |
 | [wording.md](docs/benchmarks/wording.md) | user wording halves accuracy and doubles cost, for both arms alike |
@@ -850,7 +851,7 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # includes parse
 python scripts/check.py                                     # every gate, ~35s
 ```
 
-That runs the suite (1012 tests), ruff, mypy, and the guard plugin's own
+That runs the suite (1015 tests), ruff, mypy, and the guard plugin's own
 checks, each judged by its own exit code. `--list` names them, `--skip` drops
 one. A gate that cannot run — node missing, say — is reported as a failure
 rather than a skip, because a check believed to be running and silently not
