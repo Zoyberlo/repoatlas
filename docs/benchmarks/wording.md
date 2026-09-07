@@ -248,3 +248,50 @@ they describe a client application's features: `wordings-en.json`,
 repoatlas agentbench <app> --prompts wordings-en.json --stratum domain \
   --arms grep,hook --commits 44 --repeats 1 --out en-domain.json --with-runs
 ```
+
+## Does a clarifying question buy the gap back?
+
+The wording runs measured a gap nobody has tried to close: a request in a
+person's words scores 0.274 where the same change described in the
+developer's scores 0.464. That is +0.19, six times anything the index ever
+moved, and it is the only large effect this project has found.
+
+The obvious intervention is to ask. Instead of searching on a vague
+request, the agent asks one or two questions first, and someone who knows
+what they wanted answers them.
+
+### How it is posed without cheating
+
+Three phases, so that what the answerer may say can be controlled:
+
+1. A model sees **only the vague request** and writes at most two questions.
+2. A second call sees the change and answers them **as the person who filed
+   the request** — someone who uses the application and cannot read code.
+3. The request plus that exchange becomes the task, run through the same
+   harness, the same commits, the same ground truth.
+
+The third phase is where this could quietly become a leak rather than an
+experiment. If the answerer says "it is in `ReportController::clear`", the
+run measures how well an agent follows a pointer, which is not the
+question. So every answer goes through the same classifier the wordings
+did: **an answer that shares any identifier with the ground truth is
+rejected**, not edited. Rejections are counted and reported.
+
+### Registered before the run
+
+> **The intervention earns its place** if the clarified set beats the vague
+> set on symbol recall with a paired 95% interval excluding zero, on the
+> same tasks and the same arm.
+>
+> **How much of the gap it recovers** is the secondary number, against the
+> +0.19 between vague and commit-subject phrasing. Recovering a third of it
+> would already be larger than any tool result in this project.
+>
+> **It can also lose.** Two extra model calls and a longer prompt cost
+> tokens; if accuracy does not move, the honest reading is that the loss
+> from vagueness is under-determination the user cannot resolve either, and
+> that asking cannot fix what the requester does not know.
+>
+> **Two repeats, averaged per task**, as with both wording runs, because a
+> single run on a task set full of ties is a hypothesis here and not a
+> finding.
