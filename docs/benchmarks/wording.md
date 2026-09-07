@@ -322,3 +322,54 @@ it a real exchange recovers, which this cannot answer.
 
 The run holds `--max-turns 30`, matching the vague English run exactly, so
 the only thing that differs between them is the sentence.
+
+## The clarifying run
+
+7 September 2026. The same nineteen tasks, the same `grep` arm, the same
+thirty-turn cap, two repeats averaged. The only difference from the vague
+English run is that each request carries a two-question exchange with the
+person who filed it.
+
+| repeats averaged, seventeen paired tasks | vague | clarified | paired delta |
+| --- | ---: | ---: | --- |
+| **symbol recall** | 0.287 | **0.482** | **+0.195 [+0.066, +0.350] W8/L0** |
+| file recall | 0.745 | 0.843 | +0.098 [−0.020, +0.245] W3/L1 |
+| turns | 24.6 | 20.3 | −4.4 [−9.8, +1.0] |
+| tokens | 787,059 | 668,415 | −118,644 [−432,106, +192,963] |
+| cost | $1.061 | $0.996 | −$0.065 [−0.390, +0.261] |
+| runs lost to the turn cap | 8 | **4** | |
+
+**Eight wins, nine ties, no losses.** The registered bar — a paired 95%
+interval excluding zero — is met, and met by the widest margin anything in
+this project has produced.
+
+### How much came back
+
+The gap between a person's words and the developer's was 0.274 to 0.464, or
+0.190. Clarification moved the same tasks by **+0.195**: on this run it
+recovers the whole of it. An agent asked in user language and then allowed
+two questions performs as if it had been given the developer's own sentence.
+
+For scale, the index at its very best moved +0.093 once and did not
+reproduce; the ceiling arm with every lever at once managed +0.031. This is
+six times that, in the opposite place: the prompt, not the retrieval.
+
+Cost did not rise. Every cost interval crosses zero so none of it is a
+claim, but the direction is down on all four measures and the turn cap
+killed half as many runs.
+
+### What this is not yet
+
+**One run.** The rule this project set after the hook result is that
+nothing counts until a second independent run of the same tasks holds it.
+Two repeats inside one run is not that. The shape is much sturdier than the
+hook's was — eight wins to none against six to one with seventeen ties —
+but the rule exists precisely because the sturdy-looking one evaporated.
+
+**An upper bound**, for the reason registered before the run: the simulated
+reporter had seen the change, so it answers with perfect recall of the true
+cause. A real person volunteers less. What fraction of +0.195 survives a
+real exchange is the question this cannot answer.
+
+**Not a comparison of tools.** Both sides are the plain `grep` agent. This
+says something about how work is requested, not about what it is given.
