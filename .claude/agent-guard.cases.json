@@ -40,7 +40,7 @@
     "payload": {
       "tool_name": "Edit",
       "tool_input": {
-        "file_path": "/home/u/projects/application-c/backend/app/Models/User.php"
+        "file_path": "/home/u/projects/app-one/backend/app/Models/User.php"
       }
     }
   },
@@ -50,7 +50,7 @@
     "payload": {
       "tool_name": "Write",
       "tool_input": {
-        "file_path": "/home/u/projects/application-c/.claude/agent-guard.json",
+        "file_path": "/home/u/projects/app-one/.claude/agent-guard.json",
         "content": "{}"
       }
     }
@@ -61,7 +61,7 @@
     "payload": {
       "tool_name": "Edit",
       "tool_input": {
-        "file_path": "/home/zoyberlo/ra-scratch/ro/app/X.php"
+        "file_path": "/home/u/ra-scratch/ro/app/X.php"
       }
     }
   },

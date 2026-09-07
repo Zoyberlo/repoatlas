@@ -2,8 +2,8 @@
 
 Ten agent-level comparisons found no win. Every one of them posed the task
 as a **commit subject** — written by the developer who had just made the
-change, in the vocabulary of the code. *"render note-row badges in a
-summary block"*: half those nouns are identifiers.
+change, in the vocabulary of the code. One reads like *"render the note
+rows in the summary block"* — half those nouns are identifiers.
 
 That is the condition `grep` is best in, because the request already
 contains the string to search for. So the ten null results are all measured

@@ -26,7 +26,7 @@
         "Edit",
         "Write"
       ],
-      "pathRegex": "(^|/)(home/[^/]+/projects|mnt/[a-z]/projects)/(?!application-c/\\.claude/)",
+      "pathRegex": "(^|/)(home/[^/]+/projects|mnt/[a-z]/projects)/(?![^/]+/\\.claude/)",
       "message": "This path is inside a client repository. Read them, index them, benchmark against them — do not write to them. Take a copy under ~/ra-scratch/ instead.\n\nIf the user asked for this specific change, back the file up first: .agent/, docs/, CLAUDE.md and AGENTS.md are gitignored there and have no history to recover from."
     },
     {
@@ -35,7 +35,7 @@
       "tools": [
         "Bash"
       ],
-      "commandRegex": "(>>?\\s*[^|;&]*(home/[^/]+/projects|projects/(application-c|application-a|application-b))|\\bsed\\s+-i[^|;&]*/projects/|\\brm\\s+-rf?[^|;&]*/projects/)",
+      "commandRegex": "(>>?\\s*[^|;&]*(home/[^/]+/projects|/projects/[^/\\s]+/)|\\bsed\\s+-i[^|;&]*/projects/|\\brm\\s+-rf?[^|;&]*/projects/)",
       "message": "Writing into a client repository through the shell is the same change with a different tool. Copy it to ~/ra-scratch/ and work there."
     },
     {

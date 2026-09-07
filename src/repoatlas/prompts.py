@@ -2,8 +2,9 @@
 
 Every agent-level comparison in this project so far has posed a commit
 subject. Those are written by the developer who made the change, moments
-after making it, in the vocabulary of the code — *"render note-row
-badges in a summary block"*. Half those nouns are identifiers.
+after making it, in the vocabulary of the code. One reads like *"render
+the note rows in the summary block"*, and half those nouns are
+identifiers.
 
 That is a real task, but it is one particular task, and it is the one
 `grep` is best at: the request already contains the string to search for.

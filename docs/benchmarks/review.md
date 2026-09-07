@@ -148,7 +148,7 @@ confirmed on another repository before it is built on.
 
 ## Replicated on a third repository
 
-`application-b`, an independent Laravel 9 and Vue application: 2,148
+**Application B**, an independent Laravel 9 and Vue application: 2,148
 tracked files, 6,740 commits, an oracle covering 384 files. This index
 scores 1.000 on definitions and 0.990 F1 on references against it.
 
@@ -179,9 +179,13 @@ the small one, not like the large one.
 
 | | oracle files | read F1 | **index F1** | grep F1 | read unanswered |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| application-a | ~280 | 0.958 | **1.000** | 1.000 | 0 of 8 |
-| application-b | 384 | 0.933 | **0.961** | 0.961 | 0 of 14 |
-| application-c | 874 | **0.503** | **0.839** | 0.868 | **5 of 14** |
+| A · Laravel 10 + Quasar | ~280 | 0.958 | **1.000** | 1.000 | 0 of 8 |
+| B · Laravel 9 + Vue | 384 | 0.933 | **0.961** | 0.961 | 0 of 14 |
+| C · Laravel + Vue | 874 | **0.503** | **0.839** | 0.868 | **5 of 14** |
+
+Three private production applications, identified by stack and size
+rather than by name: they are client systems, and nothing here needs
+their identity to be checked.
 
 Read down the `read` column: 0.958, 0.933, 0.503. Brute-force file
 reading degrades gently and then collapses, and the collapse is in the

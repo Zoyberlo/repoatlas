@@ -88,10 +88,12 @@ exactly what the checker is for.
 ## What is deliberately not here
 
 The rules and knowledge base of the application this was developed
-against are **not** in this repository. This repository is private, so
-that is not the reason: they are a client codebase's business documents,
-and a private repository under a different account is still a different
-repository. They sit outside it, at
-`A:/Projects/reference/client-agent-docs/`, as a reference to design
-against — the shapes are worth copying, the contents are not ours to
-move.
+against are **not** in this repository, and now that this repository is
+public that is doubly true: they are a client codebase's business
+documents. They sit outside it, as a reference to design against — the
+shapes are worth copying, the contents are not ours to move.
+
+The same line applies to every measurement here. Benchmark runs name the
+applications they were taken on, and those names have been kept out; the
+reports identify three client systems by stack and size instead, which is
+all any of the numbers need.

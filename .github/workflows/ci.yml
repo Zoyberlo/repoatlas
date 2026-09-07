@@ -4,7 +4,9 @@
 # every push. The run history says that was too much: across 61 runs, four
 # failed, and macOS was never once the job that caught something. Two were
 # lint, one broke on every platform at once, and one was Windows-only.
-# macOS also bills at ten times the Linux rate.
+# (An earlier version of this note also cited macOS billing at ten times
+# the Linux rate. This repository is public, so its standard runners are
+# free and that was never the reason here — the run history is.)
 #
 # Development happens on Windows with a WSL Ubuntu beside it, so those two
 # platforms are covered before a push ever happens; `python scripts/check.py`
