@@ -55,6 +55,7 @@ repoatlas serve /path/to/repo     # seven read-only tools over MCP
 
 - [Why this exists](#why-this-exists-and-why-it-starts-with-tests)
 - [**What twelve agent-level comparisons found**](#what-twelve-agent-level-comparisons-found)
+- [**The one thing that did work was not a tool**](#the-one-thing-that-did-work-was-not-a-tool)
 - [Scoring an index against a compiler](#scoring-an-index-against-a-compiler)
 - [Indexing and searching](#indexing-and-searching)
 - [Mapping a repository](#mapping-a-repository)
@@ -168,12 +169,37 @@ missing, and "the request has no string to grep for" describes a problem
 the agent does not have. That was the last standing theoretical case for
 this index helping an agent that already has a shell.
 
+## The one thing that did work was not a tool
+
+Twelve comparisons moved nothing. The thirteenth changed the request
+instead of the tooling: before searching, the agent asks the person who
+filed the report two questions, and gets answers in their own words.
+
+Same tasks, same plain `grep` agent, same turn cap. Symbol recall **0.287
+to 0.482** — paired **+0.195 [+0.066, +0.350], eight wins, nine ties, no
+losses** over seventeen tasks.
+
+That recovers the entire gap between a person's phrasing and the
+developer's. Asked in user language and allowed two questions, the agent
+performs as if it had been handed the commit subject. It is six times the
+best the index ever managed, and cost did not rise — every cost interval
+crosses zero, but all four measures point down and the turn cap killed
+four runs instead of eight.
+
+It is one run, it is an upper bound because the simulated reporter had seen
+the change, and this project's own rule is that nothing counts until a
+second independent run holds it. The caveats and the registered thresholds
+are in [wording.md](docs/benchmarks/wording.md#the-clarifying-run).
+
+**If you want a coding agent to be cheaper and more accurate today, the
+largest measured lever is not retrieval. It is what the request says.**
+
 | report | what it settles |
 | --- | --- |
 | [article.md](docs/article.md) | all twelve comparisons, written up as one piece |
 | [grep.md](docs/benchmarks/grep.md) | every head-to-head, including the map ablation that falsified the ranked map |
 | [hook.md](docs/benchmarks/hook.md) | the tenth comparison: answering a search rather than offering a tool |
-| [wording.md](docs/benchmarks/wording.md) | user wording halves accuracy and doubles cost, for both arms alike |
+| [wording.md](docs/benchmarks/wording.md) | user wording halves accuracy — and two questions give it back |
 | [review.md](docs/benchmarks/review.md) | the one setting the index wins, across three repositories |
 | [enrichment.md](docs/benchmarks/enrichment.md) | +56% and +18.6% more resolved references from a type engine |
 | [phpstan.md](docs/benchmarks/phpstan.md) | what PHPStan and larastan see that no SCIP indexer does |
