@@ -36,6 +36,13 @@ the individual runs are in [docs/benchmarks/](docs/benchmarks/).
 > Being right turned out not to be the same as being useful, which is what
 > [the agent-level comparisons](#what-twelve-agent-level-comparisons-found)
 > are about.
+>
+> **The three repositories are private client applications**, named here by
+> stack and size — A, B and C — because their identity is not ours to
+> publish and no figure needs it. That is a real limit on this evidence: you
+> can read the harness, the oracles and every run's parameters, but you
+> cannot re-run them against the same code. What can be reproduced is the
+> method, and the committed fixtures it is tested on.
 
 ```bash
 pip install -e ".[parse,serve]"

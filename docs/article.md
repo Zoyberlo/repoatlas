@@ -228,6 +228,12 @@ vocabulary of the code.
 
 ## Limits
 
+**Every repository measured here is a private client application.** They
+are identified by stack and size rather than by name, because their
+identity is not ours to publish and no figure needs it — but it means the
+runs cannot be repeated against the same code. The harness, the oracles and
+every run's parameters are public; the code they were pointed at is not.
+
 The agent-level work is one model — Opus 5 — on a Laravel and Vue stack,
 across two applications of 363 and 1,832 indexed files. The no-checkout
 result covers three repositories, all PHP, fourteen questions each; it has
