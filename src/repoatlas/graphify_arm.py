@@ -187,6 +187,31 @@ class Graphify:
         env["GRAPHIFY_HOOK_STRICT"] = "1" if self.strict else "0"
         return env
 
+    def forget_recent_queries(self) -> None:
+        """Clear graphify's record of the last query, before each run.
+
+        Strict mode does not deny a read if *any* `graphify query`, `path` or
+        `explain` ran within `GRAPHIFY_HOOK_STRICT_TTL` — thirty minutes by
+        default — and it records that in `cache/last_query_stamp` in the
+        output directory. In a project that is a sensible proxy for "this
+        developer has just oriented themselves". In a benchmark, where every
+        run shares one output directory, it means the first query any run
+        makes switches strict mode off for every run in the next half hour,
+        including runs of the other arm.
+
+        That is not hypothetical. The smoke run before this was added showed
+        the strict arm making no graphify call on two tasks of three while
+        reading files, and zero denial markers in total: the default arm ran
+        first, queried, and silenced strict mode for everything after it. Fed
+        the same read directly, the hook answered with a nudge while the stamp
+        existed and with `permissionDecision: deny` once it was removed.
+
+        Clearing it before each run makes every run what a real session is —
+        one in which nobody else has just queried — without touching the
+        graph or its cache.
+        """
+        (self.out / "cache" / "last_query_stamp").unlink(missing_ok=True)
+
     # -- building the graph ----------------------------------------------
 
     def rebuild(self, root: Path, *, timeout: int = 1800) -> RebuildResult:

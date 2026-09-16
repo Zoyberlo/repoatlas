@@ -192,3 +192,25 @@ class TestKnowingWhetherGraphifyWasUsed:
 
         trace = parse_stream(self.stream("rg graphify src/"))
         assert trace.tool_calls["Bash:graphify"] == 0
+
+
+class TestEachRunIsItsOwnSession:
+    """Strict mode must not be silenced by a query some other run made."""
+
+    def test_the_last_query_stamp_is_cleared(self, tmp_path: Path) -> None:
+        stamp = tmp_path / "cache" / "last_query_stamp"
+        stamp.parent.mkdir(parents=True)
+        stamp.write_text("", encoding="utf-8")
+        Graphify(Path("/g"), tmp_path).forget_recent_queries()
+        assert not stamp.exists()
+
+    def test_the_graph_and_its_cache_are_untouched(self, tmp_path: Path) -> None:
+        (tmp_path / "cache").mkdir()
+        (tmp_path / "cache" / "entry").write_text("parsed", encoding="utf-8")
+        (tmp_path / "graph.json").write_text("{}", encoding="utf-8")
+        Graphify(Path("/g"), tmp_path).forget_recent_queries()
+        assert (tmp_path / "graph.json").exists()
+        assert (tmp_path / "cache" / "entry").exists()
+
+    def test_no_stamp_is_not_an_error(self, tmp_path: Path) -> None:
+        Graphify(Path("/g"), tmp_path).forget_recent_queries()

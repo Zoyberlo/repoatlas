@@ -102,6 +102,44 @@ whether the tool was ignored or used and unhelpful.
 > one is made. If it does not, the harness failed to reproduce strict mode
 > and that arm's numbers are void rather than negative.
 
+## What the smoke run caught, before any result was read
+
+A three-task run of all three arms was made to check the wiring, not to
+measure anything. Its accuracy numbers are not reported; two things it
+exposed changed the method, and both are recorded here before the full run
+rather than explained after it.
+
+**Strict mode had been silently switched off.** The validity check above
+failed: the strict arm made no graphify call on two tasks of three while
+reading files, and the output directory held **zero** denial markers — strict
+mode had not denied a single read. graphify does not deny a read if *any*
+`graphify query`, `path` or `explain` ran within `GRAPHIFY_HOOK_STRICT_TTL`,
+thirty minutes by default, and it keeps that stamp in the shared output
+directory. The default arm runs first on every task, queried, and so
+silenced strict mode for every run after it, including the other arm's.
+
+It was confirmed by feeding the hook one read directly, with no model
+involved: with the stamp present a fresh session got a nudge; with it
+removed, `permissionDecision: deny`; and the same session a second time, a
+nudge again — once per session, as documented. The stamp is now cleared
+before every run of a graphify arm, which makes each run what a real
+session is, one in which nobody else has just queried, without touching the
+graph.
+
+**The tasks had drifted.** The source repository has moved to another
+branch since the hook and ceiling runs, and none of their twenty-four
+commits exist in it any more; the smoke run posed three different ones. They
+survive in the first run's scratch clone, all twenty-four reachable from the
+commit that run walked from, so the full run walks from that same commit
+with the same subject text pinned. The walk was checked to offer all
+twenty-four before anything was spent.
+
+One consequence is worth stating in advance: the extractor has changed since
+that first run, so the ground-truth symbols for the same commits may differ
+slightly and `grep`'s absolute score need not reproduce 0.464. That does not
+touch the comparison, which pairs every arm on identical ground truth within
+this run.
+
 ## What this cannot settle
 
 It is not graphify's own task — that was answering questions about a

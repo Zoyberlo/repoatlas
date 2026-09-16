@@ -778,12 +778,15 @@ class AgentBenchResult:
         return payload
 
     def as_text(self) -> str:
+        # Wide enough for the longest arm name: `graphify-strict` in a column
+        # of twelve ran into its neighbour and printed `graphifygraphify-strict`.
+        width = max(12, *(len(arm) + 2 for arm in self.arms))
         lines = [
             f"tasks:    {self.tasks} scored of {self.walked} walked; "
             f"{len(self.excluded())} run(s) excluded",
             *([f"stopped:  {self.stopped}"] if self.stopped else []),
             "",
-            f"{'':<16}" + "".join(f"{arm:>12}" for arm in self.arms),
+            f"{'':<16}" + "".join(f"{arm:>{width}}" for arm in self.arms),
         ]
         for label, name, form in (
             ("runs", None, "d"),
@@ -804,23 +807,39 @@ class AgentBenchResult:
             cells = []
             for arm in self.arms:
                 if name is None:
-                    cells.append(f"{len(self.scored(arm)):>12d}")
+                    cells.append(f"{len(self.scored(arm)):>{width}d}")
                 else:
                     value = self._mean(arm, name)
                     if name == "duration_ms":
                         value /= 1000
-                    cells.append(f"{value:>12{form}}")
+                    cells.append(f"{value:>{width}{form}}")
             lines.append(f"{label:<16}" + "".join(cells))
-        if len(self.arms) == 2:
-            first, second = self.arms
-            for name in ("symbol_recall", "file_recall", "tokens"):
-                delta = self.paired_delta(first, second, name)
-                if delta is not None:
-                    mean, low, high, pairs = delta
-                    lines.append(
-                        f"\n{second} minus {first}, {name}: {mean:+.3f} "
-                        f"[{low:+.3f}, {high:+.3f}] over {pairs} paired task(s)"
-                    )
+        # Calls to a CLI tool reached through Bash, per run. Without this a
+        # null result for an outside tool cannot say whether it was used.
+        if any(ARMS[arm].integration for arm in self.arms if arm in ARMS):
+            cells = []
+            for arm in self.arms:
+                scored = self.scored(arm)
+                calls = (
+                    sum(run.tool_calls.get("Bash:graphify", 0) for run in scored) / len(scored)
+                    if scored
+                    else 0.0
+                )
+                cells.append(f"{calls:>{width}.1f}")
+            lines.append(f"{'graphify calls':<16}" + "".join(cells))
+        # Every arm against the first, not only when there are two: a three-arm
+        # run printed no interval at all, which is the one number it is for.
+        if len(self.arms) >= 2:
+            first = self.arms[0]
+            for second in self.arms[1:]:
+                for name in ("symbol_recall", "file_recall", "tokens"):
+                    delta = self.paired_delta(first, second, name)
+                    if delta is not None:
+                        mean, low, high, pairs = delta
+                        lines.append(
+                            f"\n{second} minus {first}, {name}: {mean:+.3f} "
+                            f"[{low:+.3f}, {high:+.3f}] over {pairs} paired task(s)"
+                        )
         excluded = self.excluded()
         if excluded:
             lines.append("")
@@ -975,6 +994,10 @@ def run_agentbench(
                             # an answer that is already on disk.
                             result.skipped += 1
                             continue
+                        if integration is not None:
+                            # Each run is its own session; another run's
+                            # query must not switch strict mode off for it.
+                            integration.forget_recent_queries()
                         run = _run_once(
                             root,
                             commit,
