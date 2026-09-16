@@ -190,6 +190,10 @@ def build_parser() -> argparse.ArgumentParser:
     agentbench.add_argument("--repeats", type=int, default=1, help="runs per task and arm")
     agentbench.add_argument("--claude", default="claude", help="the Claude Code executable")
     agentbench.add_argument("--serena", help="the serena executable, for the serena arm")
+    agentbench.add_argument(
+        "--graphify",
+        help="the graphify executable, for the graphify and graphify-strict arms",
+    )
     agentbench.add_argument("--model", help="model for the agent; the CLI default otherwise")
     agentbench.add_argument("--max-turns", type=int, default=30)
     agentbench.add_argument("--max-files", type=int, default=8)
@@ -798,6 +802,7 @@ def _cmd_agentbench(args: argparse.Namespace) -> int:
             done={(run.sha, run.arm, run.repeat) for run in earlier},
             progress=progress,
             wordings=wordings,
+            graphify=args.graphify,
         )
     except HistoryError as exc:
         raise SystemExit(f"repoatlas: {exc}") from None

@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .graphify_arm import Graphify, GraphifyError
 from .localize import (
     Commit,
     HistoryError,
@@ -113,6 +114,15 @@ class Arm:
     knowing rather than suspecting.
     """
 
+    integration: str = ""
+    """An outside tool wired in the way its authors install it, or empty.
+
+    `graphify` and `graphify-strict` reproduce `graphify install --project`
+    for Claude Code — its instructions, its hooks, its CLI on PATH — without
+    writing any of it into the checkout the baseline arm also reads. See
+    `graphify_arm.py` for what is reproduced and what, deliberately, is not.
+    """
+
     hint: str = ""
     context: str = ""
     """What to put in the prompt before the task: ``map``, ``skeleton``, or nothing.
@@ -133,6 +143,9 @@ class Arm:
 # first pilot denied Bash and watched the grep arm spend half its turns
 # asking for `rg` and `ls`. Read-only shell commands are allowed to both
 # arms; nothing that writes.
+# A Bash command that runs graphify: bare, by path, or after `cd … &&`.
+_GRAPHIFY_CALL = re.compile(r"^\s*(?:cd\s+\S+\s*&&\s*)?(?:\S*/)?graphify\s+\w")
+
 _READ_ONLY_TOOLS = (
     "Read",
     "Grep",
@@ -231,6 +244,26 @@ ARMS: dict[str, Arm] = {
         ),
         context="skeleton",
     ),
+    # graphify, installed as its authors document for Claude Code: its own
+    # instructions, its PreToolUse hooks, its CLI. The hint is the grep arm's,
+    # word for word, so the only difference between them is the install.
+    # Strict mode is its own arm because graphify offers it as the way to make
+    # an agent "actually use the graph", and this project's finding that
+    # optional tools go unused says that is the version worth testing.
+    "graphify": Arm(
+        name="graphify",
+        server=None,
+        allowed_tools=(*_READ_ONLY_TOOLS, "Bash(graphify *)"),
+        integration="graphify",
+        hint="Use Grep, Glob and Read to find them.",
+    ),
+    "graphify-strict": Arm(
+        name="graphify-strict",
+        server=None,
+        allowed_tools=(*_READ_ONLY_TOOLS, "Bash(graphify *)"),
+        integration="graphify-strict",
+        hint="Use Grep, Glob and Read to find them.",
+    ),
     # Serena is the closest thing anyone ships to what this project does, and
     # the usual recommendation for Claude Code, so it gets an arm rather than
     # an argument. Only its read-only tools: it can also edit and run shells.
@@ -304,6 +337,7 @@ def claude_command(
     model: str | None,
     max_turns: int,
     settings_path: Path | None = None,
+    append_system: str | None = None,
 ) -> list[str]:
     """The headless Claude Code invocation for one run.
 
@@ -337,8 +371,13 @@ def claude_command(
         command += ["--model", model]
     if arm.mcp and mcp_config_path is not None:
         command += ["--mcp-config", str(mcp_config_path)]
-    if arm.hooks and settings_path is not None:
+    if (arm.hooks or arm.integration) and settings_path is not None:
         command += ["--settings", str(settings_path)]
+    # Gated on the arm, not only on the argument: an outside tool's
+    # instructions reaching the baseline would compare the tool against
+    # itself, and nothing downstream would show it happened.
+    if append_system and arm.integration:
+        command += ["--append-system-prompt", append_system]
     return command
 
 
@@ -485,7 +524,16 @@ def parse_stream(lines: Iterable[str]) -> RunTrace:
             message = event.get("message") or {}
             for block in message.get("content") or []:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
-                    trace.tool_calls[str(block.get("name", "?"))] += 1
+                    name = str(block.get("name", "?"))
+                    trace.tool_calls[name] += 1
+                    # A CLI tool is reached through Bash, so by name alone a
+                    # `graphify query` is indistinguishable from an `rg`, and a
+                    # null result could not say whether the tool was ignored
+                    # or used and unhelpful. Counted apart, beside the Bash.
+                    if name == "Bash":
+                        command = str((block.get("input") or {}).get("command", ""))
+                        if _GRAPHIFY_CALL.match(command):
+                            trace.tool_calls["Bash:graphify"] += 1
         elif kind == "result":
             trace.ok = event.get("subtype", "success") == "success" and not event.get("is_error")
             # A failed run says why in its result text ("Not logged in"),
@@ -799,8 +847,14 @@ def run_agentbench(
     done: set[tuple[str, str, int]] | None = None,
     progress: Any = None,
     wordings: PromptSet | None = None,
+    graphify: str | None = None,
 ) -> AgentBenchResult:
     """Run every task through every arm and score the answers.
+
+    ``graphify`` is the graphify executable, needed for the `graphify` and
+    `graphify-strict` arms. Its graph is rebuilt for every commit that is
+    posed, after the checkout and before any arm runs, into a directory
+    beside the scratch clone rather than inside it.
 
     ``wordings`` replaces each task's commit subject with another way of
     asking for the same change, keeping the ground truth identical. That
@@ -828,6 +882,30 @@ def run_agentbench(
     if not selected:
         raise HistoryError("no commit in this history touches a handful of files")
     head = _git(root, "rev-parse", "HEAD").strip()
+
+    # Outside tools, built once per posed commit and shared by the arms that
+    # use them. Resolved before the walk so a missing executable stops the
+    # run before any money is spent, not halfway through it.
+    integrations: dict[str, Any] = {}
+    graph_instructions = ""
+    if any(ARMS[name].integration for name in chosen):
+        executable = Path(graphify).expanduser() if graphify else None
+        if executable is None or not executable.is_file():
+            raise HistoryError(
+                "the graphify arms need --graphify pointing at the graphify executable"
+            )
+        out = work.parent / f"{work.name}-graphify-out"
+        for name in chosen:
+            kind = ARMS[name].integration
+            if kind:
+                integrations[kind] = Graphify(
+                    executable, out, strict=kind.endswith("-strict")
+                )
+        try:
+            graph_instructions = next(iter(integrations.values())).instructions()
+        except GraphifyError as exc:
+            raise HistoryError(str(exc)) from exc
+
     try:
         with IndexStore(store_path) as store:
             for commit in selected:
@@ -846,6 +924,17 @@ def run_agentbench(
                     # Asked for a specific set of wordings; a commit outside
                     # it is not this experiment's task.
                     continue
+                if integrations:
+                    # One build serves every graphify arm: the graph is the
+                    # same, only the hook mode differs. It happens here, after
+                    # the checkout and only for a commit that is posed, so the
+                    # graph describes exactly the tree the agent is in.
+                    try:
+                        next(iter(integrations.values())).rebuild(root)
+                    except GraphifyError as exc:
+                        # A missing graph would leave the arm as the baseline
+                        # with a longer prompt, scored as if it were graphify.
+                        raise HistoryError(f"{commit.sha[:12]}: {exc}") from exc
                 result.tasks += 1
                 wanted_files = {snapshot.symbols[item].path for item in wanted_ids}
                 locator = _Locator(snapshot)
@@ -856,11 +945,20 @@ def run_agentbench(
                     settings_file = config_path.with_name(
                         f"{config_path.name}.{arm_name}.settings.json"
                     )
+                    integration = integrations.get(arm.integration)
+                    arm_env: dict[str, str] | None = None
+                    arm_system: str | None = None
                     if arm.hooks:
                         settings_file.write_text(
                             json.dumps(hook_settings(store_path, loud=arm.loud)),
                             encoding="utf-8",
                         )
+                    elif integration is not None:
+                        settings_file.write_text(
+                            json.dumps(integration.settings()), encoding="utf-8"
+                        )
+                        arm_env = integration.environment()
+                        arm_system = graph_instructions
                     if arm.mcp:
                         arm_config.write_text(
                             json.dumps(
@@ -887,12 +985,16 @@ def run_agentbench(
                             max_turns=max_turns,
                             timeout=timeout,
                             config_path=arm_config if arm.mcp else None,
-                            settings_path=settings_file if arm.hooks else None,
+                            settings_path=(
+                                settings_file if (arm.hooks or integration) else None
+                            ),
                             wanted_ids=wanted_ids,
                             wanted_files=wanted_files,
                             locator=locator,
                             context=contexts.get(arm.context, ""),
                             wording=wording,
+                            append_system=arm_system,
+                            env=arm_env,
                         )
                         result.runs.append(run)
                         if progress is not None:
@@ -957,6 +1059,8 @@ def _run_command(
     timeout: int,
     config_path: Path | None,
     settings_path: Path | None = None,
+    append_system: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> RunTrace | str:
     """One headless run in ``root``: its trace, or why there is none.
 
@@ -971,12 +1075,14 @@ def _run_command(
         mcp_config_path=config_path if arm.mcp else None,
         model=model,
         max_turns=max_turns,
-        settings_path=settings_path if arm.hooks else None,
+        settings_path=settings_path if (arm.hooks or arm.integration) else None,
+        append_system=append_system,
     )
     started = time.monotonic()
     try:
         completed = subprocess.run(
             command,
+            env=env,
             cwd=root,
             capture_output=True,
             text=True,
@@ -1017,6 +1123,8 @@ def _run_once(
     locator: _Locator,
     context: str = "",
     wording: TaskPrompt | None = None,
+    append_system: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> AgentRun:
     outcome = _run_command(
         root,
@@ -1028,6 +1136,8 @@ def _run_once(
         timeout=timeout,
         config_path=config_path,
         settings_path=settings_path,
+        append_system=append_system,
+        env=env,
     )
     stratum = wording.stratum if wording else ""
     if isinstance(outcome, str):
